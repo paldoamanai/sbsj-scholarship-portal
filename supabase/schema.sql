@@ -202,6 +202,124 @@ CREATE POLICY "Users can view own role" ON public.user_roles
 CREATE POLICY "Admins can view all roles" ON public.user_roles
   FOR SELECT USING (public.has_role('admin', auth.uid()));
 
--- 12. Storage buckets (run these separately in Supabase dashboard or via SQL)
+-- 12. Expand roles: add sub-roles for RBAC
+ALTER TYPE public.app_role ADD VALUE IF NOT EXISTS 'super_admin';
+ALTER TYPE public.app_role ADD VALUE IF NOT EXISTS 'finance_admin';
+ALTER TYPE public.app_role ADD VALUE IF NOT EXISTS 'reviewer';
+
+-- 13. Audit logs table
+CREATE TABLE public.audit_logs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  user_email TEXT,
+  action TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id UUID,
+  previous_value JSONB,
+  new_value JSONB,
+  ip_address TEXT,
+  user_agent TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Admins can view audit logs" ON public.audit_logs
+  FOR SELECT USING (
+    public.has_role('admin', auth.uid())
+    OR public.has_role('super_admin', auth.uid())
+  );
+CREATE POLICY "System can insert audit logs" ON public.audit_logs
+  FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+
+-- 14. System settings table
+CREATE TABLE public.system_settings (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  key TEXT UNIQUE NOT NULL,
+  value JSONB NOT NULL,
+  description TEXT,
+  updated_by UUID REFERENCES auth.users(id),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE public.system_settings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Anyone can read settings" ON public.system_settings
+  FOR SELECT USING (true);
+CREATE POLICY "Admins can manage settings" ON public.system_settings
+  FOR ALL USING (
+    public.has_role('admin', auth.uid())
+    OR public.has_role('super_admin', auth.uid())
+  );
+
+-- 15. Scholar verification table (external duplicate check)
+CREATE TABLE public.scholar_verifications (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  application_id UUID REFERENCES public.applications(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  student_id_number TEXT,
+  government_id TEXT,
+  has_existing_scholarship BOOLEAN DEFAULT false,
+  existing_scholarship_details TEXT,
+  verification_status TEXT DEFAULT 'Pending' CHECK (verification_status IN ('Pending', 'Verified', 'Flagged', 'Cleared')),
+  verified_by UUID REFERENCES auth.users(id),
+  verified_at TIMESTAMPTZ,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE public.scholar_verifications ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own verifications" ON public.scholar_verifications
+  FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Admins can manage verifications" ON public.scholar_verifications
+  FOR ALL USING (
+    public.has_role('admin', auth.uid())
+    OR public.has_role('super_admin', auth.uid())
+    OR public.has_role('reviewer', auth.uid())
+  );
+
+-- 16. Add student_id_number and government_id to profiles
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS student_id_number TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS government_id TEXT;
+
+-- 17. Update has_role to support new roles
+CREATE OR REPLACE FUNCTION public.has_role(_role app_role, _user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.user_roles
+    WHERE user_id = _user_id AND role = _role
+  );
+$$;
+
+-- Helper: check if user has ANY admin-level role
+CREATE OR REPLACE FUNCTION public.is_admin(_user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.user_roles
+    WHERE user_id = _user_id AND role IN ('admin', 'super_admin', 'finance_admin', 'reviewer')
+  );
+$$;
+
+-- 18. Default system settings seed
+INSERT INTO public.system_settings (key, value, description) VALUES
+  ('academic_year', '"2025-2026"', 'Current academic year'),
+  ('current_semester', '"1st Semester"', 'Current semester'),
+  ('payment_methods', '["Bank Transfer", "E-Wallet", "Cash"]', 'Available payment methods'),
+  ('email_notifications', 'true', 'Enable email notifications'),
+  ('sms_notifications', 'false', 'Enable SMS notifications'),
+  ('max_scholarships_per_student', '1', 'Maximum active scholarships per student'),
+  ('min_grade_requirement', '85', 'Minimum grade requirement for eligibility')
+ON CONFLICT (key) DO NOTHING;
+
+-- 19. Storage buckets (run these separately in Supabase dashboard or via SQL)
 -- INSERT INTO storage.buckets (id, name, public) VALUES ('profile-pictures', 'profile-pictures', true);
 -- INSERT INTO storage.buckets (id, name, public) VALUES ('documents', 'documents', false);

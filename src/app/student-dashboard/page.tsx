@@ -19,6 +19,7 @@ import {
   LayoutDashboard, FileText, Upload, GraduationCap, Banknote, Receipt,
   Bell, User, Settings as SettingsIcon, LogOut, Menu, Lock, Download,
   AlertTriangle, CheckCircle, Clock, XCircle, Pencil, Eye, Trash2, Shield, Loader2,
+  Camera,
 } from "lucide-react";
 import ApplicationProgressBar from "@/components/student/ApplicationProgressBar";
 import { createClient } from "@/lib/supabase/client";
@@ -121,9 +122,13 @@ export default function StudentDashboardPage() {
     <div className="space-y-6">
       <Card>
         <CardContent className="py-6 flex flex-col sm:flex-row items-center sm:items-start gap-4">
-          <div className="h-20 w-20 rounded-full bg-accent flex items-center justify-center">
-            <User className="h-10 w-10 text-primary" />
-          </div>
+          {profile?.profile_picture_url ? (
+            <img src={profile.profile_picture_url} alt="Profile" className="h-20 w-20 rounded-full object-cover" />
+          ) : (
+            <div className="h-20 w-20 rounded-full bg-accent flex items-center justify-center">
+              <User className="h-10 w-10 text-primary" />
+            </div>
+          )}
           <div className="flex-1 text-center sm:text-left">
             <h2 className="text-xl font-display font-bold">{displayName}</h2>
             <p className="text-sm text-muted-foreground">{profile?.course || "—"} {profile?.year_level ? `• ${profile.year_level}` : ""}</p>
@@ -383,53 +388,114 @@ export default function StudentDashboardPage() {
     </Card>
   );
 
-  const Profile = () => (
-    <div className="space-y-6">
-      {locked && (
-        <Card className="border-destructive/40 bg-destructive/5">
-          <CardContent className="py-3 flex items-center gap-2 text-sm"><Lock className="h-4 w-4 text-destructive" /> Profile editing is disabled after disbursement.</CardContent>
-        </Card>
-      )}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-1">
-          <CardContent className="py-6 text-center">
-            <div className="mx-auto h-24 w-24 rounded-full bg-accent flex items-center justify-center mb-4"><User className="h-10 w-10 text-primary" /></div>
-            <h3 className="font-display font-bold">{displayName}</h3>
-            <p className="text-sm text-muted-foreground">{userEmail}</p>
-          </CardContent>
-        </Card>
-        <Card className="lg:col-span-2">
-          <CardHeader><CardTitle className="font-display">Personal Information</CardTitle></CardHeader>
-          <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div><Label>First Name</Label><Input defaultValue={profile?.first_name || ""} disabled={locked} /></div>
-            <div><Label>Last Name</Label><Input defaultValue={profile?.last_name || ""} disabled={locked} /></div>
-            <div><Label>Email</Label><Input defaultValue={userEmail} disabled /></div>
-            <div><Label>Phone</Label><Input defaultValue={profile?.phone || ""} disabled={locked} /></div>
-            <div><Label>Barangay</Label><Input defaultValue={profile?.barangay || ""} disabled={locked} /></div>
-            <div><Label>Municipality</Label><Input defaultValue={profile?.municipality || ""} disabled={locked} /></div>
-            <div><Label>School</Label><Input defaultValue={profile?.school_name || ""} disabled={locked} /></div>
-            <div><Label>Course</Label><Input defaultValue={profile?.course || ""} disabled={locked} /></div>
-            <div className="sm:col-span-2">
-              <Button disabled={locked} className="bg-gradient-primary" onClick={guard(() => toast.success("Profile saved"))}>Save Changes</Button>
-            </div>
+  const Profile = () => {
+    const [editFirst, setEditFirst] = useState(profile?.first_name || "");
+    const [editLast, setEditLast] = useState(profile?.last_name || "");
+    const [editPhone, setEditPhone] = useState(profile?.phone || "");
+    const [editBarangay, setEditBarangay] = useState(profile?.barangay || "");
+    const [editMunicipality, setEditMunicipality] = useState(profile?.municipality || "");
+    const [editSchool, setEditSchool] = useState(profile?.school_name || "");
+    const [editCourse, setEditCourse] = useState(profile?.course || "");
+    const [editYearLevel, setEditYearLevel] = useState(profile?.year_level || "");
+    const [uploading, setUploading] = useState(false);
+    const [newPw, setNewPw] = useState("");
+    const [confirmPw, setConfirmPw] = useState("");
+
+    const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setUploading(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { setUploading(false); return; }
+      const filePath = `${user.id}/avatar-${Date.now()}.${file.name.split(".").pop()}`;
+      const { error } = await supabase.storage.from("profile-pictures").upload(filePath, file, { upsert: true });
+      if (error) { toast.error(error.message); setUploading(false); return; }
+      const { data: urlData } = supabase.storage.from("profile-pictures").getPublicUrl(filePath);
+      await supabase.from("profiles").update({ profile_picture_url: urlData.publicUrl }).eq("id", user.id);
+      toast.success("Profile photo updated");
+      setUploading(false);
+      loadData();
+    };
+
+    const handleSaveProfile = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { error } = await supabase.from("profiles").update({
+        first_name: editFirst, last_name: editLast, phone: editPhone,
+        barangay: editBarangay, municipality: editMunicipality,
+        school_name: editSchool, course: editCourse, year_level: editYearLevel,
+      }).eq("id", user.id);
+      if (error) { toast.error(error.message); return; }
+      toast.success("Profile saved");
+      loadData();
+    };
+
+    const handleChangePassword = async () => {
+      if (!newPw || newPw.length < 6) { toast.error("Password must be at least 6 characters"); return; }
+      if (newPw !== confirmPw) { toast.error("Passwords do not match"); return; }
+      const { error } = await supabase.auth.updateUser({ password: newPw });
+      if (error) { toast.error(error.message); return; }
+      toast.success("Password updated");
+      setNewPw(""); setConfirmPw("");
+    };
+
+    return (
+      <div className="space-y-6">
+        {locked && (
+          <Card className="border-destructive/40 bg-destructive/5">
+            <CardContent className="py-3 flex items-center gap-2 text-sm"><Lock className="h-4 w-4 text-destructive" /> Profile editing is disabled after disbursement.</CardContent>
+          </Card>
+        )}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <Card className="lg:col-span-1">
+            <CardContent className="py-6 text-center">
+              <div className="relative mx-auto h-24 w-24 mb-4">
+                {profile?.profile_picture_url ? (
+                  <img src={profile.profile_picture_url} alt="Profile" className="h-24 w-24 rounded-full object-cover" />
+                ) : (
+                  <div className="h-24 w-24 rounded-full bg-accent flex items-center justify-center"><User className="h-10 w-10 text-primary" /></div>
+                )}
+                <Label className="absolute bottom-0 right-0 h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center cursor-pointer shadow-md hover:bg-primary/90">
+                  <Input type="file" className="hidden" accept="image/*" disabled={locked || uploading} onChange={handlePhotoUpload} />
+                  {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
+                </Label>
+              </div>
+              <h3 className="font-display font-bold">{displayName}</h3>
+              <p className="text-sm text-muted-foreground">{userEmail}</p>
+            </CardContent>
+          </Card>
+          <Card className="lg:col-span-2">
+            <CardHeader><CardTitle className="font-display">Personal Information</CardTitle></CardHeader>
+            <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div><Label>First Name</Label><Input value={editFirst} onChange={e => setEditFirst(e.target.value)} disabled={locked} /></div>
+              <div><Label>Last Name</Label><Input value={editLast} onChange={e => setEditLast(e.target.value)} disabled={locked} /></div>
+              <div><Label>Email</Label><Input defaultValue={userEmail} disabled /></div>
+              <div><Label>Phone</Label><Input value={editPhone} onChange={e => setEditPhone(e.target.value)} disabled={locked} /></div>
+              <div><Label>Barangay</Label><Input value={editBarangay} onChange={e => setEditBarangay(e.target.value)} disabled={locked} /></div>
+              <div><Label>Municipality</Label><Input value={editMunicipality} onChange={e => setEditMunicipality(e.target.value)} disabled={locked} /></div>
+              <div><Label>School</Label><Input value={editSchool} onChange={e => setEditSchool(e.target.value)} disabled={locked} /></div>
+              <div><Label>Course</Label><Input value={editCourse} onChange={e => setEditCourse(e.target.value)} disabled={locked} /></div>
+              <div><Label>Year Level</Label><Input value={editYearLevel} onChange={e => setEditYearLevel(e.target.value)} disabled={locked} /></div>
+              <div className="sm:col-span-2">
+                <Button disabled={locked} className="bg-gradient-primary" onClick={guard(handleSaveProfile)}>Save Changes</Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+        <Card>
+          <CardHeader><CardTitle className="font-display">Change Password</CardTitle></CardHeader>
+          <CardContent className="space-y-3 max-w-md">
+            <div><Label>New Password</Label><Input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} /></div>
+            <div><Label>Confirm Password</Label><Input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} /></div>
+            <Button className="bg-gradient-primary" onClick={handleChangePassword}>Update Password</Button>
           </CardContent>
         </Card>
       </div>
-    </div>
-  );
+    );
+  };
 
   const SettingsView = () => (
     <div className="space-y-6">
-      <Card>
-        <CardHeader><CardTitle className="font-display">Change Password</CardTitle></CardHeader>
-        <CardContent className="space-y-3 max-w-md">
-          <div><Label>New Password</Label><Input type="password" /></div>
-          <div><Label>Confirm Password</Label><Input type="password" /></div>
-          <Button className="bg-gradient-primary" onClick={async () => {
-            toast.success("Password updated");
-          }}>Update Password</Button>
-        </CardContent>
-      </Card>
       <Card>
         <CardHeader><CardTitle className="font-display">Notification Preferences</CardTitle></CardHeader>
         <CardContent className="space-y-3">
@@ -493,7 +559,13 @@ export default function StudentDashboardPage() {
           <div className="flex items-center gap-3">
             <Bell className="h-5 w-5 text-muted-foreground" />
             <span className="hidden sm:block text-sm text-muted-foreground">Hi, {displayName.split(" ")[0]}</span>
-            <Link href="/"><Button variant="outline" size="sm">Home</Button></Link>
+            <button onClick={() => setActive("profile")} className="h-8 w-8 rounded-full overflow-hidden border">
+              {profile?.profile_picture_url ? (
+                <img src={profile.profile_picture_url} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <div className="h-full w-full bg-accent flex items-center justify-center"><User className="h-4 w-4 text-primary" /></div>
+              )}
+            </button>
           </div>
         </header>
         <main className="flex-1 p-4 md:p-6 overflow-auto">{renderActive()}</main>

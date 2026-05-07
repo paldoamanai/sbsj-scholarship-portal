@@ -280,19 +280,133 @@ export type Database = {
         Row: {
           id: string
           user_id: string
-          role: "admin" | "student"
+          role: "admin" | "student" | "super_admin" | "finance_admin" | "reviewer"
           created_at: string
         }
         Insert: {
           id?: string
           user_id: string
-          role: "admin" | "student"
+          role: "admin" | "student" | "super_admin" | "finance_admin" | "reviewer"
           created_at?: string
         }
         Update: {
           id?: string
           user_id?: string
-          role?: "admin" | "student"
+          role?: "admin" | "student" | "super_admin" | "finance_admin" | "reviewer"
+          created_at?: string
+        }
+        Relationships: []
+      }
+      audit_logs: {
+        Row: {
+          id: string
+          user_id: string | null
+          user_email: string | null
+          action: string
+          entity_type: string
+          entity_id: string | null
+          previous_value: any | null
+          new_value: any | null
+          ip_address: string | null
+          user_agent: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id?: string | null
+          user_email?: string | null
+          action: string
+          entity_type: string
+          entity_id?: string | null
+          previous_value?: any | null
+          new_value?: any | null
+          ip_address?: string | null
+          user_agent?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string | null
+          user_email?: string | null
+          action?: string
+          entity_type?: string
+          entity_id?: string | null
+          previous_value?: any | null
+          new_value?: any | null
+          ip_address?: string | null
+          user_agent?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      system_settings: {
+        Row: {
+          id: string
+          key: string
+          value: any
+          description: string | null
+          updated_by: string | null
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          key: string
+          value: any
+          description?: string | null
+          updated_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          key?: string
+          value?: any
+          description?: string | null
+          updated_by?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      scholar_verifications: {
+        Row: {
+          id: string
+          application_id: string | null
+          user_id: string
+          student_id_number: string | null
+          government_id: string | null
+          has_existing_scholarship: boolean
+          existing_scholarship_details: string | null
+          verification_status: string
+          verified_by: string | null
+          verified_at: string | null
+          notes: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          application_id?: string | null
+          user_id: string
+          student_id_number?: string | null
+          government_id?: string | null
+          has_existing_scholarship?: boolean
+          existing_scholarship_details?: string | null
+          verification_status?: string
+          verified_by?: string | null
+          verified_at?: string | null
+          notes?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          application_id?: string | null
+          user_id?: string
+          student_id_number?: string | null
+          government_id?: string | null
+          has_existing_scholarship?: boolean
+          existing_scholarship_details?: string | null
+          verification_status?: string
+          verified_by?: string | null
+          verified_at?: string | null
+          notes?: string | null
           created_at?: string
         }
         Relationships: []
@@ -304,14 +418,20 @@ export type Database = {
     Functions: {
       has_role: {
         Args: {
-          _role: "admin" | "student"
+          _role: "admin" | "student" | "super_admin" | "finance_admin" | "reviewer"
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      is_admin: {
+        Args: {
           _user_id: string
         }
         Returns: boolean
       }
     }
     Enums: {
-      app_role: "admin" | "student"
+      app_role: "admin" | "student" | "super_admin" | "finance_admin" | "reviewer"
     }
     CompositeTypes: {
       [_ in never]: never

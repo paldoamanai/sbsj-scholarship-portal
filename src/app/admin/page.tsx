@@ -21,7 +21,7 @@ import {
   Plus, Pencil, Trash2, CheckCircle, XCircle, Clock, Eye,
   Menu, X, Search, BookOpen, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock, Download,
-  FileDown, Receipt, Loader2,
+  FileDown, Receipt, Loader2, User, Upload, Camera,
 } from "lucide-react";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -33,13 +33,17 @@ import type { Tables } from "@/integrations/supabase/types";
 const sidebarItems = [
   { icon: LayoutDashboard, label: "Dashboard", key: "overview" },
   { icon: FileText, label: "Applicants", key: "applications" },
+  { icon: ShieldCheck, label: "Verification", key: "verification" },
   { icon: GraduationCap, label: "Scholarships", key: "scholarships" },
   { icon: Users, label: "Students", key: "students" },
+  { icon: Users, label: "User Mgmt", key: "user-management" },
   { icon: Wallet, label: "Funds", key: "funds" },
   { icon: Banknote, label: "Disbursement", key: "disbursement" },
   { icon: BarChart3, label: "Reports", key: "reports" },
+  { icon: ScrollText, label: "Audit Logs", key: "audit-logs" },
   { icon: Bell, label: "Notifications", key: "notifications" },
   { icon: SettingsIcon, label: "Settings", key: "settings" },
+  { icon: User, label: "Profile", key: "profile" },
 ];
 
 const COLORS = ["hsl(var(--primary))", "hsl(var(--success))", "hsl(var(--destructive))", "hsl(var(--muted-foreground))"];
@@ -60,6 +64,12 @@ export default function AdminDashboardPage() {
   const [profiles, setProfiles] = useState<Tables<"profiles">[]>([]);
   const [payments, setPayments] = useState<Tables<"payments">[]>([]);
   const [viewApp, setViewApp] = useState<typeof applications[0] | null>(null);
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [verifications, setVerifications] = useState<any[]>([]);
+  const [allUserRoles, setAllUserRoles] = useState<any[]>([]);
+  const [systemSettings, setSystemSettings] = useState<any[]>([]);
+  const [adminProfile, setAdminProfile] = useState<any>(null);
+  const [adminEmail, setAdminEmail] = useState("");
 
   useEffect(() => { loadData(); }, []);
 
@@ -68,14 +78,21 @@ export default function AdminDashboardPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push("/login"); return; }
 
+    setAdminEmail(user.email || "");
     const { data: roleData } = await supabase.from("user_roles").select("role").eq("user_id", user.id).single();
-    if (roleData?.role !== "admin") { router.push("/student-dashboard"); return; }
+    const role = (roleData as any)?.role;
+    if (!["admin", "super_admin", "finance_admin", "reviewer"].includes(role)) { router.push("/student-dashboard"); return; }
 
-    const [appsRes, scholsRes, profilesRes, paymentsRes] = await Promise.all([
+    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, rolesRes, settingsRes, adminProfRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("scholarships").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
       supabase.from("payments").select("*").order("created_at", { ascending: false }),
+      supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(100),
+      supabase.from("scholar_verifications").select("*").order("created_at", { ascending: false }),
+      supabase.from("user_roles").select("*, profiles:user_id(first_name, last_name, email)"),
+      supabase.from("system_settings").select("*"),
+      supabase.from("profiles").select("*").eq("id", user.id).single(),
     ]);
 
     if (appsRes.data) {
@@ -88,10 +105,95 @@ export default function AdminDashboardPage() {
     if (scholsRes.data) setScholarships(scholsRes.data);
     if (profilesRes.data) setProfiles(profilesRes.data);
     if (paymentsRes.data) setPayments(paymentsRes.data);
+    if (logsRes.data) setAuditLogs(logsRes.data);
+    if (verifRes.data) setVerifications(verifRes.data);
+    if (rolesRes.data) setAllUserRoles(rolesRes.data);
+    if (settingsRes.data) setSystemSettings(settingsRes.data);
+    if (adminProfRes.data) setAdminProfile(adminProfRes.data);
     setLoading(false);
   };
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push("/"); router.refresh(); };
+
+  const logAudit = async (action: string, entityType: string, entityId?: string, prev?: any, next?: any) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    await supabase.from("audit_logs").insert({
+      user_id: user?.id, user_email: user?.email || adminEmail,
+      action, entity_type: entityType, entity_id: entityId,
+      previous_value: prev ? JSON.stringify(prev) : null,
+      new_value: next ? JSON.stringify(next) : null,
+    });
+  };
+
+  const exportPDF = async (key: string) => {
+    const { default: jsPDF } = await import("jspdf");
+    const { default: autoTable } = await import("jspdf-autotable");
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text("SB San Jose Scholarship Portal", 14, 15);
+    doc.setFontSize(10);
+    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 22);
+
+    if (key === "scholars") {
+      const approved = applications.filter(a => a.status === "Approved");
+      autoTable(doc, {
+        startY: 28,
+        head: [["Name", "School", "Course", "Year Level", "Scholarship", "Status"]],
+        body: approved.map(a => [
+          a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}` : "—",
+          a.profiles?.school_name || "—", a.profiles?.course || "—", a.profiles?.year_level || "—",
+          a.scholarships?.name || "—", a.status,
+        ]),
+      });
+    } else if (key === "funds") {
+      autoTable(doc, {
+        startY: 28,
+        head: [["Scholarship", "Budget", "Slots", "Amount/Slot", "Active"]],
+        body: scholarships.map(s => [s.name, formatPHP(s.total_budget), s.slots, formatPHP(s.amount), s.is_active ? "Yes" : "No"]),
+      });
+    } else if (key === "disbursements") {
+      autoTable(doc, {
+        startY: 28,
+        head: [["Reference", "Amount", "Method", "Status", "Date"]],
+        body: payments.map(p => [p.reference || "—", formatPHP(p.amount), p.method, p.status, p.scheduled_date || "—"]),
+      });
+    } else if (key === "statistics") {
+      const t = { total: applications.length, approved: applications.filter(a => a.status === "Approved").length, rejected: applications.filter(a => a.status === "Rejected").length, pending: applications.filter(a => a.status === "Pending").length };
+      autoTable(doc, {
+        startY: 28,
+        head: [["Metric", "Value"]],
+        body: [["Total Applications", t.total], ["Approved", t.approved], ["Rejected", t.rejected], ["Pending", t.pending], ["Approval Rate", `${t.total ? ((t.approved / t.total) * 100).toFixed(1) : 0}%`]],
+      });
+    }
+    doc.save(`${key}-report.pdf`);
+    toast.success("PDF downloaded");
+  };
+
+  const exportExcel = async (key: string) => {
+    const XLSX = await import("xlsx");
+    let data: Record<string, string | number>[] = [];
+
+    if (key === "scholars") {
+      data = applications.filter(a => a.status === "Approved").map(a => ({
+        Name: a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}` : "—",
+        School: a.profiles?.school_name || "—", Course: a.profiles?.course || "—",
+        "Year Level": a.profiles?.year_level || "—", Scholarship: a.scholarships?.name || "—", Status: a.status,
+      }));
+    } else if (key === "funds") {
+      data = scholarships.map(s => ({ Name: s.name, Budget: s.total_budget, Slots: s.slots, "Amount/Slot": s.amount, Active: s.is_active ? "Yes" : "No" }));
+    } else if (key === "disbursements") {
+      data = payments.map(p => ({ Reference: p.reference || "—", Amount: p.amount, Method: p.method, Status: p.status, Date: p.scheduled_date || "—" }));
+    } else if (key === "statistics") {
+      const t = { total: applications.length, approved: applications.filter(a => a.status === "Approved").length, rejected: applications.filter(a => a.status === "Rejected").length, pending: applications.filter(a => a.status === "Pending").length };
+      data = [{ Metric: "Total Applications", Value: t.total }, { Metric: "Approved", Value: t.approved }, { Metric: "Rejected", Value: t.rejected }, { Metric: "Pending", Value: t.pending }, { Metric: "Approval Rate", Value: `${t.total ? ((t.approved / t.total) * 100).toFixed(1) : 0}%` }];
+    }
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Report");
+    XLSX.writeFile(wb, `${key}-report.xlsx`);
+    toast.success("Excel downloaded");
+  };
 
   const totals = useMemo(() => {
     const approved = applications.filter(a => a.status === "Approved").length;
@@ -133,6 +235,37 @@ export default function AdminDashboardPage() {
     { name: "Pending", value: totals.pending },
   ].filter(d => d.value > 0);
 
+  const applicationsPerMonth = useMemo(() => {
+    const months: Record<string, number> = {};
+    applications.forEach(a => {
+      const d = new Date(a.created_at);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      months[key] = (months[key] || 0) + 1;
+    });
+    return Object.entries(months).sort().slice(-6).map(([month, count]) => ({
+      month: new Date(month + "-01").toLocaleString("default", { month: "short", year: "2-digit" }),
+      count,
+    }));
+  }, [applications]);
+
+  const approvalRate = totals.total > 0 ? Math.round((totals.approved / totals.total) * 100) : 0;
+  const rejectionRate = totals.total > 0 ? Math.round((totals.rejected / totals.total) * 100) : 0;
+  const budgetUtilization = totals.totalBudget > 0 ? Math.round((totals.totalDisbursed / totals.totalBudget) * 100) : 0;
+
+  const scholarshipDistribution = useMemo(() => {
+    const counts: Record<string, number> = {};
+    applications.forEach(a => {
+      const name = a.scholarships?.name || "Unassigned";
+      counts[name] = (counts[name] || 0) + 1;
+    });
+    return Object.entries(counts).map(([name, value]) => ({ name, value }));
+  }, [applications]);
+
+  const activeInactiveScholars = useMemo(() => [
+    { name: "Active", value: profiles.filter(p => p.is_active).length },
+    { name: "Inactive", value: profiles.filter(p => !p.is_active).length },
+  ], [profiles]);
+
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
   }
@@ -156,8 +289,7 @@ export default function AdminDashboardPage() {
             </button>
           ))}
         </nav>
-        <div className="p-3 border-t space-y-2">
-          <Link href="/"><Button variant="outline" size="sm" className="w-full">Back to Home</Button></Link>
+        <div className="p-3 border-t">
           <Button variant="destructive" size="sm" className="w-full" onClick={handleLogout}><LogOut className="mr-1 h-4 w-4" /> Logout</Button>
         </div>
       </aside>
@@ -174,6 +306,7 @@ export default function AdminDashboardPage() {
           {/* OVERVIEW */}
           {activeSection === "overview" && (
             <div className="space-y-6 animate-fade-in">
+              {/* Stat Cards */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
                   { label: "Total Applicants", value: totals.total, icon: FileText, color: "text-primary" },
@@ -187,19 +320,76 @@ export default function AdminDashboardPage() {
                   </CardContent></Card>
                 ))}
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Total Budget</p><p className="text-2xl font-bold font-display text-primary">{formatPHP(totals.totalBudget)}</p></CardContent></Card>
-                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Total Disbursed</p><p className="text-2xl font-bold font-display text-success">{formatPHP(totals.totalDisbursed)}</p></CardContent></Card>
-                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Remaining</p><p className="text-2xl font-bold font-display text-warning">{formatPHP(totals.remaining)}</p>{totals.totalBudget > 0 && <Progress value={(totals.totalDisbursed / totals.totalBudget) * 100} className="mt-2 h-2" />}</CardContent></Card>
+
+              {/* Budget + Rates Row */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Total Budget</p><p className="text-xl font-bold font-display text-primary">{formatPHP(totals.totalBudget)}</p></CardContent></Card>
+                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Disbursed</p><p className="text-xl font-bold font-display text-success">{formatPHP(totals.totalDisbursed)}</p></CardContent></Card>
+                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Remaining</p><p className="text-xl font-bold font-display text-warning">{formatPHP(totals.remaining)}</p></CardContent></Card>
+                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Approval Rate</p><p className="text-xl font-bold font-display text-success">{approvalRate}%</p><Progress value={approvalRate} className="mt-2 h-1.5" /></CardContent></Card>
+                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Budget Utilization</p><p className="text-xl font-bold font-display text-primary">{budgetUtilization}%</p><Progress value={budgetUtilization} className="mt-2 h-1.5" /></CardContent></Card>
               </div>
-              {statusPieData.length > 0 && (
+
+              {/* Charts Row 1: Applications per Month + Status Distribution */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Card>
-                  <CardHeader><CardTitle className="text-base">Application Status Distribution</CardTitle></CardHeader>
+                  <CardHeader><CardTitle className="text-base">Applications per Month</CardTitle></CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={240}>
+                      <BarChart data={applicationsPerMonth}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                        <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
+                        <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+
+                {statusPieData.length > 0 && (
+                  <Card>
+                    <CardHeader><CardTitle className="text-base">Approval vs Rejection Rate</CardTitle></CardHeader>
+                    <CardContent>
+                      <ResponsiveContainer width="100%" height={240}>
+                        <PieChart>
+                          <Pie data={statusPieData} dataKey="value" nameKey="name" outerRadius={80} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                            {statusPieData.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}
+                          </Pie>
+                          <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
+                          <Legend />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+
+              {/* Charts Row 2: Scholarship Distribution + Active/Inactive Scholars */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Card>
+                  <CardHeader><CardTitle className="text-base">Scholarship Distribution</CardTitle></CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={240}>
+                      <BarChart data={scholarshipDistribution} layout="vertical">
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12 }} />
+                        <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
+                        <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
+                        <Bar dataKey="value" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader><CardTitle className="text-base">Active vs Inactive Scholars</CardTitle></CardHeader>
                   <CardContent>
                     <ResponsiveContainer width="100%" height={240}>
                       <PieChart>
-                        <Pie data={statusPieData} dataKey="value" nameKey="name" outerRadius={80} label>
-                          {statusPieData.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}
+                        <Pie data={activeInactiveScholars} dataKey="value" nameKey="name" outerRadius={80} label>
+                          <Cell fill="hsl(var(--success))" />
+                          <Cell fill="hsl(var(--muted-foreground))" />
                         </Pie>
                         <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
                         <Legend />
@@ -207,7 +397,7 @@ export default function AdminDashboardPage() {
                     </ResponsiveContainer>
                   </CardContent>
                 </Card>
-              )}
+              </div>
             </div>
           )}
 
@@ -479,16 +669,16 @@ export default function AdminDashboardPage() {
               <h2 className="text-xl font-display font-bold">Reports & Analytics</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
-                  { title: "List of Scholars", desc: "Complete roster of active and past scholars", icon: Users },
-                  { title: "Fund Utilization Report", desc: "Budget allocation vs disbursement breakdown", icon: Wallet },
-                  { title: "Disbursement Summary", desc: "All payments by period, status, and program", icon: Banknote },
-                  { title: "Applicant Statistics", desc: "Applications, approval rates, demographics", icon: BarChart3 },
+                  { title: "List of Scholars", desc: "Complete roster of active and past scholars", icon: Users, exportKey: "scholars" },
+                  { title: "Fund Utilization Report", desc: "Budget allocation vs disbursement breakdown", icon: Wallet, exportKey: "funds" },
+                  { title: "Disbursement Summary", desc: "All payments by period, status, and program", icon: Banknote, exportKey: "disbursements" },
+                  { title: "Applicant Statistics", desc: "Applications, approval rates, demographics", icon: BarChart3, exportKey: "statistics" },
                 ].map((r, i) => (
                   <Card key={i}>
                     <CardHeader><CardTitle className="text-base flex items-center gap-2"><r.icon className="h-4 w-4 text-primary" />{r.title}</CardTitle><CardDescription>{r.desc}</CardDescription></CardHeader>
                     <CardContent className="flex gap-2">
-                      <Button variant="outline" size="sm"><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
-                      <Button variant="outline" size="sm"><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
+                      <Button variant="outline" size="sm" onClick={() => exportPDF(r.exportKey)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
+                      <Button variant="outline" size="sm" onClick={() => exportExcel(r.exportKey)}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
                     </CardContent>
                   </Card>
                 ))}
@@ -514,24 +704,331 @@ export default function AdminDashboardPage() {
           )}
 
           {/* SETTINGS */}
+          {/* SCHOLAR VERIFICATION */}
+          {activeSection === "verification" && (
+            <div className="space-y-4 animate-fade-in">
+              <h2 className="text-xl font-display font-bold">Scholar Verification</h2>
+              <Card className="border-warning/30 bg-warning/5">
+                <CardContent className="py-3 flex items-start gap-2">
+                  <ShieldCheck className="h-4 w-4 text-warning mt-0.5" />
+                  <p className="text-sm text-muted-foreground">Verify applicants to prevent duplicate scholarships. Flagged records require manual review.</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <Table>
+                  <TableHeader><TableRow>
+                    <TableHead>Applicant</TableHead><TableHead>Student ID</TableHead><TableHead>Gov ID</TableHead><TableHead>Existing Scholarship</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {verifications.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No verification records</TableCell></TableRow>}
+                    {verifications.map((v: any) => {
+                      const prof = profiles.find(p => p.id === v.user_id);
+                      const name = prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() : "Unknown";
+                      return (
+                        <TableRow key={v.id}>
+                          <TableCell className="font-medium">{name}</TableCell>
+                          <TableCell className="font-mono text-xs">{v.student_id_number || "—"}</TableCell>
+                          <TableCell className="font-mono text-xs">{v.government_id || "—"}</TableCell>
+                          <TableCell>{v.has_existing_scholarship ? <Badge variant="destructive">Yes</Badge> : <Badge variant="outline">No</Badge>}</TableCell>
+                          <TableCell>
+                            <Badge variant={v.verification_status === "Verified" ? "default" : v.verification_status === "Flagged" ? "destructive" : "secondary"}>
+                              {v.verification_status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right space-x-1">
+                            {v.verification_status === "Pending" && (<>
+                              <Button size="sm" onClick={async () => {
+                                await supabase.from("scholar_verifications").update({ verification_status: "Verified", verified_at: new Date().toISOString() }).eq("id", v.id);
+                                await logAudit("verify_scholar", "scholar_verifications", v.id, null, { status: "Verified" });
+                                toast.success("Verified!"); loadData();
+                              }}>Verify</Button>
+                              <Button size="sm" variant="destructive" onClick={async () => {
+                                await supabase.from("scholar_verifications").update({ verification_status: "Flagged", verified_at: new Date().toISOString() }).eq("id", v.id);
+                                await logAudit("flag_scholar", "scholar_verifications", v.id, null, { status: "Flagged" });
+                                toast.error("Flagged!"); loadData();
+                              }}>Flag</Button>
+                            </>)}
+                            {v.verification_status === "Flagged" && (
+                              <Button size="sm" variant="outline" onClick={async () => {
+                                await supabase.from("scholar_verifications").update({ verification_status: "Cleared" }).eq("id", v.id);
+                                await logAudit("clear_scholar", "scholar_verifications", v.id, null, { status: "Cleared" });
+                                toast.success("Cleared!"); loadData();
+                              }}>Clear</Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </Card>
+            </div>
+          )}
+
+          {/* USER MANAGEMENT */}
+          {activeSection === "user-management" && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-display font-bold">User Management</h2>
+                <Dialog>
+                  <DialogTrigger asChild><Button size="sm"><Plus className="mr-1 h-4 w-4" /> Add Admin</Button></DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader><DialogTitle>Add Admin User</DialogTitle></DialogHeader>
+                    <form onSubmit={async (e) => {
+                      e.preventDefault();
+                      const fd = new FormData(e.currentTarget);
+                      const email = fd.get("email") as string;
+                      const role = fd.get("role") as string;
+                      const existingUser = profiles.find(p => p.email === email);
+                      if (!existingUser) { toast.error("User not found. They must register first."); return; }
+                      await supabase.from("user_roles").update({ role }).eq("user_id", existingUser.id);
+                      await logAudit("assign_role", "user_roles", existingUser.id, null, { role });
+                      toast.success(`${email} promoted to ${role}`); loadData();
+                    }} className="space-y-4">
+                      <div><Label>User Email (must be registered)</Label><Input name="email" required placeholder="user@email.com" /></div>
+                      <div><Label>Role</Label>
+                        <Select name="role" defaultValue="reviewer">
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="admin">Admin</SelectItem>
+                            <SelectItem value="super_admin">Super Admin</SelectItem>
+                            <SelectItem value="finance_admin">Finance Admin</SelectItem>
+                            <SelectItem value="reviewer">Reviewer</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button type="submit" className="w-full">Assign Role</Button>
+                    </form>
+                  </DialogContent>
+                </Dialog>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                {[
+                  { label: "Super Admin", desc: "Full system access", color: "border-destructive/30" },
+                  { label: "Admin", desc: "Manage all modules", color: "border-primary/30" },
+                  { label: "Finance Admin", desc: "Funds & disbursement", color: "border-success/30" },
+                  { label: "Reviewer", desc: "Review applications", color: "border-warning/30" },
+                ].map(r => (
+                  <Card key={r.label} className={r.color}>
+                    <CardContent className="py-4">
+                      <p className="text-sm font-semibold">{r.label}</p>
+                      <p className="text-xs text-muted-foreground">{r.desc}</p>
+                      <p className="text-lg font-bold mt-1">{allUserRoles.filter(u => u.role === r.label.toLowerCase().replace(" ", "_")).length}</p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+              <Card>
+                <Table>
+                  <TableHeader><TableRow>
+                    <TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead>Role</TableHead><TableHead className="text-right">Actions</TableHead>
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {allUserRoles.filter(u => u.role !== "student").map((u: any) => {
+                      const prof = profiles.find(p => p.id === u.user_id);
+                      const name = prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() || prof.email : "Unknown";
+                      return (
+                        <TableRow key={u.id}>
+                          <TableCell className="font-medium">{name}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{prof?.email || "—"}</TableCell>
+                          <TableCell><Badge variant={u.role === "super_admin" ? "destructive" : "default"}>{u.role}</Badge></TableCell>
+                          <TableCell className="text-right space-x-1">
+                            <Select defaultValue={u.role} onValueChange={async (val) => {
+                              await supabase.from("user_roles").update({ role: val }).eq("id", u.id);
+                              await logAudit("change_role", "user_roles", u.user_id, { role: u.role }, { role: val });
+                              toast.success("Role updated"); loadData();
+                            }}>
+                              <SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="admin">Admin</SelectItem>
+                                <SelectItem value="super_admin">Super Admin</SelectItem>
+                                <SelectItem value="finance_admin">Finance Admin</SelectItem>
+                                <SelectItem value="reviewer">Reviewer</SelectItem>
+                                <SelectItem value="student">Student</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </Card>
+            </div>
+          )}
+
+          {/* AUDIT LOGS */}
+          {activeSection === "audit-logs" && (
+            <div className="space-y-4 animate-fade-in">
+              <h2 className="text-xl font-display font-bold">Audit Logs</h2>
+              <Card>
+                <Table>
+                  <TableHeader><TableRow>
+                    <TableHead>Date</TableHead><TableHead>User</TableHead><TableHead>Action</TableHead><TableHead>Entity</TableHead><TableHead>Details</TableHead>
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {auditLogs.length === 0 && <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">No audit logs yet</TableCell></TableRow>}
+                    {auditLogs.map((log: any) => (
+                      <TableRow key={log.id}>
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{new Date(log.created_at).toLocaleString()}</TableCell>
+                        <TableCell className="text-sm">{log.user_email || "System"}</TableCell>
+                        <TableCell><Badge variant="outline">{log.action}</Badge></TableCell>
+                        <TableCell className="text-xs">{log.entity_type}</TableCell>
+                        <TableCell className="text-xs font-mono max-w-[200px] truncate">{log.new_value ? JSON.stringify(log.new_value).slice(0, 80) : "—"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Card>
+            </div>
+          )}
+
+          {/* ADMIN PROFILE */}
+          {activeSection === "profile" && (
+            <div className="space-y-4 animate-fade-in max-w-2xl">
+              <h2 className="text-xl font-display font-bold">Admin Profile</h2>
+              <Card>
+                <CardContent className="py-6 space-y-6">
+                  <div className="flex items-center gap-4">
+                    <div className="relative">
+                      <div className="h-20 w-20 rounded-full bg-accent flex items-center justify-center overflow-hidden">
+                        {adminProfile?.profile_picture_url ? (
+                          <img src={adminProfile.profile_picture_url} alt="Profile" className="h-20 w-20 rounded-full object-cover" />
+                        ) : (
+                          <User className="h-10 w-10 text-muted-foreground" />
+                        )}
+                      </div>
+                      <label className="absolute bottom-0 right-0 h-7 w-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center cursor-pointer hover:bg-primary/90">
+                        <Camera className="h-3.5 w-3.5" />
+                        <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const { data: { user } } = await supabase.auth.getUser();
+                          if (!user) return;
+                          const filePath = `${user.id}/avatar/${file.name}`;
+                          await supabase.storage.from("profile-pictures").upload(filePath, file, { upsert: true });
+                          const { data: urlData } = supabase.storage.from("profile-pictures").getPublicUrl(filePath);
+                          await supabase.from("profiles").update({ profile_picture_url: urlData.publicUrl }).eq("id", user.id);
+                          await logAudit("update_profile_photo", "profiles", user.id);
+                          toast.success("Profile photo updated"); loadData();
+                        }} />
+                      </label>
+                    </div>
+                    <div>
+                      <p className="text-lg font-semibold">{adminProfile?.first_name} {adminProfile?.last_name}</p>
+                      <p className="text-sm text-muted-foreground">{adminEmail}</p>
+                      <Badge className="mt-1">Admin</Badge>
+                    </div>
+                  </div>
+                  <form onSubmit={async (e) => {
+                    e.preventDefault();
+                    const fd = new FormData(e.currentTarget);
+                    const { data: { user } } = await supabase.auth.getUser();
+                    if (!user) return;
+                    const updates = {
+                      first_name: fd.get("first_name") as string,
+                      last_name: fd.get("last_name") as string,
+                      phone: fd.get("phone") as string,
+                    };
+                    await supabase.from("profiles").update(updates).eq("id", user.id);
+                    await logAudit("update_profile", "profiles", user.id, null, updates);
+                    toast.success("Profile updated"); loadData();
+                  }} className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><Label>First Name</Label><Input name="first_name" defaultValue={adminProfile?.first_name || ""} /></div>
+                      <div><Label>Last Name</Label><Input name="last_name" defaultValue={adminProfile?.last_name || ""} /></div>
+                    </div>
+                    <div><Label>Phone</Label><Input name="phone" defaultValue={adminProfile?.phone || ""} /></div>
+                    <Button type="submit">Save Changes</Button>
+                  </form>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader><CardTitle className="text-base">Change Password</CardTitle></CardHeader>
+                <CardContent>
+                  <form onSubmit={async (e) => {
+                    e.preventDefault();
+                    const fd = new FormData(e.currentTarget);
+                    const newPassword = fd.get("new_password") as string;
+                    if (newPassword.length < 8) { toast.error("Password must be at least 8 characters"); return; }
+                    const { error } = await supabase.auth.updateUser({ password: newPassword });
+                    if (error) { toast.error(error.message); return; }
+                    await logAudit("change_password", "auth", undefined);
+                    toast.success("Password updated");
+                    e.currentTarget.reset();
+                  }} className="space-y-3">
+                    <div><Label>New Password</Label><Input name="new_password" type="password" required minLength={8} placeholder="Min 8 characters" /></div>
+                    <Button type="submit">Update Password</Button>
+                  </form>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* SETTINGS */}
           {activeSection === "settings" && (
             <div className="space-y-4 animate-fade-in max-w-2xl">
-              <h2 className="text-xl font-display font-bold">Settings</h2>
+              <h2 className="text-xl font-display font-bold">System Settings</h2>
               <Card>
-                <CardHeader><CardTitle className="text-base">Scholarship Criteria Template</CardTitle></CardHeader>
+                <CardHeader><CardTitle className="text-base">Academic Year & Semester</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
-                  <div><Label>Minimum Grade Average</Label><Input type="number" defaultValue={85} /></div>
-                  <Button onClick={() => toast.success("Criteria saved")}>Save</Button>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><Label>Academic Year</Label><Input defaultValue={systemSettings.find(s => s.key === "academic_year")?.value?.replace(/"/g, "") || "2025-2026"} onChange={async (e) => {
+                      await supabase.from("system_settings").update({ value: JSON.stringify(e.target.value) }).eq("key", "academic_year");
+                    }} /></div>
+                    <div><Label>Semester</Label>
+                      <Select defaultValue={systemSettings.find(s => s.key === "current_semester")?.value?.replace(/"/g, "") || "1st Semester"} onValueChange={async (val) => {
+                        await supabase.from("system_settings").update({ value: JSON.stringify(val) }).eq("key", "current_semester");
+                        toast.success("Semester updated");
+                      }}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="1st Semester">1st Semester</SelectItem>
+                          <SelectItem value="2nd Semester">2nd Semester</SelectItem>
+                          <SelectItem value="Summer">Summer</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader><CardTitle className="text-base">Scholarship Criteria</CardTitle></CardHeader>
+                <CardContent className="space-y-3">
+                  <div><Label>Minimum Grade Average</Label><Input type="number" defaultValue={systemSettings.find(s => s.key === "min_grade_requirement")?.value || 85} onChange={async (e) => {
+                    await supabase.from("system_settings").update({ value: e.target.value }).eq("key", "min_grade_requirement");
+                  }} /></div>
+                  <div><Label>Max Scholarships Per Student</Label><Input type="number" defaultValue={systemSettings.find(s => s.key === "max_scholarships_per_student")?.value || 1} onChange={async (e) => {
+                    await supabase.from("system_settings").update({ value: e.target.value }).eq("key", "max_scholarships_per_student");
+                  }} /></div>
+                  <Button onClick={() => toast.success("Criteria saved")}>Save Criteria</Button>
                 </CardContent>
               </Card>
               <Card>
                 <CardHeader><CardTitle className="text-base">Payment Methods</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
-                  {["Bank Transfer (LandBank)", "GCash", "Check", "Cash"].map((m) => (
+                  {["Bank Transfer (LandBank)", "GCash", "E-Wallet", "Check", "Cash Assistance"].map((m) => (
                     <div key={m} className="flex items-center justify-between border-b last:border-0 pb-3 last:pb-0">
-                      <span className="text-sm">{m}</span><Switch defaultChecked={m !== "Cash"} />
+                      <span className="text-sm">{m}</span><Switch defaultChecked={m !== "Cash Assistance"} />
                     </div>
                   ))}
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader><CardTitle className="text-base">Notifications</CardTitle></CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div><p className="text-sm font-medium">Email Notifications</p><p className="text-xs text-muted-foreground">Send email for application updates</p></div>
+                    <Switch defaultChecked={systemSettings.find(s => s.key === "email_notifications")?.value === true || systemSettings.find(s => s.key === "email_notifications")?.value === "true"} onCheckedChange={async (val) => {
+                      await supabase.from("system_settings").update({ value: val }).eq("key", "email_notifications");
+                    }} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div><p className="text-sm font-medium">SMS Notifications</p><p className="text-xs text-muted-foreground">Send SMS for disbursement updates</p></div>
+                    <Switch defaultChecked={systemSettings.find(s => s.key === "sms_notifications")?.value === true || systemSettings.find(s => s.key === "sms_notifications")?.value === "true"} onCheckedChange={async (val) => {
+                      await supabase.from("system_settings").update({ value: val }).eq("key", "sms_notifications");
+                    }} />
+                  </div>
                 </CardContent>
               </Card>
             </div>
