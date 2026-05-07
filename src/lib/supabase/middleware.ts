@@ -48,8 +48,9 @@ export async function updateSession(request: NextRequest) {
       .eq("user_id", user.id)
       .single();
 
+    const userRole = (roleData as any)?.role || "student";
     url.pathname =
-      roleData?.role === "admin" ? "/admin" : "/student-dashboard";
+      userRole === "admin" ? "/admin" : "/student-dashboard";
     return NextResponse.redirect(url);
   }
 

@@ -39,14 +39,21 @@ export default function LoginPage() {
       return;
     }
 
-    const { data: roleData } = await supabase
+    const { data: roleData, error: roleError } = await supabase
       .from("user_roles")
       .select("role")
       .eq("user_id", user.id)
       .single();
 
+    if (roleError) {
+      toast.error("Failed to fetch user role");
+      setLoading(false);
+      return;
+    }
+
     toast.success("Login successful!");
-    const dest = roleData?.role === "admin" ? "/admin" : "/student-dashboard";
+    const userRole = (roleData as any)?.role || "student";
+    const dest = userRole === "admin" ? "/admin" : "/student-dashboard";
     router.push(dest);
     router.refresh();
   };
