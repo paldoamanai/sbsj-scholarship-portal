@@ -53,6 +53,22 @@ export default function StudentDashboardPage() {
   const [notifications, setNotifications] = useState<Tables<"notifications">[]>([]);
   const [scholarships, setScholarships] = useState<Tables<"scholarships">[]>([]);
   const [userEmail, setUserEmail] = useState("");
+  const [applyScholarshipId, setApplyScholarshipId] = useState("");
+  const [applyDialogOpen, setApplyDialogOpen] = useState(false);
+  const [applyLoading, setApplyLoading] = useState(false);
+
+  // Profile edit state — kept in parent to survive re-renders
+  const [editFirst, setEditFirst] = useState("");
+  const [editLast, setEditLast] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editBarangay, setEditBarangay] = useState("");
+  const [editMunicipality, setEditMunicipality] = useState("");
+  const [editSchool, setEditSchool] = useState("");
+  const [editCourse, setEditCourse] = useState("");
+  const [editYearLevel, setEditYearLevel] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
 
   useEffect(() => {
     loadData();
@@ -73,7 +89,17 @@ export default function StudentDashboardPage() {
       supabase.from("scholarships").select("*").eq("is_active", true),
     ]);
 
-    if (profileRes.data) setProfile(profileRes.data);
+    if (profileRes.data) {
+      setProfile(profileRes.data);
+      setEditFirst(profileRes.data.first_name || "");
+      setEditLast(profileRes.data.last_name || "");
+      setEditPhone(profileRes.data.phone || "");
+      setEditBarangay(profileRes.data.barangay || "");
+      setEditMunicipality(profileRes.data.municipality || "");
+      setEditSchool(profileRes.data.school_name || "");
+      setEditCourse(profileRes.data.course || "");
+      setEditYearLevel(profileRes.data.year_level || "");
+    }
     if (appsRes.data) setApplications(appsRes.data);
     if (docsRes.data) setDocuments(docsRes.data);
     if (paymentsRes.data) setPayments(paymentsRes.data);
@@ -95,15 +121,18 @@ export default function StudentDashboardPage() {
   const lockedToast = () => toast.error("Locked: scholarship has been disbursed.");
   const guard = (fn: () => void) => () => (locked ? lockedToast() : fn());
 
-  const statusBadge = (status: string) => {
+  const statusBadge = (status: string | null | undefined) => {
+    if (!status || status === "—") return <span className="text-sm text-muted-foreground">—</span>;
     const map: Record<string, { icon: any; cls: string }> = {
       Approved: { icon: CheckCircle, cls: "border-success text-success" },
       Pending: { icon: Clock, cls: "border-warning text-warning" },
       Rejected: { icon: XCircle, cls: "border-destructive text-destructive" },
       Disbursed: { icon: CheckCircle, cls: "border-success text-success" },
       Processing: { icon: Clock, cls: "border-primary text-primary" },
+      Waitlisted: { icon: Clock, cls: "border-muted-foreground text-muted-foreground" },
     };
-    const m = map[status] || map.Pending;
+    const m = map[status];
+    if (!m) return <Badge variant="outline">{status}</Badge>;
     const Icon = m.icon;
     return <Badge variant="outline" className={m.cls}><Icon className="mr-1 h-3 w-3" />{status}</Badge>;
   };
@@ -138,9 +167,9 @@ export default function StudentDashboardPage() {
         </CardContent>
       </Card>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Application Status</p><div className="mt-2">{statusBadge(currentApp?.status || "No Application")}</div></CardContent></Card>
-        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Scholarship</p><p className="font-semibold mt-1">{currentApp?.scholarships?.name || "None"}</p></CardContent></Card>
-        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Disbursement</p><div className="mt-2">{statusBadge(currentApp?.disbursement_status || "—")}</div></CardContent></Card>
+        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Application Status</p><div className="mt-2">{currentApp ? statusBadge(currentApp.status) : <span className="text-sm text-muted-foreground">No application</span>}</div></CardContent></Card>
+        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Scholarship</p><p className="font-semibold mt-1">{currentApp?.scholarships?.name || "—"}</p></CardContent></Card>
+        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Disbursement</p><div className="mt-2">{statusBadge(currentApp?.disbursement_status)}</div></CardContent></Card>
       </div>
       <Card>
         <CardHeader><CardTitle className="font-display">Progress</CardTitle></CardHeader>
@@ -206,14 +235,14 @@ export default function StudentDashboardPage() {
         <Card>
           <CardContent className="py-8 text-center">
             <p className="text-muted-foreground mb-4">You haven&apos;t submitted an application yet.</p>
-            <Dialog>
+            <Dialog open={applyDialogOpen} onOpenChange={setApplyDialogOpen}>
               <DialogTrigger asChild><Button className="bg-gradient-primary"><FileText className="mr-1 h-4 w-4" /> Apply for Scholarship</Button></DialogTrigger>
               <DialogContent>
                 <DialogHeader><DialogTitle>Apply for Scholarship</DialogTitle></DialogHeader>
                 <div className="space-y-3">
                   <div>
-                    <Label>Scholarship Program</Label>
-                    <Select>
+                    <Label>Scholarship Program *</Label>
+                    <Select value={applyScholarshipId} onValueChange={setApplyScholarshipId}>
                       <SelectTrigger><SelectValue placeholder="Select program" /></SelectTrigger>
                       <SelectContent>
                         {scholarships.map((s) => (
@@ -222,10 +251,28 @@ export default function StudentDashboardPage() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div><Label>Reason for Applying</Label><Textarea placeholder="Briefly explain..." /></div>
                 </div>
                 <DialogFooter>
-                  <Button onClick={() => toast.success("Application submitted!")} className="bg-gradient-primary">Submit</Button>
+                  <Button
+                    disabled={!applyScholarshipId || applyLoading}
+                    className="bg-gradient-primary"
+                    onClick={async () => {
+                      if (!applyScholarshipId) return;
+                      setApplyLoading(true);
+                      const { data: { user } } = await supabase.auth.getUser();
+                      if (!user) { setApplyLoading(false); return; }
+                      const { error } = await supabase.from("applications").insert({
+                        user_id: user.id,
+                        scholarship_id: applyScholarshipId,
+                      });
+                      if (error) { toast.error(error.message); }
+                      else { toast.success("Application submitted!"); setApplyDialogOpen(false); setApplyScholarshipId(""); loadData(); }
+                      setApplyLoading(false);
+                    }}
+                  >
+                    {applyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Submit
+                  </Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
@@ -367,7 +414,9 @@ export default function StudentDashboardPage() {
         <CardTitle className="font-display">All Notifications</CardTitle>
         {notifications.some(n => !n.read) && (
           <Button variant="ghost" size="sm" onClick={async () => {
-            await supabase.from("notifications").update({ read: true }).eq("read", false);
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+            await supabase.from("notifications").update({ read: true }).eq("user_id", user.id).eq("read", false);
             loadData();
           }}>Mark all read</Button>
         )}
@@ -389,17 +438,6 @@ export default function StudentDashboardPage() {
   );
 
   const Profile = () => {
-    const [editFirst, setEditFirst] = useState(profile?.first_name || "");
-    const [editLast, setEditLast] = useState(profile?.last_name || "");
-    const [editPhone, setEditPhone] = useState(profile?.phone || "");
-    const [editBarangay, setEditBarangay] = useState(profile?.barangay || "");
-    const [editMunicipality, setEditMunicipality] = useState(profile?.municipality || "");
-    const [editSchool, setEditSchool] = useState(profile?.school_name || "");
-    const [editCourse, setEditCourse] = useState(profile?.course || "");
-    const [editYearLevel, setEditYearLevel] = useState(profile?.year_level || "");
-    const [uploading, setUploading] = useState(false);
-    const [newPw, setNewPw] = useState("");
-    const [confirmPw, setConfirmPw] = useState("");
 
     const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
