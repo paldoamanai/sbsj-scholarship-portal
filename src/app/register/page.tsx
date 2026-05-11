@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Layout from "@/components/Layout";
@@ -58,6 +58,16 @@ export default function RegisterPage() {
 
   // Step 4 — Scholarship selection
   const [selectedScholarship, setSelectedScholarship] = useState("");
+  const [scholarships, setScholarships] = useState<{ id: string; name: string }[]>([]);
+
+  useEffect(() => {
+    if (step === 4) {
+      fetch("/api/scholarships")
+        .then((r) => r.json())
+        .then((data) => Array.isArray(data) && setScholarships(data))
+        .catch(() => {});
+    }
+  }, [step]);
 
   const update = (field: string, value: string) => {
     setForm((p) => ({ ...p, [field]: value }));
@@ -118,6 +128,17 @@ export default function RegisterPage() {
       return;
     }
 
+    // Email confirmation is enabled — user is not authenticated yet, so RLS-protected
+    // writes would silently fail. Direct them to verify first.
+    if (!authData.session) {
+      toast.success("Account created!", {
+        description: "Check your email to verify your account, then log in to complete your profile.",
+      });
+      setLoading(false);
+      router.push("/login");
+      return;
+    }
+
     const userId = authData.user.id;
     const dob = `${dobYear}-${String(parseInt(dobMonth) + 1).padStart(2, "0")}-${String(parseInt(dobDay)).padStart(2, "0")}`;
 
@@ -166,10 +187,15 @@ export default function RegisterPage() {
 
     // 4. Create application if scholarship selected
     if (selectedScholarship) {
-      await supabase.from("applications").insert({
+      const { error: appError } = await supabase.from("applications").insert({
         user_id: userId,
         scholarship_id: selectedScholarship,
       });
+      if (appError) {
+        toast.error("Application submit failed", { description: appError.message });
+        setLoading(false);
+        return;
+      }
     }
 
     toast.success("Registration submitted successfully!", {
@@ -365,10 +391,13 @@ export default function RegisterPage() {
                 <Select value={selectedScholarship} onValueChange={setSelectedScholarship}>
                   <SelectTrigger><SelectValue placeholder="Select scholarship (optional)" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="academic-excellence">Academic Excellence Scholarship</SelectItem>
-                    <SelectItem value="financial-assistance">Financial Assistance Grant</SelectItem>
-                    <SelectItem value="stem-leadership">STEM Leadership Scholarship</SelectItem>
-                    <SelectItem value="community-service">Community Service Award</SelectItem>
+                    {scholarships.length === 0 ? (
+                      <SelectItem value="_loading" disabled>Loading scholarships…</SelectItem>
+                    ) : (
+                      scholarships.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
                 <div className="rounded-lg border p-4 space-y-2">
