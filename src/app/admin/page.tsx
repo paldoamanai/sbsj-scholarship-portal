@@ -473,7 +473,7 @@ export default function AdminDashboardPage() {
                         <div><Label className="text-muted-foreground text-xs">Year Level</Label><p className="font-medium">{viewApp.profiles?.year_level || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Grade</Label><p className="font-medium">{viewApp.profiles?.average_grade || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Scholarship</Label><p className="font-medium">{viewApp.scholarships?.name || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Status</Label><p>{statusBadge(viewApp.status)}</p></div>
+                        <div><Label className="text-muted-foreground text-xs">Status</Label><div>{statusBadge(viewApp.status)}</div></div>
                       </div>
                       <div><Label className="text-xs">Reviewer Remarks</Label><Textarea placeholder="Add notes..." /></div>
                       {viewApp.status === "Pending" && (
