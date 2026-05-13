@@ -511,8 +511,61 @@ export default function StudentDashboardPage() {
               <div><Label>Phone</Label><Input value={editPhone} onChange={e => setEditPhone(e.target.value)} disabled={locked} /></div>
               <div><Label>Barangay</Label><Input value={editBarangay} onChange={e => setEditBarangay(e.target.value)} disabled={locked} /></div>
               <div><Label>Municipality</Label><Input value={editMunicipality} onChange={e => setEditMunicipality(e.target.value)} disabled={locked} /></div>
-              <div><Label>School</Label><Input value={editSchool} onChange={e => setEditSchool(e.target.value)} disabled={locked} /></div>
-              <div><Label>Course</Label><Input value={editCourse} onChange={e => setEditCourse(e.target.value)} disabled={locked} /></div>
+              <div>
+                <Label>School</Label>
+                <Select value={editSchool} onValueChange={setEditSchool} disabled={locked}>
+                  <SelectTrigger><SelectValue placeholder="Select school" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="San Jose National High School">San Jose National High School</SelectItem>
+                    <SelectItem value="Ambulong National High School">Ambulong National High School</SelectItem>
+                    <SelectItem value="Bangkuro National High School">Bangkuro National High School</SelectItem>
+                    <SelectItem value="Batong Buhay National High School">Batong Buhay National High School</SelectItem>
+                    <SelectItem value="Bubog National High School">Bubog National High School</SelectItem>
+                    <SelectItem value="Caminawit National High School">Caminawit National High School</SelectItem>
+                    <SelectItem value="Inarawan National High School">Inarawan National High School</SelectItem>
+                    <SelectItem value="Ipil National High School">Ipil National High School</SelectItem>
+                    <SelectItem value="Labangan National High School">Labangan National High School</SelectItem>
+                    <SelectItem value="Mangarin National High School">Mangarin National High School</SelectItem>
+                    <SelectItem value="Poypoy National High School">Poypoy National High School</SelectItem>
+                    <SelectItem value="San Agustin National High School">San Agustin National High School</SelectItem>
+                    <SelectItem value="Tayamaan National High School">Tayamaan National High School</SelectItem>
+                    <SelectItem value="Occidental Mindoro State College (OMSC)">Occidental Mindoro State College (OMSC)</SelectItem>
+                    <SelectItem value="Saint Joseph College of Occidental Mindoro (SJCOM)">Saint Joseph College of Occidental Mindoro (SJCOM)</SelectItem>
+                    <SelectItem value="AMA Computer College - San Jose">AMA Computer College - San Jose</SelectItem>
+                    <SelectItem value="STI College - San Jose">STI College - San Jose</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Course</Label>
+                <Select value={editCourse} onValueChange={setEditCourse} disabled={locked}>
+                  <SelectTrigger><SelectValue placeholder="Select course" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="STEM">Science, Technology, Engineering and Mathematics (STEM)</SelectItem>
+                    <SelectItem value="ABM">Accountancy, Business and Management (ABM)</SelectItem>
+                    <SelectItem value="HUMSS">Humanities and Social Sciences (HUMSS)</SelectItem>
+                    <SelectItem value="GAS">General Academic Strand (GAS)</SelectItem>
+                    <SelectItem value="TVL">Technical-Vocational-Livelihood (TVL)</SelectItem>
+                    <SelectItem value="BSEd">Bachelor of Secondary Education (BSEd)</SelectItem>
+                    <SelectItem value="BEEd">Bachelor of Elementary Education (BEEd)</SelectItem>
+                    <SelectItem value="BSBA">Bachelor of Science in Business Administration (BSBA)</SelectItem>
+                    <SelectItem value="BSA">Bachelor of Science in Accountancy (BSA)</SelectItem>
+                    <SelectItem value="BSIT">Bachelor of Science in Information Technology (BSIT)</SelectItem>
+                    <SelectItem value="BSCS">Bachelor of Science in Computer Science (BSCS)</SelectItem>
+                    <SelectItem value="BSN">Bachelor of Science in Nursing (BSN)</SelectItem>
+                    <SelectItem value="BSM">Bachelor of Science in Midwifery (BSM)</SelectItem>
+                    <SelectItem value="BSAg">Bachelor of Science in Agriculture (BSAg)</SelectItem>
+                    <SelectItem value="BSF">Bachelor of Science in Fisheries (BSF)</SelectItem>
+                    <SelectItem value="BSCrim">Bachelor of Science in Criminology (BSCrim)</SelectItem>
+                    <SelectItem value="BSTM">Bachelor of Science in Tourism Management (BSTM)</SelectItem>
+                    <SelectItem value="BSHM">Bachelor of Science in Hospitality Management (BSHM)</SelectItem>
+                    <SelectItem value="BSSW">Bachelor of Science in Social Work (BSSW)</SelectItem>
+                    <SelectItem value="AB Communication">Bachelor of Arts in Communication</SelectItem>
+                    <SelectItem value="BSCE">Bachelor of Science in Civil Engineering (BSCE)</SelectItem>
+                    <SelectItem value="BSEEct">Bachelor of Science in Electrical Engineering (BSEE)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div><Label>Year Level</Label><Input value={editYearLevel} onChange={e => setEditYearLevel(e.target.value)} disabled={locked} /></div>
               <div className="sm:col-span-2">
                 <Button disabled={locked} className="bg-gradient-primary" onClick={guard(handleSaveProfile)}>Save Changes</Button>

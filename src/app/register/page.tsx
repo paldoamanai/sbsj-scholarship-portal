@@ -13,7 +13,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { toast } from "sonner";
 import {
-  User, School, Lock, Upload, ChevronRight, ChevronLeft, AlertTriangle, Loader2, GraduationCap,
+  User, School, Lock, Upload, ChevronRight, ChevronLeft, AlertTriangle, Loader2, GraduationCap, Eye, EyeOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
@@ -38,6 +38,8 @@ export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // Step 1 — Personal
   const [form, setForm] = useState({
@@ -246,8 +248,46 @@ export default function RegisterPage() {
             {step === 0 && (
               <>
                 <div><Label>Email *</Label><Input type="email" value={email} onChange={(e) => { setEmail(e.target.value); setErrors(p => ({ ...p, email: "" })); }} /><FieldError field="email" /></div>
-                <div><Label>Password *</Label><Input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setErrors(p => ({ ...p, password: "" })); }} /><FieldError field="password" /></div>
-                <div><Label>Confirm Password *</Label><Input type="password" value={confirmPassword} onChange={(e) => { setConfirmPassword(e.target.value); setErrors(p => ({ ...p, confirmPassword: "" })); }} /><FieldError field="confirmPassword" /></div>
+                <div>
+                  <Label>Password *</Label>
+                  <div className="relative">
+                    <Input
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(e) => { setPassword(e.target.value); setErrors(p => ({ ...p, password: "" })); }}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground"
+                      tabIndex={-1}
+                    >
+                      {showPassword ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <FieldError field="password" />
+                </div>
+                <div>
+                  <Label>Confirm Password *</Label>
+                  <div className="relative">
+                    <Input
+                      type={showConfirmPassword ? "text" : "password"}
+                      value={confirmPassword}
+                      onChange={(e) => { setConfirmPassword(e.target.value); setErrors(p => ({ ...p, confirmPassword: "" })); }}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword((v) => !v)}
+                      className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground"
+                      tabIndex={-1}
+                    >
+                      {showConfirmPassword ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <FieldError field="confirmPassword" />
+                </div>
               </>
             )}
 
@@ -319,8 +359,63 @@ export default function RegisterPage() {
             {/* STEP 2: Academic */}
             {step === 2 && (
               <>
-                <div><Label>School Name *</Label><Input value={academic.schoolName} onChange={(e) => updateAcademic("schoolName", e.target.value)} /><FieldError field="schoolName" /></div>
-                <div><Label>Course *</Label><Input value={academic.course} onChange={(e) => updateAcademic("course", e.target.value)} /><FieldError field="course" /></div>
+                <div>
+                  <Label>School Name *</Label>
+                  <Select value={academic.schoolName} onValueChange={(v) => updateAcademic("schoolName", v)}>
+                    <SelectTrigger><SelectValue placeholder="Select school" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="San Jose National High School">San Jose National High School</SelectItem>
+                      <SelectItem value="Ambulong National High School">Ambulong National High School</SelectItem>
+                      <SelectItem value="Bangkuro National High School">Bangkuro National High School</SelectItem>
+                      <SelectItem value="Batong Buhay National High School">Batong Buhay National High School</SelectItem>
+                      <SelectItem value="Bubog National High School">Bubog National High School</SelectItem>
+                      <SelectItem value="Caminawit National High School">Caminawit National High School</SelectItem>
+                      <SelectItem value="Inarawan National High School">Inarawan National High School</SelectItem>
+                      <SelectItem value="Ipil National High School">Ipil National High School</SelectItem>
+                      <SelectItem value="Labangan National High School">Labangan National High School</SelectItem>
+                      <SelectItem value="Mangarin National High School">Mangarin National High School</SelectItem>
+                      <SelectItem value="Poypoy National High School">Poypoy National High School</SelectItem>
+                      <SelectItem value="San Agustin National High School">San Agustin National High School</SelectItem>
+                      <SelectItem value="Tayamaan National High School">Tayamaan National High School</SelectItem>
+                      <SelectItem value="Occidental Mindoro State College (OMSC)">Occidental Mindoro State College (OMSC)</SelectItem>
+                      <SelectItem value="Saint Joseph College of Occidental Mindoro (SJCOM)">Saint Joseph College of Occidental Mindoro (SJCOM)</SelectItem>
+                      <SelectItem value="AMA Computer College - San Jose">AMA Computer College - San Jose</SelectItem>
+                      <SelectItem value="STI College - San Jose">STI College - San Jose</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FieldError field="schoolName" />
+                </div>
+                <div>
+                  <Label>Course *</Label>
+                  <Select value={academic.course} onValueChange={(v) => updateAcademic("course", v)}>
+                    <SelectTrigger><SelectValue placeholder="Select course" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="STEM">Science, Technology, Engineering and Mathematics (STEM)</SelectItem>
+                      <SelectItem value="ABM">Accountancy, Business and Management (ABM)</SelectItem>
+                      <SelectItem value="HUMSS">Humanities and Social Sciences (HUMSS)</SelectItem>
+                      <SelectItem value="GAS">General Academic Strand (GAS)</SelectItem>
+                      <SelectItem value="TVL">Technical-Vocational-Livelihood (TVL)</SelectItem>
+                      <SelectItem value="BSEd">Bachelor of Secondary Education (BSEd)</SelectItem>
+                      <SelectItem value="BEEd">Bachelor of Elementary Education (BEEd)</SelectItem>
+                      <SelectItem value="BSBA">Bachelor of Science in Business Administration (BSBA)</SelectItem>
+                      <SelectItem value="BSA">Bachelor of Science in Accountancy (BSA)</SelectItem>
+                      <SelectItem value="BSIT">Bachelor of Science in Information Technology (BSIT)</SelectItem>
+                      <SelectItem value="BSCS">Bachelor of Science in Computer Science (BSCS)</SelectItem>
+                      <SelectItem value="BSN">Bachelor of Science in Nursing (BSN)</SelectItem>
+                      <SelectItem value="BSM">Bachelor of Science in Midwifery (BSM)</SelectItem>
+                      <SelectItem value="BSAg">Bachelor of Science in Agriculture (BSAg)</SelectItem>
+                      <SelectItem value="BSF">Bachelor of Science in Fisheries (BSF)</SelectItem>
+                      <SelectItem value="BSCrim">Bachelor of Science in Criminology (BSCrim)</SelectItem>
+                      <SelectItem value="BSTM">Bachelor of Science in Tourism Management (BSTM)</SelectItem>
+                      <SelectItem value="BSHM">Bachelor of Science in Hospitality Management (BSHM)</SelectItem>
+                      <SelectItem value="BSSW">Bachelor of Science in Social Work (BSSW)</SelectItem>
+                      <SelectItem value="AB Communication">Bachelor of Arts in Communication</SelectItem>
+                      <SelectItem value="BSCE">Bachelor of Science in Civil Engineering (BSCE)</SelectItem>
+                      <SelectItem value="BSEEct">Bachelor of Science in Electrical Engineering (BSEE)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FieldError field="course" />
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label>Year Level *</Label>
