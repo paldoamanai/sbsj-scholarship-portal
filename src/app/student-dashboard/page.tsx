@@ -110,7 +110,8 @@ export default function StudentDashboardPage() {
 
   const currentApp = applications[0];
   const isDisbursed = currentApp?.disbursement_status === "Disbursed";
-  const locked = isDisbursed;
+  const isApproved = currentApp?.status === "Approved";
+  const locked = isApproved || isDisbursed;
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -118,7 +119,7 @@ export default function StudentDashboardPage() {
     router.refresh();
   };
 
-  const lockedToast = () => toast.error("Locked: scholarship has been disbursed.");
+  const lockedToast = () => toast.error("Locked: you already have an approved or disbursed scholarship.");
   const guard = (fn: () => void) => () => (locked ? lockedToast() : fn());
 
   const statusBadge = (status: string | null | undefined) => {
@@ -154,8 +155,8 @@ export default function StudentDashboardPage() {
           {profile?.profile_picture_url ? (
             <img src={profile.profile_picture_url} alt="Profile" className="h-20 w-20 rounded-full object-cover" />
           ) : (
-            <div className="h-20 w-20 rounded-full bg-accent flex items-center justify-center">
-              <User className="h-10 w-10 text-primary" />
+            <div className="h-20 w-20 rounded-full bg-orange-100 flex items-center justify-center">
+              <User className="h-10 w-10 text-orange-600" />
             </div>
           )}
           <div className="flex-1 text-center sm:text-left">
@@ -163,7 +164,7 @@ export default function StudentDashboardPage() {
             <p className="text-sm text-muted-foreground">{profile?.course || "—"} {profile?.year_level ? `• ${profile.year_level}` : ""}</p>
             <p className="text-sm text-muted-foreground">{profile?.school_name || "—"}</p>
           </div>
-          {locked && <Badge variant="outline" className="border-destructive text-destructive"><Lock className="mr-1 h-3 w-3" /> Locked (Disbursed)</Badge>}
+          {locked && <Badge variant="outline" className="border-destructive text-destructive"><Lock className="mr-1 h-3 w-3" /> {isDisbursed ? "Disbursed" : "Approved — Locked"}</Badge>}
         </CardContent>
       </Card>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -355,58 +356,232 @@ export default function StudentDashboardPage() {
     </Card>
   );
 
-  const Disbursement = () => (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Total Disbursed</p><p className="text-2xl font-bold mt-1">₱{payments.filter(p => p.status === "Disbursed").reduce((s, p) => s + p.amount, 0).toLocaleString()}</p></CardContent></Card>
-        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Status</p><div className="mt-2">{statusBadge(currentApp?.disbursement_status || "—")}</div></CardContent></Card>
-      </div>
-      <Card>
-        <CardHeader><CardTitle className="font-display">Disbursement Timeline</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          {payments.length === 0 && <p className="text-sm text-muted-foreground">No payments yet.</p>}
-          {payments.map((p, i) => (
-            <div key={p.id} className="flex items-center gap-3">
-              <div className={`h-3 w-3 rounded-full ${p.status === "Disbursed" ? "bg-success" : "bg-warning"}`} />
-              <div className="flex-1">
-                <p className="text-sm font-medium">Tranche {i + 1} — ₱{p.amount.toLocaleString()}</p>
-                <p className="text-xs text-muted-foreground">{p.scheduled_date || "—"} {p.method}</p>
-              </div>
-              {statusBadge(p.status)}
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-    </div>
-  );
+  const Disbursement = () => {
+    const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+    const [receiptFiles, setReceiptFiles] = useState<Record<string, File | null>>({});
+    const [uploadedIds, setUploadedIds] = useState<string[]>([]);
 
-  const Payments = () => (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="font-display">Payment History</CardTitle>
-        <Button size="sm" variant="outline"><Download className="mr-1 h-3 w-3" /> Download Receipts</Button>
-      </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader><TableRow>
-            <TableHead>Reference</TableHead><TableHead>Date</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Status</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {payments.length === 0 && <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">No payments yet</TableCell></TableRow>}
-            {payments.map((p) => (
-              <TableRow key={p.id}>
-                <TableCell className="font-mono text-xs">{p.reference || "—"}</TableCell>
-                <TableCell>{p.scheduled_date || "—"}</TableCell>
-                <TableCell>₱{p.amount.toLocaleString()}</TableCell>
-                <TableCell>{p.method}</TableCell>
-                <TableCell>{statusBadge(p.status)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
-  );
+    const handleReceiptUpload = async (paymentId: string) => {
+      const file = receiptFiles[paymentId];
+      if (!file) return;
+      setUploadingFor(paymentId);
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        const path = `${user.id}/receipts/${paymentId}/${file.name}`;
+        await supabase.storage.from("documents").upload(path, file, { upsert: true });
+        const { data: urlData } = supabase.storage.from("documents").getPublicUrl(path);
+        await supabase.from("documents").insert({
+          user_id: user.id,
+          document_type: "Payment Receipt",
+          file_url: urlData.publicUrl,
+          file_name: file.name,
+        });
+        toast.success("Receipt uploaded successfully.");
+        setUploadedIds((prev) => [...prev, paymentId]);
+      } catch {
+        toast.error("Failed to upload receipt.");
+      } finally {
+        setUploadingFor(null);
+      }
+    };
+
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Total Disbursed</p><p className="text-2xl font-bold mt-1">₱{payments.filter(p => p.status === "Disbursed").reduce((s, p) => s + p.amount, 0).toLocaleString()}</p></CardContent></Card>
+          <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Status</p><div className="mt-2">{statusBadge(currentApp?.disbursement_status || "—")}</div></CardContent></Card>
+        </div>
+        <Card>
+          <CardHeader><CardTitle className="font-display">Disbursement Records</CardTitle></CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Amount</TableHead>
+                  <TableHead>Method</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Receipt</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {payments.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No payments yet.</TableCell>
+                  </TableRow>
+                )}
+                {payments.map((p) => {
+                  const isDisbursedPay = p.status === "Disbursed";
+                  const alreadyUploaded = uploadedIds.includes(p.id);
+                  return (
+                    <TableRow key={p.id}>
+                      <TableCell className="font-mono text-xs">{p.reference || "—"}</TableCell>
+                      <TableCell className="font-medium">₱{p.amount.toLocaleString()}</TableCell>
+                      <TableCell>
+                        {p.method ? (
+                          <span className={`inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full ${
+                            p.method === "Cheque" ? "bg-blue-100 text-blue-700"
+                            : p.method === "Cash" ? "bg-green-100 text-green-700"
+                            : "bg-muted text-muted-foreground"
+                          }`}>
+                            {p.method}
+                          </span>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell className="text-sm">{p.scheduled_date || "—"}</TableCell>
+                      <TableCell>{statusBadge(p.status)}</TableCell>
+                      <TableCell>
+                        {!isDisbursedPay ? (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        ) : alreadyUploaded ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-success font-medium">
+                            <CheckCircle className="h-3.5 w-3.5" /> Submitted
+                          </span>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <label className="cursor-pointer flex items-center gap-1 text-xs text-muted-foreground border rounded px-2 py-1 hover:bg-muted transition-colors">
+                              <Upload className="h-3 w-3" />
+                              {receiptFiles[p.id] ? receiptFiles[p.id]!.name.slice(0, 12) + "…" : "Choose file"}
+                              <input
+                                type="file"
+                                className="hidden"
+                                accept=".pdf,.jpg,.jpeg,.png"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0] ?? null;
+                                  setReceiptFiles((prev) => ({ ...prev, [p.id]: file }));
+                                }}
+                              />
+                            </label>
+                            <Button
+                              size="sm"
+                              className="h-7 px-2 text-xs bg-gradient-primary"
+                              disabled={!receiptFiles[p.id] || uploadingFor === p.id}
+                              onClick={() => handleReceiptUpload(p.id)}
+                            >
+                              {uploadingFor === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Upload"}
+                            </Button>
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  };
+
+  const Payments = () => {
+    const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+    const [receiptFiles, setReceiptFiles] = useState<Record<string, File | null>>({});
+    const [uploadedIds, setUploadedIds] = useState<string[]>([]);
+
+    const handleReceiptUpload = async (paymentId: string) => {
+      const file = receiptFiles[paymentId];
+      if (!file) return;
+      setUploadingFor(paymentId);
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        const path = `${user.id}/receipts/${paymentId}/${file.name}`;
+        await supabase.storage.from("documents").upload(path, file, { upsert: true });
+        const { data: urlData } = supabase.storage.from("documents").getPublicUrl(path);
+        await supabase.from("documents").insert({
+          user_id: user.id,
+          document_type: "Payment Receipt",
+          file_url: urlData.publicUrl,
+          file_name: file.name,
+        });
+        toast.success("Receipt uploaded successfully.");
+        setUploadedIds((prev) => [...prev, paymentId]);
+      } catch {
+        toast.error("Failed to upload receipt.");
+      } finally {
+        setUploadingFor(null);
+      }
+    };
+
+    return (
+      <div className="space-y-4">
+        {payments.some((p) => p.status === "Disbursed") && (
+          <Card className="border-primary/20 bg-primary/5">
+            <CardContent className="py-3 flex items-start gap-2">
+              <Upload className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+              <p className="text-sm text-muted-foreground">
+                Please upload your <strong className="text-foreground">signed receipt</strong> for each disbursed payment below to complete your record.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="font-display">Payment History</CardTitle>
+            <Button size="sm" variant="outline"><Download className="mr-1 h-3 w-3" /> Download Receipts</Button>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {payments.length === 0 && <p className="text-center py-8 text-sm text-muted-foreground">No payments yet.</p>}
+            {payments.map((p) => {
+              const isDisbursedPay = p.status === "Disbursed";
+              const alreadyUploaded = uploadedIds.includes(p.id);
+              return (
+                <div key={p.id} className={`rounded-xl border p-4 space-y-3 ${isDisbursedPay ? "border-success/30 bg-success/5" : ""}`}>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="space-y-0.5">
+                      <p className="text-sm font-semibold text-foreground">
+                        ₱{p.amount.toLocaleString()}
+                        <span className="ml-2 text-xs font-normal text-muted-foreground">via {p.method || "—"}</span>
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {p.reference ? `Ref: ${p.reference}` : "No reference"} · {p.scheduled_date || "—"}
+                      </p>
+                    </div>
+                    {statusBadge(p.status)}
+                  </div>
+
+                  {isDisbursedPay && !alreadyUploaded && (
+                    <div className="flex items-center gap-2 pt-1 border-t border-border/50">
+                      <label className="flex-1 flex items-center gap-2 cursor-pointer rounded-lg border border-dashed px-3 py-2 hover:bg-muted/30 transition-colors text-sm text-muted-foreground">
+                        <Upload className="h-4 w-4 shrink-0" />
+                        <span className="truncate">{receiptFiles[p.id] ? receiptFiles[p.id]!.name : "Upload your signed receipt"}</span>
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept=".pdf,.jpg,.jpeg,.png"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] ?? null;
+                            setReceiptFiles((prev) => ({ ...prev, [p.id]: file }));
+                          }}
+                        />
+                      </label>
+                      <Button
+                        size="sm"
+                        disabled={!receiptFiles[p.id] || uploadingFor === p.id}
+                        onClick={() => handleReceiptUpload(p.id)}
+                        className="bg-gradient-primary shrink-0"
+                      >
+                        {uploadingFor === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Submit"}
+                      </Button>
+                    </div>
+                  )}
+
+                  {(isDisbursedPay && alreadyUploaded) && (
+                    <div className="flex items-center gap-2 pt-1 border-t border-border/50 text-xs text-success">
+                      <CheckCircle className="h-3.5 w-3.5" /> Receipt submitted
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  };
 
   const Notifications = () => (
     <Card>
@@ -491,7 +666,7 @@ export default function StudentDashboardPage() {
                 {profile?.profile_picture_url ? (
                   <img src={profile.profile_picture_url} alt="Profile" className="h-24 w-24 rounded-full object-cover" />
                 ) : (
-                  <div className="h-24 w-24 rounded-full bg-accent flex items-center justify-center"><User className="h-10 w-10 text-primary" /></div>
+                  <div className="h-24 w-24 rounded-full bg-orange-100 flex items-center justify-center"><User className="h-10 w-10 text-orange-600" /></div>
                 )}
                 <Label className="absolute bottom-0 right-0 h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center cursor-pointer shadow-md hover:bg-primary/90">
                   <Input type="file" className="hidden" accept="image/*" disabled={locked || uploading} onChange={handlePhotoUpload} />
@@ -654,7 +829,7 @@ export default function StudentDashboardPage() {
               {profile?.profile_picture_url ? (
                 <img src={profile.profile_picture_url} alt="" className="h-full w-full object-cover" />
               ) : (
-                <div className="h-full w-full bg-accent flex items-center justify-center"><User className="h-4 w-4 text-primary" /></div>
+                <div className="h-full w-full bg-orange-100 flex items-center justify-center"><User className="h-4 w-4 text-orange-600" /></div>
               )}
             </button>
           </div>

@@ -20,6 +20,113 @@ import { createClient } from "@/lib/supabase/client";
 
 const stepLabels = ["Account", "Personal Info", "School Info", "Documents", "Apply"];
 
+// ── School → courses map ──────────────────────────────────────────────────────
+
+type Course = { value: string; label: string };
+
+const SHS_STRANDS: Course[] = [
+  { value: "STEM", label: "Science, Technology, Engineering and Mathematics (STEM)" },
+  { value: "ABM",  label: "Accountancy, Business and Management (ABM)" },
+  { value: "HUMSS", label: "Humanities and Social Sciences (HUMSS)" },
+  { value: "GAS",  label: "General Academic Strand (GAS)" },
+  { value: "TVL",  label: "Technical-Vocational-Livelihood (TVL)" },
+];
+
+const COURSES_BY_SCHOOL: Record<string, Course[]> = {
+  "Occidental Mindoro State College - Main Campus": [
+    { value: "BSIT",              label: "BS Information Technology (BSIT)" },
+    { value: "BSCS",              label: "BS Computer Science" },
+    { value: "BSAg",              label: "BS Agriculture" },
+    { value: "BSAgTech",          label: "BS Agricultural Technology" },
+    { value: "BSAgroforestry",    label: "BS Agroforestry" },
+    { value: "BSCrim",            label: "BS Criminology" },
+    { value: "BSHM",              label: "BS Hospitality Management" },
+    { value: "BSTM",              label: "BS Tourism Management" },
+    { value: "BSBA",              label: "BS Business Administration" },
+    { value: "BSEntrepreneurship", label: "BS Entrepreneurship" },
+    { value: "BEEd",              label: "Bachelor of Elementary Education (BEEd)" },
+    { value: "BSEd",              label: "Bachelor of Secondary Education (BSEd)" },
+    { value: "BPE",               label: "Bachelor of Physical Education" },
+    { value: "BSF",               label: "BS Fisheries" },
+    { value: "BSN",               label: "BS Nursing" },
+    { value: "BSM",               label: "BS Midwifery" },
+    { value: "BSSA",              label: "BS Social Work" },
+  ],
+  "Occidental Mindoro State College - San Jose Campus": [
+    { value: "BSIT",              label: "BS Information Technology (BSIT)" },
+    { value: "BSCS",              label: "BS Computer Science" },
+    { value: "BSAg",              label: "BS Agriculture" },
+    { value: "BSAgTech",          label: "BS Agricultural Technology" },
+    { value: "BSAgroforestry",    label: "BS Agroforestry" },
+    { value: "BSCrim",            label: "BS Criminology" },
+    { value: "BSHM",              label: "BS Hospitality Management" },
+    { value: "BSTM",              label: "BS Tourism Management" },
+    { value: "BSBA",              label: "BS Business Administration" },
+    { value: "BSEntrepreneurship", label: "BS Entrepreneurship" },
+    { value: "BEEd",              label: "Bachelor of Elementary Education (BEEd)" },
+    { value: "BSEd",              label: "Bachelor of Secondary Education (BSEd)" },
+    { value: "BPE",               label: "Bachelor of Physical Education" },
+    { value: "BSF",               label: "BS Fisheries" },
+    { value: "TESDA-Automotive",  label: "TESDA – Automotive Servicing" },
+    { value: "TESDA-Welding",     label: "TESDA – Welding Technology" },
+    { value: "TESDA-Electrical",  label: "TESDA – Electrical Technology" },
+    { value: "TESDA-FoodService", label: "TESDA – Food Service Management" },
+  ],
+  "Occidental Mindoro State College - Murtha Lower Campus": [
+    { value: "BSAg",           label: "BS Agriculture" },
+    { value: "BSAgTech",       label: "BS Agricultural Technology" },
+    { value: "BSAgroforestry", label: "BS Agroforestry" },
+    { value: "BSAgribusiness", label: "Agribusiness Management" },
+    { value: "BSAnimalSci",    label: "Animal Science" },
+    { value: "BSCropSci",      label: "Crop Science" },
+  ],
+  "Occidental Mindoro State College - Murtha Campus": [
+    { value: "BSAg",           label: "BS Agriculture" },
+    { value: "BSAgTech",       label: "BS Agricultural Technology" },
+    { value: "BSAgroforestry", label: "BS Agroforestry" },
+    { value: "BSAgribusiness", label: "Agribusiness Management" },
+    { value: "BSAnimalSci",    label: "Animal Science" },
+    { value: "BSCropSci",      label: "Crop Science" },
+  ],
+  "Divine Word College of San Jose": [
+    { value: "BSN",   label: "BS Nursing" },
+    { value: "BSIT",  label: "BS Information Technology" },
+    { value: "BSBA",  label: "BS Business Administration" },
+    { value: "BSCrim", label: "BS Criminology" },
+    { value: "BSHM",  label: "BS Hospitality Management" },
+    { value: "BSTM",  label: "BS Tourism Management" },
+    { value: "BEEd",  label: "Bachelor of Elementary Education (BEEd)" },
+    { value: "BSEd",  label: "Bachelor of Secondary Education (BSEd)" },
+  ],
+  "Philippine Central Islands College": [
+    { value: "BSCrim", label: "BS Criminology" },
+    { value: "BSBA",  label: "BS Business Administration" },
+    { value: "BSIT",  label: "BS Information Technology" },
+    { value: "BSHM",  label: "BS Hospitality Management" },
+    { value: "BEEd",  label: "Education Programs" },
+    { value: "TESDA-PICOL", label: "TESDA Courses" },
+  ],
+  "Occidental Mindoro National College": [
+    { value: "BSBA-OMNC",  label: "Business Courses" },
+    { value: "BEEd-OMNC",  label: "Education Courses" },
+    { value: "BSIT-OMNC",  label: "Computer-related Programs" },
+    { value: "TVL-OMNC",   label: "Technical-Vocational Courses" },
+  ],
+  "CAPT. LAWRENCE A. COOPER TECHNICAL COLLEGE": [
+    { value: "BSIT-Cooper",      label: "BS Information Technology" },
+    { value: "BSEE-Cooper",      label: "BS Electrical Engineering Technology" },
+    { value: "BSME-Cooper",      label: "BS Mechanical Engineering Technology" },
+    { value: "TESDA-Cooper",     label: "TESDA Technical Programs" },
+  ],
+  "Saint Joseph College Seminary": [
+    { value: "AB-Philosophy",   label: "AB Philosophy" },
+    { value: "AB-Theology",     label: "AB Theology" },
+    { value: "BEEd-Seminary",  label: "Bachelor of Elementary Education" },
+  ],
+};
+
+const PREREQUISITE_DOCS = ["Valid ID", "Grades"] as const;
+
 const requiredDocuments = [
   "Valid ID",
   "Grades",
@@ -60,14 +167,23 @@ export default function RegisterPage() {
 
   // Step 4 — Scholarship selection
   const [selectedScholarship, setSelectedScholarship] = useState("");
-  const [scholarships, setScholarships] = useState<{ id: string; name: string }[]>([]);
+  const [scholarships, setScholarships] = useState<{
+    id: string; name: string; description: string | null;
+    eligibility: string | null; deadline: string | null;
+    amount: number; slots: number;
+  }[]>([]);
+  const [scholarsLoading, setScholarsLoading] = useState(false);
+  const [scholarsError, setScholarsError] = useState(false);
 
   useEffect(() => {
     if (step === 4) {
+      setScholarsLoading(true);
+      setScholarsError(false);
       fetch("/api/scholarships")
         .then((r) => r.json())
-        .then((data) => Array.isArray(data) && setScholarships(data))
-        .catch(() => {});
+        .then((data) => { if (Array.isArray(data)) setScholarships(data); })
+        .catch(() => setScholarsError(true))
+        .finally(() => setScholarsLoading(false));
     }
   }, [step]);
 
@@ -104,6 +220,10 @@ export default function RegisterPage() {
       if (!academic.yearLevel) errs.yearLevel = "Required";
       if (!academic.averageGrade.trim()) errs.averageGrade = "Required";
       else if (parseFloat(academic.averageGrade) < 85) errs.averageGrade = "Must be 85 or above to be eligible";
+    } else if (step === 3) {
+      const missing = PREREQUISITE_DOCS.filter((doc) => !docFiles[doc]);
+      if (missing.length > 0)
+        errs.docs = `Please upload the following required documents before proceeding: ${missing.join(" and ")}.`;
     }
 
     setErrors(errs);
@@ -232,7 +352,8 @@ export default function RegisterPage() {
           ))}
         </div>
 
-        <Card>
+        <Card className="overflow-hidden">
+          <div className="h-1.5 bg-gradient-primary" />
           <CardHeader>
             <CardTitle className="font-display flex items-center gap-2">
               {step === 0 && <><Lock className="h-5 w-5 text-primary" /> Account Setup</>}
@@ -359,79 +480,44 @@ export default function RegisterPage() {
             {/* STEP 2: Academic */}
             {step === 2 && (
               <>
-                <div>
-                  <Label>School Name *</Label>
-                  <Select value={academic.schoolName} onValueChange={(v) => updateAcademic("schoolName", v)}>
-                    <SelectTrigger><SelectValue placeholder="Select school" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="San Jose National High School">San Jose National High School</SelectItem>
-                      <SelectItem value="Ambulong National High School">Ambulong National High School</SelectItem>
-                      <SelectItem value="Bangkuro National High School">Bangkuro National High School</SelectItem>
-                      <SelectItem value="Batong Buhay National High School">Batong Buhay National High School</SelectItem>
-                      <SelectItem value="Bubog National High School">Bubog National High School</SelectItem>
-                      <SelectItem value="Caminawit National High School">Caminawit National High School</SelectItem>
-                      <SelectItem value="Inarawan National High School">Inarawan National High School</SelectItem>
-                      <SelectItem value="Ipil National High School">Ipil National High School</SelectItem>
-                      <SelectItem value="Labangan National High School">Labangan National High School</SelectItem>
-                      <SelectItem value="Mangarin National High School">Mangarin National High School</SelectItem>
-                      <SelectItem value="Poypoy National High School">Poypoy National High School</SelectItem>
-                      <SelectItem value="San Agustin National High School">San Agustin National High School</SelectItem>
-                      <SelectItem value="Tayamaan National High School">Tayamaan National High School</SelectItem>
-                      <SelectItem value="Occidental Mindoro State College (OMSC)">Occidental Mindoro State College (OMSC)</SelectItem>
-                      <SelectItem value="Saint Joseph College of Occidental Mindoro (SJCOM)">Saint Joseph College of Occidental Mindoro (SJCOM)</SelectItem>
-                      <SelectItem value="AMA Computer College - San Jose">AMA Computer College - San Jose</SelectItem>
-                      <SelectItem value="STI College - San Jose">STI College - San Jose</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FieldError field="schoolName" />
-                </div>
-                <div>
-                  <Label>Course *</Label>
-                  <Select value={academic.course} onValueChange={(v) => updateAcademic("course", v)}>
-                    <SelectTrigger><SelectValue placeholder="Select course" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="STEM">Science, Technology, Engineering and Mathematics (STEM)</SelectItem>
-                      <SelectItem value="ABM">Accountancy, Business and Management (ABM)</SelectItem>
-                      <SelectItem value="HUMSS">Humanities and Social Sciences (HUMSS)</SelectItem>
-                      <SelectItem value="GAS">General Academic Strand (GAS)</SelectItem>
-                      <SelectItem value="TVL">Technical-Vocational-Livelihood (TVL)</SelectItem>
-                      <SelectItem value="BSEd">Bachelor of Secondary Education (BSEd)</SelectItem>
-                      <SelectItem value="BEEd">Bachelor of Elementary Education (BEEd)</SelectItem>
-                      <SelectItem value="BSBA">Bachelor of Science in Business Administration (BSBA)</SelectItem>
-                      <SelectItem value="BSA">Bachelor of Science in Accountancy (BSA)</SelectItem>
-                      <SelectItem value="BSIT">Bachelor of Science in Information Technology (BSIT)</SelectItem>
-                      <SelectItem value="BSCS">Bachelor of Science in Computer Science (BSCS)</SelectItem>
-                      <SelectItem value="BSN">Bachelor of Science in Nursing (BSN)</SelectItem>
-                      <SelectItem value="BSM">Bachelor of Science in Midwifery (BSM)</SelectItem>
-                      <SelectItem value="BSAg">Bachelor of Science in Agriculture (BSAg)</SelectItem>
-                      <SelectItem value="BSF">Bachelor of Science in Fisheries (BSF)</SelectItem>
-                      <SelectItem value="BSCrim">Bachelor of Science in Criminology (BSCrim)</SelectItem>
-                      <SelectItem value="BSTM">Bachelor of Science in Tourism Management (BSTM)</SelectItem>
-                      <SelectItem value="BSHM">Bachelor of Science in Hospitality Management (BSHM)</SelectItem>
-                      <SelectItem value="BSSW">Bachelor of Science in Social Work (BSSW)</SelectItem>
-                      <SelectItem value="AB Communication">Bachelor of Arts in Communication</SelectItem>
-                      <SelectItem value="BSCE">Bachelor of Science in Civil Engineering (BSCE)</SelectItem>
-                      <SelectItem value="BSEEct">Bachelor of Science in Electrical Engineering (BSEE)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FieldError field="course" />
-                </div>
+                {/* Year Level — first so school list filters accordingly */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label>Year Level *</Label>
-                    <Select value={academic.yearLevel} onValueChange={(v) => updateAcademic("yearLevel", v)}>
-                      <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                    <Select
+                      value={academic.yearLevel}
+                      onValueChange={(v) => {
+                        // Reset school & course when level category changes
+                        const wasSHS = ["Grade 11", "Grade 12"].includes(academic.yearLevel);
+                        const nowSHS = ["Grade 11", "Grade 12"].includes(v);
+                        if (wasSHS !== nowSHS) {
+                          setAcademic((p) => ({ ...p, yearLevel: v, schoolName: "", course: "" }));
+                          setErrors((p) => ({ ...p, yearLevel: "", schoolName: "", course: "" }));
+                        } else {
+                          updateAcademic("yearLevel", v);
+                        }
+                      }}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Select year level" /></SelectTrigger>
                       <SelectContent>
-                        {["Grade 11", "Grade 12", "1st Year", "2nd Year", "3rd Year", "4th Year"].map((y) => (
-                          <SelectItem key={y} value={y}>{y}</SelectItem>
-                        ))}
+                        <SelectItem value="Grade 11">Grade 11 (SHS)</SelectItem>
+                        <SelectItem value="Grade 12">Grade 12 (SHS)</SelectItem>
+                        <SelectItem value="1st Year">1st Year (College)</SelectItem>
+                        <SelectItem value="2nd Year">2nd Year (College)</SelectItem>
+                        <SelectItem value="3rd Year">3rd Year (College)</SelectItem>
+                        <SelectItem value="4th Year">4th Year (College)</SelectItem>
                       </SelectContent>
                     </Select>
                     <FieldError field="yearLevel" />
                   </div>
                   <div>
                     <Label>Average Grade *</Label>
-                    <Input type="number" value={academic.averageGrade} onChange={(e) => updateAcademic("averageGrade", e.target.value)} placeholder="e.g. 88" />
+                    <Input
+                      type="number"
+                      value={academic.averageGrade}
+                      onChange={(e) => updateAcademic("averageGrade", e.target.value)}
+                      placeholder="e.g. 88"
+                    />
                     <FieldError field="averageGrade" />
                     {gradeWarning && (
                       <div className="flex items-center gap-1.5 mt-2 text-xs text-destructive">
@@ -441,70 +527,279 @@ export default function RegisterPage() {
                     )}
                   </div>
                 </div>
+
+                {/* School — filtered by year level */}
+                <div>
+                  <Label>School Name *</Label>
+                  <Select
+                    value={academic.schoolName}
+                    onValueChange={(v) => {
+                      setAcademic((p) => ({ ...p, schoolName: v, course: "" }));
+                      setErrors((p) => ({ ...p, schoolName: "", course: "" }));
+                    }}
+                    disabled={!academic.yearLevel}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={academic.yearLevel ? "Select school" : "Select year level first"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {["Grade 11", "Grade 12"].includes(academic.yearLevel) ? (
+                        <>
+                          <SelectItem value="San Jose National High School">San Jose National High School</SelectItem>
+                          <SelectItem value="San Jose National Agricultural & Industrial High School">San Jose National Agricultural &amp; Industrial High School</SelectItem>
+                          <SelectItem value="Divine Word College of San Jose (SHS)">Divine Word College of San Jose</SelectItem>
+                          <SelectItem value="Pedro T. Mendiola Sr. Memorial National High School">Pedro T. Mendiola Sr. Memorial National High School</SelectItem>
+                          <SelectItem value="Mangarin National High School">Mangarin National High School</SelectItem>
+                          <SelectItem value="Central National High School">Central National High School</SelectItem>
+                          <SelectItem value="301600 Central National High School">301600 Central National High School</SelectItem>
+                          <SelectItem value="San Agustin High School">San Agustin High School</SelectItem>
+                          <SelectItem value="Caminawit National High School">Caminawit National High School</SelectItem>
+                          <SelectItem value="Iling National High School">Iling National High School</SelectItem>
+                          <SelectItem value="Iling National High School – Pawican Annex">Iling National High School – Pawican Annex</SelectItem>
+                          <SelectItem value="Holy Family Academy of Central">Holy Family Academy of Central</SelectItem>
+                          <SelectItem value="San Jose Adventist Academy Inc.">San Jose Adventist Academy Inc.</SelectItem>
+                        </>
+                      ) : ["1st Year", "2nd Year", "3rd Year", "4th Year"].includes(academic.yearLevel) ? (
+                        <>
+                          <SelectItem value="Occidental Mindoro State College - Main Campus">Occidental Mindoro State College – Main Campus</SelectItem>
+                          <SelectItem value="Occidental Mindoro State College - San Jose Campus">Occidental Mindoro State College – San Jose Campus</SelectItem>
+                          <SelectItem value="Occidental Mindoro State College - Murtha Lower Campus">Occidental Mindoro State College – Murtha Lower Campus</SelectItem>
+                          <SelectItem value="Occidental Mindoro State College - Murtha Campus">Occidental Mindoro State College – Murtha Campus</SelectItem>
+                          <SelectItem value="Divine Word College of San Jose">Divine Word College of San Jose</SelectItem>
+                          <SelectItem value="Philippine Central Islands College">Philippine Central Islands College</SelectItem>
+                          <SelectItem value="Occidental Mindoro National College">Occidental Mindoro National College</SelectItem>
+                          <SelectItem value="CAPT. LAWRENCE A. COOPER TECHNICAL COLLEGE">CAPT. LAWRENCE A. COOPER TECHNICAL COLLEGE</SelectItem>
+                          <SelectItem value="Saint Joseph College Seminary">Saint Joseph College Seminary</SelectItem>
+                        </>
+                      ) : null}
+                    </SelectContent>
+                  </Select>
+                  <FieldError field="schoolName" />
+                </div>
+
+                {/* Course / Strand — filtered by school (college) or year level (SHS) */}
+                <div>
+                  <Label>Course / Strand *</Label>
+                  <Select
+                    value={academic.course}
+                    onValueChange={(v) => updateAcademic("course", v)}
+                    disabled={!academic.yearLevel || (["1st Year", "2nd Year", "3rd Year", "4th Year"].includes(academic.yearLevel) && !academic.schoolName)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={
+                        !academic.yearLevel ? "Select year level first"
+                        : ["1st Year", "2nd Year", "3rd Year", "4th Year"].includes(academic.yearLevel) && !academic.schoolName
+                          ? "Select school first"
+                          : "Select course / strand"
+                      } />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {["Grade 11", "Grade 12"].includes(academic.yearLevel)
+                        ? SHS_STRANDS.map((c) => (
+                            <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                          ))
+                        : (COURSES_BY_SCHOOL[academic.schoolName] ?? []).map((c) => (
+                            <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                          ))
+                      }
+                    </SelectContent>
+                  </Select>
+                  <FieldError field="course" />
+                </div>
               </>
             )}
 
             {/* STEP 3: Document Upload */}
             {step === 3 && (
               <div className="space-y-4">
-                <p className="text-sm text-muted-foreground">Upload the required documents. You can also upload them later from your dashboard.</p>
-                {requiredDocuments.map((doc) => (
-                  <div key={doc} className="flex items-center justify-between rounded-lg border p-4">
-                    <div className="flex items-center gap-3">
-                      <Upload className={`h-5 w-5 ${docFiles[doc] ? "text-success" : "text-muted-foreground"}`} />
-                      <div>
-                        <p className="text-sm font-medium">{doc}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {docFiles[doc] ? docFiles[doc]!.name : "Not uploaded"}
-                        </p>
+                <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
+                  <span className="font-semibold text-primary">Valid ID</span> and <span className="font-semibold text-primary">Grades</span> are required to proceed. The remaining documents can be uploaded later from your dashboard.
+                </div>
+
+                {/* Prerequisites */}
+                <div className="space-y-2">
+                  <p className="text-xs font-bold text-primary tracking-widest uppercase">Required to Proceed</p>
+                  {PREREQUISITE_DOCS.map((doc) => (
+                    <div
+                      key={doc}
+                      className={`flex items-center justify-between rounded-lg border p-4 transition-colors ${
+                        docFiles[doc]
+                          ? "border-success/40 bg-success/5"
+                          : "border-primary/30 bg-primary/5"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Upload className={`h-5 w-5 ${docFiles[doc] ? "text-success" : "text-primary"}`} />
+                        <div>
+                          <p className="text-sm font-semibold">
+                            {doc}
+                            <span className="ml-1.5 text-primary text-xs">*</span>
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {docFiles[doc] ? docFiles[doc]!.name : "Required — not uploaded"}
+                          </p>
+                        </div>
                       </div>
+                      <Label className="cursor-pointer">
+                        <Input
+                          type="file"
+                          className="hidden"
+                          accept=".pdf,.jpg,.jpeg,.png"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] ?? null;
+                            setDocFiles((prev) => ({ ...prev, [doc]: file }));
+                            setErrors((p) => ({ ...p, docs: "" }));
+                          }}
+                        />
+                        <span className="inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted cursor-pointer">
+                          <Upload className="h-3 w-3" />
+                          {docFiles[doc] ? "Replace" : "Upload"}
+                        </span>
+                      </Label>
                     </div>
-                    <Label className="cursor-pointer">
-                      <Input
-                        type="file"
-                        className="hidden"
-                        accept=".pdf,.jpg,.jpeg,.png"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0] ?? null;
-                          setDocFiles((prev) => ({ ...prev, [doc]: file }));
-                        }}
-                      />
-                      <span className="inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted cursor-pointer">
-                        <Upload className="h-3 w-3" />
-                        {docFiles[doc] ? "Replace" : "Upload"}
-                      </span>
-                    </Label>
+                  ))}
+                </div>
+
+                {/* Optional documents */}
+                <div className="space-y-2">
+                  <p className="text-xs font-bold text-muted-foreground tracking-widest uppercase">Optional — Upload Later</p>
+                  {requiredDocuments.filter((d) => !(PREREQUISITE_DOCS as readonly string[]).includes(d)).map((doc) => (
+                    <div key={doc} className={`flex items-center justify-between rounded-lg border p-4 transition-colors ${docFiles[doc] ? "border-success/40 bg-success/5" : ""}`}>
+                      <div className="flex items-center gap-3">
+                        <Upload className={`h-5 w-5 ${docFiles[doc] ? "text-success" : "text-muted-foreground"}`} />
+                        <div>
+                          <p className="text-sm font-medium">{doc}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {docFiles[doc] ? docFiles[doc]!.name : "Not uploaded"}
+                          </p>
+                        </div>
+                      </div>
+                      <Label className="cursor-pointer">
+                        <Input
+                          type="file"
+                          className="hidden"
+                          accept=".pdf,.jpg,.jpeg,.png"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] ?? null;
+                            setDocFiles((prev) => ({ ...prev, [doc]: file }));
+                          }}
+                        />
+                        <span className="inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted cursor-pointer">
+                          <Upload className="h-3 w-3" />
+                          {docFiles[doc] ? "Replace" : "Upload"}
+                        </span>
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+
+                {errors.docs && (
+                  <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    {errors.docs}
                   </div>
-                ))}
+                )}
               </div>
             )}
 
             {/* STEP 4: Select Scholarship */}
             {step === 4 && (
               <div className="space-y-4">
-                <p className="text-sm text-muted-foreground">Select a scholarship program to apply for, or skip for now.</p>
-                <Select value={selectedScholarship} onValueChange={setSelectedScholarship}>
-                  <SelectTrigger><SelectValue placeholder="Select scholarship (optional)" /></SelectTrigger>
-                  <SelectContent>
-                    {scholarships.length === 0 ? (
-                      <SelectItem value="_loading" disabled>Loading scholarships…</SelectItem>
-                    ) : (
-                      scholarships.map((s) => (
-                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
-                <div className="rounded-lg border p-4 space-y-2">
-                  <h4 className="font-medium text-sm">Review Your Information</h4>
-                  <div className="grid grid-cols-2 gap-2 text-sm text-muted-foreground">
+                <p className="text-sm text-muted-foreground">
+                  Select from currently available scholarship programs below, or skip and apply later from your dashboard.
+                </p>
+
+                {/* Loading */}
+                {scholarsLoading && (
+                  <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading available scholarships…
+                  </div>
+                )}
+
+                {/* Error */}
+                {scholarsError && (
+                  <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    Failed to load scholarships. Check your connection and try again.
+                  </div>
+                )}
+
+                {/* Scholarship cards */}
+                {!scholarsLoading && !scholarsError && (
+                  scholarships.length === 0 ? (
+                    <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                      <GraduationCap className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                      No active scholarships at the moment. You can apply later from your dashboard.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {scholarships.map((s) => {
+                        const isSelected = selectedScholarship === s.id;
+                        const deadline = s.deadline
+                          ? new Date(s.deadline).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })
+                          : "Open";
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => setSelectedScholarship(isSelected ? "" : s.id)}
+                            className={`w-full text-left rounded-xl border p-4 transition-all duration-200 cursor-pointer ${
+                              isSelected
+                                ? "border-primary bg-primary/5 shadow-sm"
+                                : "border-border hover:border-primary/40 hover:bg-muted/30"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 space-y-1">
+                                <p className={`text-sm font-semibold ${isSelected ? "text-primary" : "text-foreground"}`}>
+                                  {s.name}
+                                </p>
+                                {s.description && (
+                                  <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                                    {s.description}
+                                  </p>
+                                )}
+                                {s.eligibility && (
+                                  <p className="text-xs text-muted-foreground">
+                                    <span className="font-medium text-foreground">Eligibility:</span> {s.eligibility}
+                                  </p>
+                                )}
+                                <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground">
+                                  <span>📅 Deadline: <span className="text-foreground font-medium">{deadline}</span></span>
+                                  {s.amount > 0 && <span>💰 ₱{s.amount.toLocaleString()} / scholar</span>}
+                                  {s.slots > 0 && <span>👥 {s.slots} slot{s.slots !== 1 ? "s" : ""}</span>}
+                                </div>
+                              </div>
+                              <div className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors ${
+                                isSelected ? "border-primary bg-primary" : "border-border"
+                              }`}>
+                                {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )
+                )}
+
+                {/* Review summary */}
+                <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
+                  <h4 className="font-semibold text-sm">Review Your Information</h4>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-muted-foreground">
                     <p>Name: <span className="text-foreground">{form.firstName} {form.lastName}</span></p>
                     <p>Email: <span className="text-foreground">{email}</span></p>
                     <p>School: <span className="text-foreground">{academic.schoolName}</span></p>
                     <p>Course: <span className="text-foreground">{academic.course}</span></p>
                     <p>Grade: <span className="text-foreground">{academic.averageGrade}</span></p>
-                    <p>Docs: <span className="text-foreground">{Object.values(docFiles).filter(Boolean).length}/{requiredDocuments.length}</span></p>
+                    <p>Docs uploaded: <span className="text-foreground">{Object.values(docFiles).filter(Boolean).length}/{requiredDocuments.length}</span></p>
                   </div>
+                  {selectedScholarship && (
+                    <p className="text-sm pt-1 border-t border-border/50">
+                      Applying for: <span className="font-semibold text-primary">{scholarships.find((s) => s.id === selectedScholarship)?.name}</span>
+                    </p>
+                  )}
                 </div>
               </div>
             )}

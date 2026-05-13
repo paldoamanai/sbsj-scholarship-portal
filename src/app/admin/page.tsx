@@ -71,6 +71,14 @@ export default function AdminDashboardPage() {
   const [adminProfile, setAdminProfile] = useState<any>(null);
   const [adminEmail, setAdminEmail] = useState("");
 
+  // Disburse dialog state
+  const [disbDialog, setDisbDialog] = useState(false);
+  const [disbPaymentId, setDisbPaymentId] = useState<string>("");
+  const [disbMethod, setDisbMethod] = useState<"Cheque" | "Cash">("Cash");
+  const [disbRef, setDisbRef] = useState("");
+  const [disbReceipt, setDisbReceipt] = useState<File | null>(null);
+  const [disbLoading, setDisbLoading] = useState(false);
+
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
@@ -315,7 +323,7 @@ export default function AdminDashboardPage() {
                   { label: "Pending", value: totals.pending, icon: Clock, color: "text-warning" },
                 ].map((stat, i) => (
                   <Card key={i}><CardContent className="flex items-center gap-3 py-5">
-                    <div className="h-11 w-11 rounded-xl bg-accent flex items-center justify-center shrink-0"><stat.icon className={`h-5 w-5 ${stat.color}`} /></div>
+                    <div className="h-11 w-11 rounded-xl bg-orange-100 flex items-center justify-center shrink-0"><stat.icon className={`h-5 w-5 ${stat.color}`} /></div>
                     <div className="min-w-0"><p className="text-2xl font-bold font-display">{stat.value}</p><p className="text-xs text-muted-foreground truncate">{stat.label}</p></div>
                   </CardContent></Card>
                 ))}
@@ -625,13 +633,13 @@ export default function AdminDashboardPage() {
               <Card className="border-warning/30 bg-warning/5">
                 <CardContent className="py-3 flex items-start gap-2">
                   <Lock className="h-4 w-4 text-warning mt-0.5" />
-                  <p className="text-sm text-muted-foreground">Disbursed payments are <strong className="text-foreground">locked</strong>. Editing and deletion are disabled.</p>
+                  <p className="text-sm text-muted-foreground">Disbursed payments are <strong className="text-foreground">locked</strong>. Only <strong className="text-foreground">Cheque</strong> and <strong className="text-foreground">Cash</strong> are accepted. A receipt upload is required before marking as disbursed.</p>
                 </CardContent>
               </Card>
               <Card>
                 <Table>
                   <TableHeader><TableRow>
-                    <TableHead>Reference</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Reference / Cheque No.</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {payments.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No payments yet</TableCell></TableRow>}
@@ -641,17 +649,30 @@ export default function AdminDashboardPage() {
                         <TableRow key={p.id}>
                           <TableCell className="font-mono text-xs">{p.reference || "—"}</TableCell>
                           <TableCell className="font-medium">{formatPHP(p.amount)}</TableCell>
-                          <TableCell>{p.method}</TableCell>
+                          <TableCell>
+                            <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
+                              p.method === "Cheque" ? "bg-blue-100 text-blue-700"
+                              : p.method === "Cash" ? "bg-green-100 text-green-700"
+                              : "bg-muted text-muted-foreground"
+                            }`}>
+                              {p.method || "—"}
+                            </span>
+                          </TableCell>
                           <TableCell>{p.scheduled_date || "—"}</TableCell>
                           <TableCell>{disbStatusBadge(p.status)}</TableCell>
                           <TableCell className="text-right space-x-1">
                             {isLocked ? (
                               <Button size="icon" variant="ghost" title="View receipt"><Receipt className="h-4 w-4" /></Button>
                             ) : (
-                              <Button size="sm" onClick={async () => {
-                                await supabase.from("payments").update({ status: "Disbursed", disbursed_at: new Date().toISOString() }).eq("id", p.id);
-                                toast.success("Marked as disbursed"); loadData();
-                              }}>Mark Disbursed</Button>
+                              <Button size="sm" onClick={() => {
+                                setDisbPaymentId(p.id);
+                                setDisbMethod("Cash");
+                                setDisbRef("");
+                                setDisbReceipt(null);
+                                setDisbDialog(true);
+                              }}>
+                                Mark Disbursed
+                              </Button>
                             )}
                           </TableCell>
                         </TableRow>
@@ -660,6 +681,100 @@ export default function AdminDashboardPage() {
                   </TableBody>
                 </Table>
               </Card>
+
+              {/* Disburse dialog */}
+              <Dialog open={disbDialog} onOpenChange={setDisbDialog}>
+                <DialogContent className="max-w-md">
+                  <DialogHeader>
+                    <DialogTitle className="font-display">Confirm Disbursement</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4 py-2">
+                    <div>
+                      <Label>Payment Method *</Label>
+                      <div className="grid grid-cols-2 gap-3 mt-2">
+                        {(["Cash", "Cheque"] as const).map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => { setDisbMethod(m); setDisbRef(""); }}
+                            className={`flex items-center justify-center gap-2 rounded-lg border p-3 text-sm font-medium transition-all cursor-pointer ${
+                              disbMethod === m
+                                ? "border-primary bg-primary/5 text-primary"
+                                : "border-border hover:border-primary/40"
+                            }`}
+                          >
+                            {m === "Cash" ? "💵" : "📄"} {m}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <Label>{disbMethod === "Cheque" ? "Cheque Number *" : "Reference Number"}</Label>
+                      <Input
+                        className="mt-1"
+                        placeholder={disbMethod === "Cheque" ? "e.g. CHK-2024-001" : "e.g. REF-001 (optional)"}
+                        value={disbRef}
+                        onChange={(e) => setDisbRef(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Receipt / Voucher *</Label>
+                      <p className="text-xs text-muted-foreground mb-2">Upload the signed receipt or disbursement voucher.</p>
+                      <label className="flex items-center gap-2 cursor-pointer rounded-lg border border-dashed p-3 hover:bg-muted/30 transition-colors">
+                        <Upload className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm text-muted-foreground">
+                          {disbReceipt ? disbReceipt.name : "Click to upload receipt (PDF / image)"}
+                        </span>
+                        <input
+                          type="file"
+                          accept=".pdf,.jpg,.jpeg,.png"
+                          className="hidden"
+                          onChange={(e) => setDisbReceipt(e.target.files?.[0] ?? null)}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setDisbDialog(false)}>Cancel</Button>
+                    <Button
+                      className="bg-gradient-primary"
+                      disabled={disbLoading || !disbReceipt || (disbMethod === "Cheque" && !disbRef.trim())}
+                      onClick={async () => {
+                        if (!disbReceipt) return;
+                        setDisbLoading(true);
+                        try {
+                          const { data: { user } } = await supabase.auth.getUser();
+                          const path = `receipts/${disbPaymentId}/${disbReceipt.name}`;
+                          await supabase.storage.from("documents").upload(path, disbReceipt, { upsert: true });
+                          const { data: urlData } = supabase.storage.from("documents").getPublicUrl(path);
+                          await supabase.from("payments").update({
+                            status: "Disbursed",
+                            method: disbMethod,
+                            reference: disbRef || null,
+                            disbursed_at: new Date().toISOString(),
+                          }).eq("id", disbPaymentId);
+                          await supabase.from("documents").insert({
+                            user_id: user?.id,
+                            document_type: "Payment Receipt",
+                            file_url: urlData.publicUrl,
+                            file_name: disbReceipt.name,
+                          });
+                          toast.success("Payment marked as disbursed");
+                          setDisbDialog(false);
+                          loadData();
+                        } catch {
+                          toast.error("Failed to process disbursement");
+                        } finally {
+                          setDisbLoading(false);
+                        }
+                      }}
+                    >
+                      {disbLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Confirm Disbursement
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </div>
           )}
 
@@ -891,7 +1006,7 @@ export default function AdminDashboardPage() {
                 <CardContent className="py-6 space-y-6">
                   <div className="flex items-center gap-4">
                     <div className="relative">
-                      <div className="h-20 w-20 rounded-full bg-accent flex items-center justify-center overflow-hidden">
+                      <div className="h-20 w-20 rounded-full bg-orange-100 flex items-center justify-center overflow-hidden">
                         {adminProfile?.profile_picture_url ? (
                           <img src={adminProfile.profile_picture_url} alt="Profile" className="h-20 w-20 rounded-full object-cover" />
                         ) : (
@@ -1007,7 +1122,7 @@ export default function AdminDashboardPage() {
               <Card>
                 <CardHeader><CardTitle className="text-base">Payment Methods</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
-                  {["Bank Transfer (LandBank)", "GCash", "E-Wallet", "Check", "Cash Assistance"].map((m) => (
+                  {["Cheque", "Cash"].map((m) => (
                     <div key={m} className="flex items-center justify-between border-b last:border-0 pb-3 last:pb-0">
                       <span className="text-sm">{m}</span><Switch defaultChecked={m !== "Cash Assistance"} />
                     </div>

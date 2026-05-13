@@ -4,16 +4,23 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
-import { Menu, X, LogOut } from "lucide-react";
+import { Home, Info, GraduationCap, Phone, LogOut, Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { createClient } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
 
 const navLinks = [
-  { label: "Home", path: "/" },
-  { label: "About", path: "/about" },
-  { label: "Scholarships", path: "/#scholarships" },
-  { label: "Contact", path: "/contact" },
+  { label: "Home",         path: "/",            icon: Home },
+  { label: "About",        path: "/about",        icon: Info },
+  { label: "Scholarships", path: "/#scholarships", icon: GraduationCap },
+  { label: "Contact",      path: "/contact",      icon: Phone },
 ];
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
@@ -25,9 +32,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data.user));
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
     });
     return () => subscription.unsubscribe();
@@ -39,10 +44,14 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     router.refresh();
   };
 
+  const activeLink = navLinks.find((l) => l.path === pathname);
+
   return (
     <div className="min-h-screen flex flex-col">
       <header className="sticky top-0 z-50 border-b bg-card/80 backdrop-blur-md">
         <div className="container flex h-16 items-center justify-between">
+
+          {/* Brand */}
           <Link href="/" className="flex items-center gap-3">
             <Image
               src="/municipal-logo.png"
@@ -59,92 +68,118 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
             </div>
           </Link>
 
-          <nav className="hidden md:flex items-center gap-1">
-            {navLinks.map((link) => (
-              <Link
-                key={link.path}
-                href={link.path}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                  pathname === link.path
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                }`}
-              >
-                {link.label}
-              </Link>
-            ))}
+          {/* Desktop nav */}
+          <nav className="hidden md:flex items-center gap-2">
             {user ? (
-              <div className="flex items-center gap-2 ml-2">
-                <span className="text-sm text-muted-foreground">
-                  Hi, {user.email?.split("@")[0]}
-                </span>
-                <Button size="sm" variant="outline" onClick={handleLogout}>
-                  <LogOut className="mr-1 h-4 w-4" /> Logout
-                </Button>
-              </div>
+              <span className="text-sm text-muted-foreground">
+                Hi, {user.email?.split("@")[0]}
+              </span>
             ) : (
-              <div className="flex items-center gap-2 ml-2">
-                <Link href="/login">
-                  <Button size="sm" variant="outline">
-                    Login
-                  </Button>
-                </Link>
-                <Link href="/register">
-                  <Button size="sm" className="bg-gradient-primary shadow-primary">
-                    Register
-                  </Button>
-                </Link>
-              </div>
+              <Link href="/register">
+                <Button size="sm" className="bg-gradient-primary shadow-primary cursor-pointer">
+                  Get Started
+                </Button>
+              </Link>
             )}
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground data-[state=open]:bg-muted"
+                  aria-label="Navigation menu"
+                >
+                  <Menu className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48 mt-1">
+                {navLinks.map((link) => {
+                  const Icon = link.icon;
+                  const isActive = pathname === link.path;
+                  return (
+                    <DropdownMenuItem key={link.path} asChild>
+                      <Link
+                        href={link.path}
+                        className={`flex items-center gap-2.5 cursor-pointer ${
+                          isActive ? "text-orange-700 font-semibold bg-orange-50" : ""
+                        }`}
+                      >
+                        <Icon className={`h-4 w-4 ${isActive ? "text-orange-600" : "text-muted-foreground"}`} />
+                        {link.label}
+                        {isActive && (
+                          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
+                        )}
+                      </Link>
+                    </DropdownMenuItem>
+                  );
+                })}
+                {user && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={handleLogout}
+                      className="flex items-center gap-2.5 text-muted-foreground cursor-pointer"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Logout
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </nav>
 
-          <button className="md:hidden p-2" onClick={() => setMobileOpen(!mobileOpen)}>
+          {/* Mobile hamburger */}
+          <button
+            className="md:hidden p-2 cursor-pointer"
+            onClick={() => setMobileOpen(!mobileOpen)}
+            aria-label="Toggle menu"
+          >
             {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
         </div>
 
+        {/* Mobile drawer */}
         {mobileOpen && (
           <nav className="md:hidden border-t bg-card p-4 animate-fade-in space-y-1">
-            {navLinks.map((link) => (
-              <Link
-                key={link.path}
-                href={link.path}
-                onClick={() => setMobileOpen(false)}
-                className={`block px-4 py-2 rounded-md text-sm font-medium ${
-                  pathname === link.path
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground"
-                }`}
-              >
-                {link.label}
-              </Link>
-            ))}
-            {user ? (
-              <Button
-                size="sm"
-                variant="outline"
-                className="w-full mt-2"
-                onClick={() => {
-                  setMobileOpen(false);
-                  handleLogout();
-                }}
-              >
-                <LogOut className="mr-1 h-4 w-4" /> Logout
-              </Button>
-            ) : (
-              <div className="space-y-2 mt-2">
-                <Link href="/login" onClick={() => setMobileOpen(false)}>
-                  <Button size="sm" variant="outline" className="w-full">
-                    Login
-                  </Button>
+            {navLinks.map((link) => {
+              const Icon = link.icon;
+              const isActive = pathname === link.path;
+              return (
+                <Link
+                  key={link.path}
+                  href={link.path}
+                  onClick={() => setMobileOpen(false)}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-md text-sm font-medium transition-colors ${
+                    isActive
+                      ? "bg-orange-50 text-orange-700 font-semibold"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <Icon className={`h-4 w-4 ${isActive ? "text-orange-600" : "text-muted-foreground"}`} />
+                  {link.label}
                 </Link>
+              );
+            })}
+            <div className="pt-2 border-t border-border/50 mt-2">
+              {user ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => { setMobileOpen(false); handleLogout(); }}
+                >
+                  <LogOut className="mr-1 h-4 w-4" /> Logout
+                </Button>
+              ) : (
                 <Link href="/register" onClick={() => setMobileOpen(false)}>
                   <Button size="sm" className="w-full bg-gradient-primary">
-                    Register
+                    Get Started
                   </Button>
                 </Link>
-              </div>
-            )}
+              )}
+            </div>
           </nav>
         )}
       </header>

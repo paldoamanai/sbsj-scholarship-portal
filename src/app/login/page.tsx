@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { LogIn, ShieldCheck, Loader2, Eye, EyeOff } from "lucide-react";
+import { LogIn, ShieldCheck, Loader2, Eye, EyeOff, GraduationCap } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
@@ -62,8 +62,14 @@ export default function LoginPage() {
   return (
     <Layout>
       <div className="container flex items-center justify-center min-h-[70vh] py-12">
-        <Card className="w-full max-w-md animate-scale-in">
-          <CardHeader className="text-center">
+        <Card className="w-full max-w-md animate-scale-in overflow-hidden">
+          <div className="h-1.5 bg-gradient-primary" />
+          <CardHeader className="text-center pt-6">
+            <div className="flex justify-center mb-3">
+              <div className="h-14 w-14 rounded-full bg-orange-100 flex items-center justify-center">
+                <GraduationCap className="h-7 w-7 text-orange-600" />
+              </div>
+            </div>
             <CardTitle className="font-display text-2xl">
               {isAdmin ? "Admin Login" : "Student Login"}
             </CardTitle>
