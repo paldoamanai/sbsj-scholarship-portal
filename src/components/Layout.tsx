@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
-import { Home, Info, GraduationCap, Phone, LogOut, Menu, X } from "lucide-react";
+import { Home, Info, GraduationCap, Phone, LogOut, Menu, X, LayoutDashboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -71,15 +71,30 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-2">
             {user ? (
-              <span className="text-sm text-muted-foreground">
-                Hi, {user.email?.split("@")[0]}
-              </span>
+              <>
+                <span className="text-sm text-muted-foreground">
+                  Hi, {user.email?.split("@")[0]}
+                </span>
+                <Link href="/student-dashboard">
+                  <Button size="sm" variant="outline" className="cursor-pointer">
+                    <LayoutDashboard className="mr-1.5 h-3.5 w-3.5" />
+                    Dashboard
+                  </Button>
+                </Link>
+              </>
             ) : (
-              <Link href="/register">
-                <Button size="sm" className="bg-gradient-primary shadow-primary cursor-pointer">
-                  Get Started
-                </Button>
-              </Link>
+              <>
+                <Link href="/login">
+                  <Button size="sm" variant="ghost" className="cursor-pointer text-muted-foreground hover:text-foreground">
+                    Sign In
+                  </Button>
+                </Link>
+                <Link href="/register">
+                  <Button size="sm" className="bg-gradient-primary shadow-primary cursor-pointer">
+                    Get Started
+                  </Button>
+                </Link>
+              </>
             )}
 
             <DropdownMenu>
@@ -162,22 +177,36 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
                 </Link>
               );
             })}
-            <div className="pt-2 border-t border-border/50 mt-2">
+            <div className="pt-2 border-t border-border/50 mt-2 space-y-2">
               {user ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => { setMobileOpen(false); handleLogout(); }}
-                >
-                  <LogOut className="mr-1 h-4 w-4" /> Logout
-                </Button>
-              ) : (
-                <Link href="/register" onClick={() => setMobileOpen(false)}>
-                  <Button size="sm" className="w-full bg-gradient-primary">
-                    Get Started
+                <>
+                  <Link href="/student-dashboard" onClick={() => setMobileOpen(false)}>
+                    <Button size="sm" variant="outline" className="w-full">
+                      <LayoutDashboard className="mr-1 h-4 w-4" /> Dashboard
+                    </Button>
+                  </Link>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => { setMobileOpen(false); handleLogout(); }}
+                  >
+                    <LogOut className="mr-1 h-4 w-4" /> Logout
                   </Button>
-                </Link>
+                </>
+              ) : (
+                <>
+                  <Link href="/login" onClick={() => setMobileOpen(false)}>
+                    <Button size="sm" variant="outline" className="w-full">
+                      Sign In
+                    </Button>
+                  </Link>
+                  <Link href="/register" onClick={() => setMobileOpen(false)}>
+                    <Button size="sm" className="w-full bg-gradient-primary">
+                      Get Started
+                    </Button>
+                  </Link>
+                </>
               )}
             </div>
           </nav>

@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import {
   GraduationCap, ArrowRight, Zap, BarChart3, Wallet, Bell,
   UserPlus, FileText, Search, CheckCircle2, Send, Mail, Phone, MapPin, ChevronDown,
@@ -102,7 +103,7 @@ const steps = [
 ];
 
 const contactItems = [
-  { icon: Mail,  label: "Email",  value: "scholarship@sbom.gov.ph" },
+  { icon: Mail,  label: "Email",  value: "scholarship@sbsj.gov.ph" },
   { icon: Phone, label: "Phone",  value: "(043) 123-4567" },
   { icon: MapPin, label: "Office", value: "Sangguniang Bayan, San Jose, Occidental Mindoro" },
 ];
@@ -111,6 +112,7 @@ const contactItems = [
 
 export default function HomePage() {
   const router = useRouter();
+  const [contactSending, setContactSending] = useState(false);
 
   return (
     <Layout>
@@ -306,22 +308,41 @@ export default function HomePage() {
 
             <Reveal direction="right">
               <Card className="border-border/60 shadow-md">
-                <CardContent className="p-7 space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="name">Name</Label>
-                    <Input id="name" placeholder="Your full name" maxLength={100} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
-                    <Input id="email" type="email" placeholder="you@example.com" maxLength={255} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="message">Message</Label>
-                    <Textarea id="message" placeholder="How can we help?" rows={4} maxLength={1000} />
-                  </div>
-                  <Button className="w-full h-11 bg-gradient-primary shadow-primary cursor-pointer">
-                    Send Message <Send className="ml-2 h-4 w-4" />
-                  </Button>
+                <CardContent className="p-7">
+                  <form
+                    className="space-y-4"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      setContactSending(true);
+                      setTimeout(() => {
+                        setContactSending(false);
+                        (e.target as HTMLFormElement).reset();
+                        toast.success("Message sent!", {
+                          description: "We'll get back to you within 1–2 business days.",
+                        });
+                      }, 800);
+                    }}
+                  >
+                    <div className="space-y-2">
+                      <Label htmlFor="name">Name</Label>
+                      <Input id="name" name="name" placeholder="Your full name" maxLength={100} required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="email">Email</Label>
+                      <Input id="email" name="email" type="email" placeholder="you@example.com" maxLength={255} required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="message">Message</Label>
+                      <Textarea id="message" name="message" placeholder="How can we help?" rows={4} maxLength={1000} required />
+                    </div>
+                    <Button
+                      type="submit"
+                      disabled={contactSending}
+                      className="w-full h-11 bg-gradient-primary shadow-primary cursor-pointer"
+                    >
+                      {contactSending ? "Sending…" : <><span>Send Message</span> <Send className="ml-2 h-4 w-4" /></>}
+                    </Button>
+                  </form>
                 </CardContent>
               </Card>
             </Reveal>

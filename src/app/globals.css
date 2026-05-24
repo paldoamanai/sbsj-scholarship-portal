@@ -71,11 +71,19 @@
     --muted-foreground: 30 10% 60%;
     --accent: 25 30% 18%;
     --accent-foreground: 25 90% 70%;
-    --destructive: 0 62% 30%;
+    --destructive: 0 62% 55%;
     --destructive-foreground: 0 0% 100%;
     --border: 20 15% 20%;
     --input: 20 15% 20%;
     --ring: 25 95% 53%;
+
+    --success: 142 60% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 85% 55%;
+    --warning-foreground: 0 0% 100%;
+    --info: 210 75% 60%;
+    --info-foreground: 0 0% 100%;
+
     --sidebar-background: 20 18% 10%;
     --sidebar-foreground: 30 15% 92%;
     --sidebar-primary: 25 95% 53%;
