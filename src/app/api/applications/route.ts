@@ -43,6 +43,34 @@ export async function POST(request: Request) {
 
   const body = await request.json();
 
+  // ── Annual limit: 1 application per student per calendar year ──
+  const currentYear = new Date().getFullYear();
+  const yearStart = `${currentYear}-01-01T00:00:00.000Z`;
+  const yearEnd   = `${currentYear + 1}-01-01T00:00:00.000Z`;
+
+  const { data: existing, error: checkError } = await supabase
+    .from("applications")
+    .select("id, status")
+    .eq("user_id", user.id)
+    .gte("created_at", yearStart)
+    .lt("created_at", yearEnd)
+    .limit(1);
+
+  if (checkError) {
+    return NextResponse.json({ error: checkError.message }, { status: 500 });
+  }
+
+  if (existing && existing.length > 0) {
+    return NextResponse.json(
+      {
+        error: `You have already submitted a scholarship application for ${currentYear}. You may apply again starting January ${currentYear + 1}.`,
+        code: "ANNUAL_LIMIT_REACHED",
+      },
+      { status: 409 }
+    );
+  }
+  // ──────────────────────────────────────────────────────────────
+
   const { data, error } = await supabase
     .from("applications")
     .insert({ user_id: user.id, scholarship_id: body.scholarship_id })

@@ -360,7 +360,13 @@ export default function StudentDashboardPage() {
     setLoading(false);
   };
 
-  const currentApp = applications[0];
+  // ── Annual limit: only the application submitted THIS calendar year is "current" ──
+  const currentYear = new Date().getFullYear();
+  const currentApp = applications.find(
+    (app) => new Date(app.created_at).getFullYear() === currentYear
+  );
+  const hasAppliedThisYear = !!currentApp;
+  // ──────────────────────────────────────────────────────────────────────────────
   const isDisbursed = currentApp?.disbursement_status === "Disbursed";
   const isApproved = currentApp?.status === "Approved";
   const locked = isApproved || isDisbursed;
@@ -486,12 +492,31 @@ export default function StudentDashboardPage() {
         </Card>
       ) : (
         <Card>
-          <CardContent className="py-8 text-center">
-            <p className="text-muted-foreground mb-4">You haven&apos;t submitted an application yet.</p>
+          <CardContent className="py-8 text-center space-y-4">
+            {/* Annual-limit info banner */}
+            <div className="inline-flex items-center gap-2 rounded-full bg-orange-100 px-4 py-1.5 text-sm font-semibold text-orange-700 mx-auto">
+              <GraduationCap className="h-4 w-4" />
+              1 scholarship application allowed per year
+            </div>
+            <p className="text-muted-foreground">
+              You haven&apos;t submitted an application for {currentYear} yet.
+            </p>
             <Dialog open={applyDialogOpen} onOpenChange={setApplyDialogOpen}>
-              <DialogTrigger asChild><Button className="bg-gradient-primary"><FileText className="mr-1 h-4 w-4" /> Apply for Scholarship</Button></DialogTrigger>
+              <DialogTrigger asChild>
+                <Button className="bg-gradient-primary">
+                  <FileText className="mr-1 h-4 w-4" /> Apply for Scholarship
+                </Button>
+              </DialogTrigger>
               <DialogContent>
-                <DialogHeader><DialogTitle>Apply for Scholarship</DialogTitle></DialogHeader>
+                <DialogHeader>
+                  <DialogTitle>Apply for Scholarship</DialogTitle>
+                </DialogHeader>
+                <div className="rounded-md bg-orange-50 border border-orange-200 px-4 py-3 text-sm text-orange-800 flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-orange-600" />
+                  <span>
+                    You may only submit <strong>one application per year</strong>. Choose your scholarship program carefully.
+                  </span>
+                </div>
                 <div className="space-y-3">
                   <div>
                     <Label>Scholarship Program *</Label>
@@ -512,19 +537,30 @@ export default function StudentDashboardPage() {
                     onClick={async () => {
                       if (!applyScholarshipId) return;
                       setApplyLoading(true);
-                      const { data: { user } } = await supabase.auth.getUser();
-                      if (!user) { setApplyLoading(false); return; }
-                      const { error } = await supabase.from("applications").insert({
-                        user_id: user.id,
-                        scholarship_id: applyScholarshipId,
-                      });
-                      if (error) { toast.error(error.message); }
-                      else { toast.success("Application submitted!"); setApplyDialogOpen(false); setApplyScholarshipId(""); loadData(); }
-                      setApplyLoading(false);
+                      try {
+                        const res = await fetch("/api/applications", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ scholarship_id: applyScholarshipId }),
+                        });
+                        const json = await res.json();
+                        if (!res.ok) {
+                          toast.error(json.error ?? "Failed to submit application.");
+                        } else {
+                          toast.success("Application submitted!");
+                          setApplyDialogOpen(false);
+                          setApplyScholarshipId("");
+                          loadData();
+                        }
+                      } catch {
+                        toast.error("Network error. Please try again.");
+                      } finally {
+                        setApplyLoading(false);
+                      }
                     }}
                   >
                     {applyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Submit
+                    Submit Application
                   </Button>
                 </DialogFooter>
               </DialogContent>

@@ -24,3 +24,12 @@ yarn-error.log*
 .DS_Store
 *.pem
 .vercel
+
+# TypeScript build cache
+tsconfig.tsbuildinfo
+
+# Supabase CLI temp / link state
+supabase/.temp/
+
+# Claude Code local settings
+.claude/settings.local.json

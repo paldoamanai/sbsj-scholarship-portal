@@ -323,3 +323,7 @@ ON CONFLICT (key) DO NOTHING;
 -- 19. Storage buckets (run these separately in Supabase dashboard or via SQL)
 -- INSERT INTO storage.buckets (id, name, public) VALUES ('profile-pictures', 'profile-pictures', true);
 -- INSERT INTO storage.buckets (id, name, public) VALUES ('documents', 'documents', false);
+
+-- 20. Annual application limit — 1 scholarship application per student per calendar year
+CREATE UNIQUE INDEX IF NOT EXISTS applications_one_per_year_per_user
+  ON public.applications (user_id, (EXTRACT(YEAR FROM created_at)::INTEGER));
