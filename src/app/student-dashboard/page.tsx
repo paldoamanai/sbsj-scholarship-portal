@@ -82,7 +82,7 @@ function DisbursementSection({ payments, disbursementStatus }: {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Total Disbursed</p><p className="text-2xl font-bold mt-1">₱{payments.filter(p => p.status === "Disbursed").reduce((s, p) => s + p.amount, 0).toLocaleString()}</p></CardContent></Card>
+        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Total Disbursed</p><p className="text-2xl font-bold mt-1">₱{payments.filter(p => p.status === "Disbursed").reduce((s, p) => s + p.amount, 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></CardContent></Card>
         <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Status</p><div className="mt-2"><StatusBadgeInline status={disbursementStatus || "—"} /></div></CardContent></Card>
       </div>
       <Card>
@@ -111,7 +111,7 @@ function DisbursementSection({ payments, disbursementStatus }: {
                 return (
                   <TableRow key={p.id}>
                     <TableCell className="font-mono text-xs">{p.reference || "—"}</TableCell>
-                    <TableCell className="font-medium">₱{p.amount.toLocaleString()}</TableCell>
+                    <TableCell className="font-medium">₱{p.amount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                     <TableCell>
                       {p.method ? (
                         <span className={`inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full ${
@@ -227,7 +227,7 @@ function PaymentsSection({ payments }: { payments: Payment[] }) {
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="space-y-0.5">
                     <p className="text-sm font-semibold text-foreground">
-                      ₱{p.amount.toLocaleString()}
+                      ₱{p.amount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       <span className="ml-2 text-xs font-normal text-muted-foreground">via {p.method || "—"}</span>
                     </p>
                     <p className="text-xs text-muted-foreground">
@@ -628,7 +628,7 @@ export default function StudentDashboardPage() {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-          <div><p className="text-muted-foreground">Approved Amount</p><p className="font-medium">{currentApp?.amount_approved ? `₱${currentApp.amount_approved.toLocaleString()}` : "—"}</p></div>
+          <div><p className="text-muted-foreground">Approved Amount</p><p className="font-medium">{currentApp?.amount_approved ? `₱${currentApp.amount_approved.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</p></div>
           <div><p className="text-muted-foreground">Required Grade</p><p className="font-medium">85% and above</p></div>
         </div>
         <div>

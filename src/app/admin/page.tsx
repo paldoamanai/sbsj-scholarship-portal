@@ -47,7 +47,7 @@ const sidebarItems = [
 ];
 
 const COLORS = ["hsl(var(--primary))", "hsl(var(--success))", "hsl(var(--destructive))", "hsl(var(--muted-foreground))"];
-const formatPHP = (n: number) => `₱${n.toLocaleString()}`;
+const formatPHP = (n: number) => `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function AdminDashboardPage() {
   const router = useRouter();
