@@ -31,7 +31,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 
 const sidebarItems = [
-  { icon: LayoutDashboard, label: "Dashboard", key: "overview" },
+  { icon: LayoutDashboard, label: "Metrics", key: "overview" },
   { icon: FileText, label: "Applicants", key: "applications" },
   { icon: ShieldCheck, label: "Verification", key: "verification" },
   { icon: GraduationCap, label: "Scholarships", key: "scholarships" },
