@@ -21,7 +21,8 @@ import {
   Plus, Pencil, Trash2, CheckCircle, XCircle, Clock, Eye,
   Menu, X, Search, BookOpen, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock, Download,
-  FileDown, Receipt, Loader2, User, Upload, Camera,
+  FileDown, Receipt, Loader2, User, Upload, Camera, ArrowRight,
+  CalendarClock, ChevronRight,
 } from "lucide-react";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -48,6 +49,29 @@ const sidebarItems = [
 
 const COLORS = ["hsl(var(--primary))", "hsl(var(--success))", "hsl(var(--destructive))", "hsl(var(--muted-foreground))"];
 const formatPHP = (n: number) => `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const initials = (first?: string | null, last?: string | null) =>
+  `${(first || "?")[0] || ""}${(last || "")[0] || ""}`.toUpperCase();
+
+// ── Status badge (pastel pill + icon, mirrors student-dashboard's pattern) ──────
+function StatusBadge({ status }: { status: string | null | undefined }) {
+  if (!status || status === "—") return <span className="text-sm text-muted-foreground">—</span>;
+  const map: Record<string, { icon: typeof CheckCircle; cls: string }> = {
+    Approved:   { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+    Pending:    { icon: Clock,        cls: "bg-amber-50 text-amber-700 border-amber-200" },
+    Rejected:   { icon: XCircle,      cls: "bg-red-50 text-red-700 border-red-200" },
+    Disbursed:  { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+    Processing: { icon: Clock,        cls: "bg-accent text-primary border-primary/20" },
+    Waitlisted: { icon: Clock,        cls: "bg-muted text-muted-foreground border-border" },
+  };
+  const m = map[status];
+  if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{status}</span>;
+  const Icon = m.icon;
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${m.cls}`}>
+      <Icon className="h-3 w-3" />{status}
+    </span>
+  );
+}
 
 export default function AdminDashboardPage() {
   const router = useRouter();
@@ -120,6 +144,40 @@ export default function AdminDashboardPage() {
     if (adminProfRes.data) setAdminProfile(adminProfRes.data);
     setLoading(false);
   };
+
+  // Re-fetch applications/payments in the background (no loading flicker) —
+  // used when a live change comes in over realtime.
+  const silentRefreshAdmin = async () => {
+    const [appsRes, paymentsRes] = await Promise.all([
+      supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
+      supabase.from("payments").select("*").order("created_at", { ascending: false }),
+    ]);
+    if (appsRes.data) {
+      const appsWithProfiles = await Promise.all(appsRes.data.map(async (app: any) => {
+        const { data: prof } = await supabase.from("profiles").select("*").eq("id", app.user_id).single();
+        return { ...app, profiles: prof };
+      }));
+      setApplications(appsWithProfiles);
+    }
+    if (paymentsRes.data) setPayments(paymentsRes.data);
+  };
+
+  // ── Live updates: new applications and status/disbursement changes ─────────
+  useEffect(() => {
+    const channel = supabase
+      .channel("admin-live")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "applications" },
+        () => { toast.info("New scholarship application submitted"); silentRefreshAdmin(); }
+      )
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "applications" }, () => silentRefreshAdmin())
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "payments" }, () => silentRefreshAdmin())
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "payments" }, () => silentRefreshAdmin())
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push("/"); router.refresh(); };
 
@@ -212,21 +270,18 @@ export default function AdminDashboardPage() {
     return { total: applications.length, approved, rejected, pending, totalDisbursed, totalBudget, remaining: totalBudget - totalDisbursed };
   }, [applications, payments, scholarships]);
 
-  const statusBadge = (status: string) => {
-    const map: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; icon: React.ReactNode }> = {
-      Pending: { variant: "outline", icon: <Clock className="mr-1 h-3 w-3" /> },
-      Approved: { variant: "default", icon: <CheckCircle className="mr-1 h-3 w-3" /> },
-      Rejected: { variant: "destructive", icon: <XCircle className="mr-1 h-3 w-3" /> },
-      Waitlisted: { variant: "secondary", icon: <Clock className="mr-1 h-3 w-3" /> },
-    };
-    const s = map[status] || map.Pending;
-    return <Badge variant={s.variant}>{s.icon}{status}</Badge>;
-  };
+  const statusBadge = (status: string) => <StatusBadge status={status} />;
 
-  const disbStatusBadge = (status: string) => {
-    if (status === "Disbursed") return <Badge className="bg-success text-success-foreground hover:bg-success/90"><CheckCircle className="mr-1 h-3 w-3" />Disbursed</Badge>;
-    if (status === "Processing") return <Badge variant="secondary"><Clock className="mr-1 h-3 w-3" />Processing</Badge>;
-    return <Badge variant="outline"><Clock className="mr-1 h-3 w-3" />Pending</Badge>;
+  const disbStatusBadge = (status: string) => <StatusBadge status={status} />;
+
+  const notifyUser = async (
+    userId: string | null | undefined,
+    title: string,
+    message: string,
+    type: "info" | "success" | "warning" | "error" = "info"
+  ) => {
+    if (!userId) return;
+    await supabase.from("notifications").insert({ user_id: userId, title, message, type });
   };
 
   const filteredApps = applications.filter((a) => {
@@ -314,19 +369,130 @@ export default function AdminDashboardPage() {
           {/* OVERVIEW */}
           {activeSection === "overview" && (
             <div className="space-y-6 animate-fade-in">
+              {/* Hero banner */}
+              <div className="relative overflow-hidden rounded-2xl bg-gradient-hero p-6 md:p-8 text-primary-foreground shadow-primary">
+                <div className="absolute inset-0 opacity-[0.08] [background-image:repeating-linear-gradient(135deg,#fff_0,#fff_1px,transparent_1px,transparent_14px)]" />
+                <div className="relative flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl md:text-3xl font-display font-bold">Dashboard</h2>
+                    <p className="mt-1 text-sm text-primary-foreground/80">
+                      Welcome back{adminProfile?.first_name ? `, ${adminProfile.first_name}` : ""}! Here&apos;s what&apos;s happening today.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => { setActiveSection("applications"); setStatusFilter("pending"); }}
+                      aria-label={`${totals.pending} pending applications need review`}
+                      className="relative h-10 w-10 rounded-full bg-white/15 hover:bg-white/25 transition-colors flex items-center justify-center cursor-pointer"
+                    >
+                      <Bell className="h-5 w-5" />
+                      {totals.pending > 0 && (
+                        <span className="absolute -top-1 -right-1 h-4 min-w-4 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">
+                          {totals.pending > 99 ? "99+" : totals.pending}
+                        </span>
+                      )}
+                    </button>
+                    <Button
+                      onClick={() => setActiveSection("scholarships")}
+                      className="bg-white text-primary hover:bg-white/90 cursor-pointer"
+                    >
+                      <Plus className="mr-1 h-4 w-4" /> Create Scholarship
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
               {/* Stat Cards */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
-                  { label: "Total Applicants", value: totals.total, icon: FileText, color: "text-primary" },
-                  { label: "Approved", value: totals.approved, icon: CheckCircle, color: "text-success" },
-                  { label: "Rejected", value: totals.rejected, icon: XCircle, color: "text-destructive" },
-                  { label: "Pending", value: totals.pending, icon: Clock, color: "text-warning" },
+                  { label: "Total Applicants", value: totals.total, sub: `${totals.pending} pending`, icon: FileText, color: "text-primary", section: "applications" },
+                  { label: "Approved", value: totals.approved, sub: `${approvalRate}% approval rate`, icon: CheckCircle, color: "text-success", section: "applications" },
+                  { label: "Rejected", value: totals.rejected, sub: `${rejectionRate}% rejection rate`, icon: XCircle, color: "text-destructive", section: "applications" },
+                  { label: "Pending", value: totals.pending, sub: "Needs review", icon: Clock, color: "text-warning", section: "verification" },
                 ].map((stat, i) => (
-                  <Card key={i}><CardContent className="flex items-center gap-3 py-5">
-                    <div className="h-11 w-11 rounded-xl bg-orange-100 flex items-center justify-center shrink-0"><stat.icon className={`h-5 w-5 ${stat.color}`} /></div>
-                    <div className="min-w-0"><p className="text-2xl font-bold font-display">{stat.value}</p><p className="text-xs text-muted-foreground truncate">{stat.label}</p></div>
-                  </CardContent></Card>
+                  <Card
+                    key={i}
+                    className="hover-lift cursor-pointer"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setActiveSection(stat.section)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setActiveSection(stat.section); }}
+                  >
+                    <CardContent className="py-5">
+                      <div className="flex items-center justify-between">
+                        <div className="h-10 w-10 rounded-lg bg-accent flex items-center justify-center shrink-0"><stat.icon className={`h-5 w-5 ${stat.color}`} /></div>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <p className="mt-3 text-2xl font-bold font-display">{stat.value}</p>
+                      <p className="text-xs text-muted-foreground truncate">{stat.label} · {stat.sub}</p>
+                    </CardContent>
+                  </Card>
                 ))}
+              </div>
+
+              {/* Active Scholarships + Pending Review */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <Card className="lg:col-span-2">
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <CardTitle className="text-base">Active Scholarships</CardTitle>
+                    <button type="button" onClick={() => setActiveSection("scholarships")} className="text-xs font-medium text-primary hover:underline cursor-pointer">View All</button>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {scholarships.filter(s => s.is_active).length === 0 && (
+                      <p className="text-sm text-muted-foreground py-6 text-center">No active scholarships yet.</p>
+                    )}
+                    {scholarships.filter(s => s.is_active).slice(0, 4).map((s) => {
+                      const applicantCount = applications.filter(a => a.scholarships?.name === s.name).length;
+                      return (
+                        <div key={s.id} className="rounded-lg border border-border p-3 hover:bg-muted/40 transition-colors">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="font-medium truncate">{s.name}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                Amount: {formatPHP(s.amount)} &nbsp;·&nbsp; Deadline: {s.deadline || "—"}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-1 flex items-center gap-3">
+                                <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {applicantCount} applicants</span>
+                                <span className="flex items-center gap-1"><GraduationCap className="h-3 w-3" /> {s.slots} slots</span>
+                              </p>
+                            </div>
+                            <Button size="sm" variant="secondary" className="shrink-0 cursor-pointer" onClick={() => setActiveSection("scholarships")}>View</Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <CardTitle className="text-base">Pending Review</CardTitle>
+                    <button type="button" onClick={() => { setActiveSection("applications"); setStatusFilter("pending"); }} className="text-xs font-medium text-primary hover:underline cursor-pointer">View All</button>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {applications.filter(a => a.status === "Pending").length === 0 && (
+                      <p className="text-sm text-muted-foreground py-6 text-center">Nothing pending review.</p>
+                    )}
+                    {applications.filter(a => a.status === "Pending").slice(0, 5).map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => setViewApp(a)}
+                        className="w-full flex items-center gap-3 text-left rounded-lg p-2 hover:bg-muted/40 transition-colors cursor-pointer"
+                      >
+                        <div className="h-9 w-9 rounded-full bg-accent text-accent-foreground text-xs font-semibold flex items-center justify-center shrink-0">
+                          {initials(a.profiles?.first_name, a.profiles?.last_name)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "—"}</p>
+                          <p className="text-xs text-muted-foreground truncate">{a.scholarships?.name || "—"}</p>
+                        </div>
+                        <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                      </button>
+                    ))}
+                  </CardContent>
+                </Card>
               </div>
 
               {/* Budget + Rates Row */}
@@ -432,7 +598,7 @@ export default function AdminDashboardPage() {
               </div>
               <Card>
                 <Table>
-                  <TableHeader><TableRow>
+                  <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
                     <TableHead>Applicant</TableHead><TableHead>Scholarship</TableHead><TableHead>Grade</TableHead><TableHead>Date</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
@@ -451,11 +617,13 @@ export default function AdminDashboardPage() {
                             {a.status === "Pending" && (<>
                               <Button size="icon" variant="ghost" onClick={async () => {
                                 await supabase.from("applications").update({ status: "Approved" }).eq("id", a.id);
+                                await notifyUser(a.user_id, "Application Approved", `Your application for ${a.scholarships?.name || "the scholarship"} has been approved.`, "success");
                                 toast.success(`${name} approved!`);
                                 loadData();
                               }}><CheckCircle className="h-4 w-4 text-success" /></Button>
                               <Button size="icon" variant="ghost" onClick={async () => {
                                 await supabase.from("applications").update({ status: "Rejected" }).eq("id", a.id);
+                                await notifyUser(a.user_id, "Application Rejected", `Your application for ${a.scholarships?.name || "the scholarship"} was not approved this time.`, "error");
                                 toast.error(`${name} rejected`);
                                 loadData();
                               }}><XCircle className="h-4 w-4 text-destructive" /></Button>
@@ -488,10 +656,12 @@ export default function AdminDashboardPage() {
                         <div className="flex gap-2 pt-2">
                           <Button className="flex-1" onClick={async () => {
                             await supabase.from("applications").update({ status: "Approved" }).eq("id", viewApp.id);
+                            await notifyUser(viewApp.user_id, "Application Approved", `Your application for ${viewApp.scholarships?.name || "the scholarship"} has been approved.`, "success");
                             toast.success("Approved!"); setViewApp(null); loadData();
                           }}><CheckCircle className="mr-1 h-4 w-4" /> Approve</Button>
                           <Button variant="destructive" className="flex-1" onClick={async () => {
                             await supabase.from("applications").update({ status: "Rejected" }).eq("id", viewApp.id);
+                            await notifyUser(viewApp.user_id, "Application Rejected", `Your application for ${viewApp.scholarships?.name || "the scholarship"} was not approved this time.`, "error");
                             toast.error("Rejected"); setViewApp(null); loadData();
                           }}><XCircle className="mr-1 h-4 w-4" /> Reject</Button>
                         </div>
@@ -538,7 +708,7 @@ export default function AdminDashboardPage() {
               </div>
               <Card>
                 <Table>
-                  <TableHeader><TableRow>
+                  <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
                     <TableHead>Name</TableHead><TableHead>Slots</TableHead><TableHead>Deadline</TableHead><TableHead>Budget</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
@@ -577,7 +747,7 @@ export default function AdminDashboardPage() {
               </div>
               <Card>
                 <Table>
-                  <TableHeader><TableRow>
+                  <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
                     <TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead>School</TableHead><TableHead>Course</TableHead><TableHead>Grade</TableHead><TableHead>Status</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
@@ -638,7 +808,7 @@ export default function AdminDashboardPage() {
               </Card>
               <Card>
                 <Table>
-                  <TableHeader><TableRow>
+                  <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
                     <TableHead>Reference / Cheque No.</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
@@ -651,8 +821,8 @@ export default function AdminDashboardPage() {
                           <TableCell className="font-medium">{formatPHP(p.amount)}</TableCell>
                           <TableCell>
                             <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
-                              p.method === "Cheque" ? "bg-blue-100 text-blue-700"
-                              : p.method === "Cash" ? "bg-green-100 text-green-700"
+                              p.method === "Cheque" ? "bg-accent text-accent-foreground"
+                              : p.method === "Cash" ? "bg-success/10 text-success"
                               : "bg-muted text-muted-foreground"
                             }`}>
                               {p.method || "—"}
@@ -703,7 +873,7 @@ export default function AdminDashboardPage() {
                                 : "border-border hover:border-primary/40"
                             }`}
                           >
-                            {m === "Cash" ? "💵" : "📄"} {m}
+                            {m === "Cash" ? <Banknote className="h-4 w-4" /> : <Receipt className="h-4 w-4" />} {m}
                           </button>
                         ))}
                       </div>
@@ -759,6 +929,8 @@ export default function AdminDashboardPage() {
                             file_url: urlData.publicUrl,
                             file_name: disbReceipt.name,
                           });
+                          const disbPayment = payments.find((pm) => pm.id === disbPaymentId);
+                          await notifyUser(disbPayment?.user_id, "Payment Disbursed", `Your scholarship payment of ${formatPHP(disbPayment?.amount || 0)} has been disbursed.`, "success");
                           toast.success("Payment marked as disbursed");
                           setDisbDialog(false);
                           loadData();
@@ -831,7 +1003,7 @@ export default function AdminDashboardPage() {
               </Card>
               <Card>
                 <Table>
-                  <TableHeader><TableRow>
+                  <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
                     <TableHead>Applicant</TableHead><TableHead>Student ID</TableHead><TableHead>Gov ID</TableHead><TableHead>Existing Scholarship</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
@@ -935,7 +1107,7 @@ export default function AdminDashboardPage() {
               </div>
               <Card>
                 <Table>
-                  <TableHeader><TableRow>
+                  <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
                     <TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead>Role</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
@@ -978,7 +1150,7 @@ export default function AdminDashboardPage() {
               <h2 className="text-xl font-display font-bold">Audit Logs</h2>
               <Card>
                 <Table>
-                  <TableHeader><TableRow>
+                  <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
                     <TableHead>Date</TableHead><TableHead>User</TableHead><TableHead>Action</TableHead><TableHead>Entity</TableHead><TableHead>Details</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
@@ -1006,7 +1178,7 @@ export default function AdminDashboardPage() {
                 <CardContent className="py-6 space-y-6">
                   <div className="flex items-center gap-4">
                     <div className="relative">
-                      <div className="h-20 w-20 rounded-full bg-orange-100 flex items-center justify-center overflow-hidden">
+                      <div className="h-20 w-20 rounded-full bg-accent flex items-center justify-center overflow-hidden">
                         {adminProfile?.profile_picture_url ? (
                           <img src={adminProfile.profile_picture_url} alt="Profile" className="h-20 w-20 rounded-full object-cover" />
                         ) : (

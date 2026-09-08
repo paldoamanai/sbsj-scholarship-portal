@@ -4,12 +4,9 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
@@ -18,33 +15,90 @@ import { toast } from "sonner";
 import {
   LayoutDashboard, FileText, Upload, GraduationCap, Banknote, Receipt,
   Bell, User, Settings as SettingsIcon, LogOut, Menu, Lock, Download,
-  AlertTriangle, CheckCircle, Clock, XCircle, Pencil, Eye, Trash2, Shield, Loader2,
-  Camera,
+  AlertTriangle, CheckCircle, Clock, XCircle, Pencil, Eye, Trash2, Loader2,
+  Camera, ChevronRight, X, MoreVertical, ArrowRight, CalendarDays, Users,
 } from "lucide-react";
 import ApplicationProgressBar from "@/components/student/ApplicationProgressBar";
 import { createClient } from "@/lib/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 
-// ─── Extracted components (must live outside the parent to keep stable identity) ──
-
+// ── Types ──────────────────────────────────────────────────────────────────────
 type Payment = Tables<"payments">;
 
-function StatusBadgeInline({ status }: { status: string | null | undefined }) {
+// ── Status badge ──────────────────────────────────────────────────────────────
+function StatusBadge({ status }: { status: string | null | undefined }) {
   if (!status || status === "—") return <span className="text-sm text-muted-foreground">—</span>;
   const map: Record<string, { icon: typeof CheckCircle; cls: string }> = {
-    Approved:   { icon: CheckCircle,  cls: "border-success text-success" },
-    Pending:    { icon: Clock,        cls: "border-warning text-warning" },
-    Rejected:   { icon: XCircle,      cls: "border-destructive text-destructive" },
-    Disbursed:  { icon: CheckCircle,  cls: "border-success text-success" },
-    Processing: { icon: Clock,        cls: "border-primary text-primary" },
-    Waitlisted: { icon: Clock,        cls: "border-muted-foreground text-muted-foreground" },
+    Approved:   { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+    Pending:    { icon: Clock,        cls: "bg-amber-50 text-amber-700 border-amber-200" },
+    Rejected:   { icon: XCircle,      cls: "bg-red-50 text-red-700 border-red-200" },
+    Disbursed:  { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+    Processing: { icon: Clock,        cls: "bg-accent text-primary border-primary/20" },
+    Waitlisted: { icon: Clock,        cls: "bg-muted text-muted-foreground border-border" },
   };
   const m = map[status];
-  if (!m) return <Badge variant="outline">{status}</Badge>;
+  if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{status}</span>;
   const Icon = m.icon;
-  return <Badge variant="outline" className={m.cls}><Icon className="mr-1 h-3 w-3" />{status}</Badge>;
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${m.cls}`}>
+      <Icon className="h-3 w-3" />{status}
+    </span>
+  );
 }
 
+// ── Stat card ─────────────────────────────────────────────────────────────────
+function StatCard({ icon: Icon, label, value, sub, subTone = "neutral", accent = false }: {
+  icon: typeof LayoutDashboard;
+  label: string;
+  value: string | number;
+  sub?: string;
+  subTone?: "neutral" | "positive" | "warning";
+  accent?: boolean;
+}) {
+  const subClass = accent
+    ? "text-primary-foreground/80"
+    : subTone === "positive" ? "text-success"
+    : subTone === "warning" ? "text-warning"
+    : "text-muted-foreground";
+  return (
+    <div className={`rounded-2xl p-5 border ${accent ? "bg-primary border-primary text-primary-foreground shadow-primary" : "bg-card border-border shadow-sm"}`}>
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-2.5">
+          <div className={`flex-shrink-0 h-9 w-9 rounded-xl flex items-center justify-center ${accent ? "bg-white/20" : "bg-accent"}`}>
+            <Icon className={`h-4.5 w-4.5 ${accent ? "text-primary-foreground" : "text-accent-foreground"}`} />
+          </div>
+          <p className={`text-xs font-medium ${accent ? "text-primary-foreground/90" : "text-muted-foreground"}`}>{label}</p>
+        </div>
+        <button className={`shrink-0 rounded-lg p-1 -mr-1 -mt-1 cursor-pointer ${accent ? "hover:bg-white/10 text-primary-foreground/70" : "hover:bg-muted text-muted-foreground"}`} aria-label={`${label} options`}>
+          <MoreVertical className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <p className={`text-2xl font-bold font-display ${accent ? "text-primary-foreground" : "text-foreground"}`}>{value}</p>
+      {sub && <p className={`text-xs mt-1 font-medium ${subClass}`}>{sub}</p>}
+    </div>
+  );
+}
+
+// ── Section heading ────────────────────────────────────────────────────────────
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 mb-4">
+      <div className="h-5 w-1 rounded-full bg-primary" />
+      <h2 className="font-display font-semibold text-foreground text-base">{children}</h2>
+    </div>
+  );
+}
+
+// ── Card wrapper ───────────────────────────────────────────────────────────────
+function Panel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`bg-card rounded-2xl border border-border shadow-sm ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+// ── Disbursement section ───────────────────────────────────────────────────────
 function DisbursementSection({ payments, disbursementStatus }: {
   payments: Payment[];
   disbursementStatus: string | null | undefined;
@@ -79,80 +133,79 @@ function DisbursementSection({ payments, disbursementStatus }: {
     }
   };
 
+  const totalDisbursed = payments.filter(p => p.status === "Disbursed").reduce((s, p) => s + p.amount, 0);
+
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Total Disbursed</p><p className="text-2xl font-bold mt-1">₱{payments.filter(p => p.status === "Disbursed").reduce((s, p) => s + p.amount, 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></CardContent></Card>
-        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Status</p><div className="mt-2"><StatusBadgeInline status={disbursementStatus || "—"} /></div></CardContent></Card>
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <StatCard icon={Banknote} label="Total Disbursed" value={`₱${totalDisbursed.toLocaleString("en-PH", { minimumFractionDigits: 2 })}`} />
+        <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
+          <p className="text-xs font-medium text-muted-foreground mb-2">Disbursement Status</p>
+          <StatusBadge status={disbursementStatus || "—"} />
+        </div>
       </div>
-      <Card>
-        <CardHeader><CardTitle className="font-display">Disbursement Records</CardTitle></CardHeader>
-        <CardContent className="p-0">
+
+      <Panel>
+        <div className="px-6 py-4 border-b border-muted">
+          <SectionTitle>Disbursement Records</SectionTitle>
+        </div>
+        <div className="overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead>Reference</TableHead>
-                <TableHead>Amount</TableHead>
-                <TableHead>Method</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Receipt</TableHead>
+              <TableRow className="bg-muted/60 hover:bg-muted/60">
+                <TableHead className="text-xs text-muted-foreground font-semibold">Reference</TableHead>
+                <TableHead className="text-xs text-muted-foreground font-semibold">Amount</TableHead>
+                <TableHead className="text-xs text-muted-foreground font-semibold">Method</TableHead>
+                <TableHead className="text-xs text-muted-foreground font-semibold">Date</TableHead>
+                <TableHead className="text-xs text-muted-foreground font-semibold">Status</TableHead>
+                <TableHead className="text-xs text-muted-foreground font-semibold">Receipt</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {payments.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No payments yet.</TableCell>
+                  <TableCell colSpan={6} className="text-center py-10 text-muted-foreground text-sm">No payments yet.</TableCell>
                 </TableRow>
               )}
               {payments.map((p) => {
                 const isDisbursedPay = p.status === "Disbursed";
                 const alreadyUploaded = uploadedIds.includes(p.id);
                 return (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-mono text-xs">{p.reference || "—"}</TableCell>
-                    <TableCell className="font-medium">₱{p.amount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                  <TableRow key={p.id} className="hover:bg-accent/30">
+                    <TableCell className="font-mono text-xs text-muted-foreground">{p.reference || "—"}</TableCell>
+                    <TableCell className="font-semibold text-sidebar-accent">₱{p.amount.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</TableCell>
                     <TableCell>
                       {p.method ? (
                         <span className={`inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full ${
-                          p.method === "Cheque" ? "bg-blue-100 text-blue-700"
-                          : p.method === "Cash" ? "bg-green-100 text-green-700"
+                          p.method === "Cheque" ? "bg-blue-50 text-blue-700"
+                          : p.method === "Cash" ? "bg-emerald-50 text-emerald-700"
                           : "bg-muted text-muted-foreground"
-                        }`}>
-                          {p.method}
-                        </span>
+                        }`}>{p.method}</span>
                       ) : "—"}
                     </TableCell>
-                    <TableCell className="text-sm">{p.scheduled_date || "—"}</TableCell>
-                    <TableCell><StatusBadgeInline status={p.status} /></TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{p.scheduled_date || "—"}</TableCell>
+                    <TableCell><StatusBadge status={p.status} /></TableCell>
                     <TableCell>
                       {!isDisbursedPay ? (
                         <span className="text-xs text-muted-foreground">—</span>
                       ) : alreadyUploaded ? (
-                        <span className="inline-flex items-center gap-1 text-xs text-success font-medium">
+                        <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
                           <CheckCircle className="h-3.5 w-3.5" /> Submitted
                         </span>
                       ) : (
                         <div className="flex items-center gap-1.5">
-                          <label className="cursor-pointer flex items-center gap-1 text-xs text-muted-foreground border rounded px-2 py-1 hover:bg-muted transition-colors">
+                          <label className="cursor-pointer flex items-center gap-1 text-xs text-muted-foreground border border-border rounded-lg px-2 py-1 hover:bg-muted transition-colors">
                             <Upload className="h-3 w-3" />
                             {receiptFiles[p.id] ? receiptFiles[p.id]!.name.slice(0, 12) + "…" : "Choose file"}
-                            <input
-                              type="file"
-                              className="hidden"
-                              accept=".pdf,.jpg,.jpeg,.png"
+                            <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png"
                               onChange={(e) => {
                                 const file = e.target.files?.[0] ?? null;
                                 setReceiptFiles((prev) => ({ ...prev, [p.id]: file }));
-                              }}
-                            />
+                              }} />
                           </label>
-                          <Button
-                            size="sm"
-                            className="h-7 px-2 text-xs bg-gradient-primary"
+                          <Button size="sm" className="h-7 px-2 text-xs bg-primary hover:bg-primary text-white rounded-lg"
                             disabled={!receiptFiles[p.id] || uploadingFor === p.id}
-                            onClick={() => handleReceiptUpload(p.id)}
-                          >
+                            onClick={() => handleReceiptUpload(p.id)}>
                             {uploadingFor === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Upload"}
                           </Button>
                         </div>
@@ -163,12 +216,13 @@ function DisbursementSection({ payments, disbursementStatus }: {
               })}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
+        </div>
+      </Panel>
     </div>
   );
 }
 
+// ── Payments section ───────────────────────────────────────────────────────────
 function PaymentsSection({ payments }: { payments: Payment[] }) {
   const supabase = createClient();
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
@@ -203,94 +257,92 @@ function PaymentsSection({ payments }: { payments: Payment[] }) {
   return (
     <div className="space-y-4">
       {payments.some((p) => p.status === "Disbursed") && (
-        <Card className="border-primary/20 bg-primary/5">
-          <CardContent className="py-3 flex items-start gap-2">
-            <Upload className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-            <p className="text-sm text-muted-foreground">
-              Please upload your <strong className="text-foreground">signed receipt</strong> for each disbursed payment below to complete your record.
-            </p>
-          </CardContent>
-        </Card>
+        <div className="flex items-start gap-3 bg-accent border border-primary/20 rounded-xl px-4 py-3">
+          <Upload className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+          <p className="text-sm text-primary">
+            Please upload your <strong>signed receipt</strong> for each disbursed payment below to complete your record.
+          </p>
+        </div>
       )}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="font-display">Payment History</CardTitle>
-          <Button size="sm" variant="outline"><Download className="mr-1 h-3 w-3" /> Download Receipts</Button>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {payments.length === 0 && <p className="text-center py-8 text-sm text-muted-foreground">No payments yet.</p>}
+      <Panel>
+        <div className="px-6 py-4 border-b border-muted flex items-center justify-between">
+          <SectionTitle>Payment History</SectionTitle>
+          <Button size="sm" variant="outline" className="text-xs border-border text-muted-foreground hover:bg-muted rounded-lg">
+            <Download className="mr-1 h-3 w-3" /> Download
+          </Button>
+        </div>
+        <div className="p-4 space-y-3">
+          {payments.length === 0 && (
+            <div className="text-center py-10">
+              <Receipt className="h-8 w-8 text-muted-foreground/70 mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">No payments yet.</p>
+            </div>
+          )}
           {payments.map((p) => {
             const isDisbursedPay = p.status === "Disbursed";
             const alreadyUploaded = uploadedIds.includes(p.id);
             return (
-              <div key={p.id} className={`rounded-xl border p-4 space-y-3 ${isDisbursedPay ? "border-success/30 bg-success/5" : ""}`}>
+              <div key={p.id} className={`rounded-xl border p-4 space-y-3 ${isDisbursedPay ? "border-emerald-100 bg-emerald-50/40" : "border-muted"}`}>
                 <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="space-y-0.5">
-                    <p className="text-sm font-semibold text-foreground">
-                      ₱{p.amount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <div>
+                    <p className="text-sm font-semibold text-sidebar-accent">
+                      ₱{p.amount.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
                       <span className="ml-2 text-xs font-normal text-muted-foreground">via {p.method || "—"}</span>
                     </p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs text-muted-foreground mt-0.5">
                       {p.reference ? `Ref: ${p.reference}` : "No reference"} · {p.scheduled_date || "—"}
                     </p>
                   </div>
-                  <StatusBadgeInline status={p.status} />
+                  <StatusBadge status={p.status} />
                 </div>
-
                 {isDisbursedPay && !alreadyUploaded && (
-                  <div className="flex items-center gap-2 pt-1 border-t border-border/50">
-                    <label className="flex-1 flex items-center gap-2 cursor-pointer rounded-lg border border-dashed px-3 py-2 hover:bg-muted/30 transition-colors text-sm text-muted-foreground">
+                  <div className="flex items-center gap-2 pt-2 border-t border-muted">
+                    <label className="flex-1 flex items-center gap-2 cursor-pointer rounded-lg border border-dashed border-muted-foreground/70 px-3 py-2 hover:bg-muted transition-colors text-sm text-muted-foreground">
                       <Upload className="h-4 w-4 shrink-0" />
                       <span className="truncate">{receiptFiles[p.id] ? receiptFiles[p.id]!.name : "Upload your signed receipt"}</span>
-                      <input
-                        type="file"
-                        className="hidden"
-                        accept=".pdf,.jpg,.jpeg,.png"
+                      <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png"
                         onChange={(e) => {
                           const file = e.target.files?.[0] ?? null;
                           setReceiptFiles((prev) => ({ ...prev, [p.id]: file }));
-                        }}
-                      />
+                        }} />
                     </label>
-                    <Button
-                      size="sm"
-                      disabled={!receiptFiles[p.id] || uploadingFor === p.id}
+                    <Button size="sm" disabled={!receiptFiles[p.id] || uploadingFor === p.id}
                       onClick={() => handleReceiptUpload(p.id)}
-                      className="bg-gradient-primary shrink-0"
-                    >
+                      className="bg-primary hover:bg-primary text-white rounded-lg shrink-0">
                       {uploadingFor === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Submit"}
                     </Button>
                   </div>
                 )}
-
                 {isDisbursedPay && alreadyUploaded && (
-                  <div className="flex items-center gap-2 pt-1 border-t border-border/50 text-xs text-success">
+                  <div className="flex items-center gap-2 pt-2 border-t border-muted text-xs text-emerald-600">
                     <CheckCircle className="h-3.5 w-3.5" /> Receipt submitted
                   </div>
                 )}
               </div>
             );
           })}
-        </CardContent>
-      </Card>
+        </div>
+      </Panel>
     </div>
   );
 }
 
+// ── Sidebar items ──────────────────────────────────────────────────────────────
 const sidebarItems = [
-  { icon: LayoutDashboard, label: "Dashboard", key: "overview" },
-  { icon: FileText, label: "Application", key: "application" },
-  { icon: Upload, label: "Documents", key: "documents" },
-  { icon: GraduationCap, label: "Scholarship", key: "scholarship" },
-  { icon: Banknote, label: "Disbursement", key: "disbursement" },
-  { icon: Receipt, label: "Payment History", key: "payments" },
-  { icon: Bell, label: "Notifications", key: "notifications" },
-  { icon: User, label: "Profile", key: "profile" },
-  { icon: SettingsIcon, label: "Settings", key: "settings" },
+  { icon: LayoutDashboard, label: "Dashboard",      key: "overview" },
+  { icon: FileText,        label: "Application",    key: "application" },
+  { icon: Upload,          label: "Documents",      key: "documents" },
+  { icon: GraduationCap,  label: "Scholarship",    key: "scholarship" },
+  { icon: Banknote,        label: "Disbursement",   key: "disbursement" },
+  { icon: Receipt,         label: "Payment History",key: "payments" },
+  { icon: Bell,            label: "Notifications",  key: "notifications" },
+  { icon: User,            label: "Profile",        key: "profile" },
+  { icon: SettingsIcon,    label: "Settings",       key: "settings" },
 ];
 
 const requiredDocTypes = ["Valid ID", "Grades", "Certificate of Registration", "Barangay Indigency", "Birth Certificate"];
 
+// ══════════════════════════════════════════════════════════════════════════════
 export default function StudentDashboardPage() {
   const router = useRouter();
   const supabase = createClient();
@@ -298,39 +350,39 @@ export default function StudentDashboardPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const [profile, setProfile] = useState<Tables<"profiles"> | null>(null);
+  const [profile, setProfile]           = useState<Tables<"profiles"> | null>(null);
   const [applications, setApplications] = useState<(Tables<"applications"> & { scholarships: { name: string } | null })[]>([]);
-  const [documents, setDocuments] = useState<Tables<"documents">[]>([]);
-  const [payments, setPayments] = useState<Tables<"payments">[]>([]);
+  const [documents, setDocuments]       = useState<Tables<"documents">[]>([]);
+  const [payments, setPayments]         = useState<Tables<"payments">[]>([]);
   const [notifications, setNotifications] = useState<Tables<"notifications">[]>([]);
   const [scholarships, setScholarships] = useState<Tables<"scholarships">[]>([]);
-  const [userEmail, setUserEmail] = useState("");
+  const [userEmail, setUserEmail]       = useState("");
+  const [userId, setUserId]             = useState("");
   const [applyScholarshipId, setApplyScholarshipId] = useState("");
-  const [applyDialogOpen, setApplyDialogOpen] = useState(false);
-  const [applyLoading, setApplyLoading] = useState(false);
+  const [applyDialogOpen, setApplyDialogOpen]       = useState(false);
+  const [applyLoading, setApplyLoading]             = useState(false);
 
-  // Profile edit state — kept in parent to survive re-renders
-  const [editFirst, setEditFirst] = useState("");
-  const [editLast, setEditLast] = useState("");
-  const [editPhone, setEditPhone] = useState("");
-  const [editBarangay, setEditBarangay] = useState("");
+  // Profile edit state
+  const [editFirst, setEditFirst]               = useState("");
+  const [editLast, setEditLast]                 = useState("");
+  const [editPhone, setEditPhone]               = useState("");
+  const [editBarangay, setEditBarangay]         = useState("");
   const [editMunicipality, setEditMunicipality] = useState("");
-  const [editSchool, setEditSchool] = useState("");
-  const [editCourse, setEditCourse] = useState("");
-  const [editYearLevel, setEditYearLevel] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [newPw, setNewPw] = useState("");
-  const [confirmPw, setConfirmPw] = useState("");
+  const [editSchool, setEditSchool]             = useState("");
+  const [editCourse, setEditCourse]             = useState("");
+  const [editYearLevel, setEditYearLevel]       = useState("");
+  const [uploading, setUploading]               = useState(false);
+  const [newPw, setNewPw]                       = useState("");
+  const [confirmPw, setConfirmPw]               = useState("");
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push("/login"); return; }
     setUserEmail(user.email || "");
+    setUserId(user.id);
 
     const [profileRes, appsRes, docsRes, paymentsRes, notifsRes, scholsRes] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", user.id).single(),
@@ -360,16 +412,61 @@ export default function StudentDashboardPage() {
     setLoading(false);
   };
 
-  // ── Annual limit: only the application submitted THIS calendar year is "current" ──
-  const currentYear = new Date().getFullYear();
-  const currentApp = applications.find(
-    (app) => new Date(app.created_at).getFullYear() === currentYear
-  );
-  const hasAppliedThisYear = !!currentApp;
-  // ──────────────────────────────────────────────────────────────────────────────
-  const isDisbursed = currentApp?.disbursement_status === "Disbursed";
-  const isApproved = currentApp?.status === "Approved";
-  const locked = isApproved || isDisbursed;
+  // Re-fetch application/payment rows in the background (no loading flicker) —
+  // used when a live status/disbursement update comes in over realtime.
+  const silentRefresh = async (uid: string) => {
+    const [appsRes, paymentsRes] = await Promise.all([
+      supabase.from("applications").select("*, scholarships(name)").eq("user_id", uid).order("created_at", { ascending: false }),
+      supabase.from("payments").select("*").eq("user_id", uid).order("created_at", { ascending: false }),
+    ]);
+    if (appsRes.data) setApplications(appsRes.data);
+    if (paymentsRes.data) setPayments(paymentsRes.data);
+  };
+
+  // ── Live updates: notifications, application status, disbursement ──────────
+  useEffect(() => {
+    if (!userId) return;
+
+    const channel = supabase
+      .channel(`student-live-${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const n = payload.new as Tables<"notifications">;
+          setNotifications((prev) => [n, ...prev]);
+          const notify = toast[n.type as "info" | "success" | "warning" | "error"] ?? toast.message;
+          notify(n.title, { description: n.message });
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const n = payload.new as Tables<"notifications">;
+          setNotifications((prev) => prev.map((x) => (x.id === n.id ? n : x)));
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "applications", filter: `user_id=eq.${userId}` },
+        () => silentRefresh(userId)
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "payments", filter: `user_id=eq.${userId}` },
+        () => silentRefresh(userId)
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [userId]);
+
+  const currentYear  = new Date().getFullYear();
+  const currentApp   = applications.find((app) => new Date(app.created_at).getFullYear() === currentYear);
+  const isDisbursed  = currentApp?.disbursement_status === "Disbursed";
+  const isApproved   = currentApp?.status === "Approved";
+  const locked       = isApproved || isDisbursed;
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -380,221 +477,400 @@ export default function StudentDashboardPage() {
   const lockedToast = () => toast.error("Locked: you already have an approved or disbursed scholarship.");
   const guard = (fn: () => void) => () => (locked ? lockedToast() : fn());
 
-  const statusBadge = (status: string | null | undefined) => {
-    if (!status || status === "—") return <span className="text-sm text-muted-foreground">—</span>;
-    const map: Record<string, { icon: any; cls: string }> = {
-      Approved: { icon: CheckCircle, cls: "border-success text-success" },
-      Pending: { icon: Clock, cls: "border-warning text-warning" },
-      Rejected: { icon: XCircle, cls: "border-destructive text-destructive" },
-      Disbursed: { icon: CheckCircle, cls: "border-success text-success" },
-      Processing: { icon: Clock, cls: "border-primary text-primary" },
-      Waitlisted: { icon: Clock, cls: "border-muted-foreground text-muted-foreground" },
-    };
-    const m = map[status];
-    if (!m) return <Badge variant="outline">{status}</Badge>;
-    const Icon = m.icon;
-    return <Badge variant="outline" className={m.cls}><Icon className="mr-1 h-3 w-3" />{status}</Badge>;
-  };
+  const displayName = profile
+    ? `${profile.first_name || ""} ${profile.last_name || ""}`.trim()
+    : userEmail.split("@")[0];
 
-  const displayName = profile ? `${profile.first_name || ""} ${profile.last_name || ""}`.trim() : userEmail.split("@")[0];
+  const unreadCount = notifications.filter(n => !n.read).length;
+  const docsUploaded = requiredDocTypes.filter(t => documents.some(d => d.document_type === t)).length;
 
+  // ── Loading ────────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-12 w-12 rounded-2xl bg-primary flex items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-white" />
+          </div>
+          <p className="text-sm text-muted-foreground font-medium">Loading your dashboard…</p>
+        </div>
       </div>
     );
   }
 
+  // ── Section: Overview ──────────────────────────────────────────────────────
   const Overview = () => (
     <div className="space-y-6">
-      <Card>
-        <CardContent className="py-6 flex flex-col sm:flex-row items-center sm:items-start gap-4">
-          {profile?.profile_picture_url ? (
-            <img src={profile.profile_picture_url} alt="Profile" className="h-20 w-20 rounded-full object-cover" />
-          ) : (
-            <div className="h-20 w-20 rounded-full bg-orange-100 flex items-center justify-center">
-              <User className="h-10 w-10 text-orange-600" />
-            </div>
-          )}
-          <div className="flex-1 text-center sm:text-left">
-            <h2 className="text-xl font-display font-bold">{displayName}</h2>
-            <p className="text-sm text-muted-foreground">{profile?.course || "—"} {profile?.year_level ? `• ${profile.year_level}` : ""}</p>
-            <p className="text-sm text-muted-foreground">{profile?.school_name || "—"}</p>
-          </div>
-          {locked && <Badge variant="outline" className="border-destructive text-destructive"><Lock className="mr-1 h-3 w-3" /> {isDisbursed ? "Disbursed" : "Approved — Locked"}</Badge>}
-        </CardContent>
-      </Card>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Application Status</p><div className="mt-2">{currentApp ? statusBadge(currentApp.status) : <span className="text-sm text-muted-foreground">No application</span>}</div></CardContent></Card>
-        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Scholarship</p><p className="font-semibold mt-1">{currentApp?.scholarships?.name || "—"}</p></CardContent></Card>
-        <Card><CardContent className="py-4"><p className="text-xs text-muted-foreground">Disbursement</p><div className="mt-2">{statusBadge(currentApp?.disbursement_status)}</div></CardContent></Card>
-      </div>
-      <Card>
-        <CardHeader><CardTitle className="font-display">Progress</CardTitle></CardHeader>
-        <CardContent><ApplicationProgressBar currentStep={isDisbursed ? 2 : currentApp?.status === "Approved" ? 1 : 0} /></CardContent>
-      </Card>
-      <Card>
-        <CardHeader><CardTitle className="font-display">Latest Notifications</CardTitle></CardHeader>
-        <CardContent className="space-y-2">
-          {notifications.length === 0 && <p className="text-sm text-muted-foreground">No notifications yet.</p>}
-          {notifications.slice(0, 3).map((n) => (
-            <div key={n.id} className="flex items-start gap-3 p-3 rounded-md bg-muted/40">
-              <Bell className="h-4 w-4 text-primary mt-0.5" />
-              <div className="flex-1">
-                <p className="text-sm font-medium">{n.title}</p>
-                <p className="text-xs text-muted-foreground">{n.message}</p>
-              </div>
-              <span className="text-xs text-muted-foreground">{new Date(n.created_at).toLocaleDateString()}</span>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-    </div>
-  );
-
-  const Application = () => (
-    <div className="space-y-6">
-      {locked && (
-        <Card className="border-destructive/40 bg-destructive/5">
-          <CardContent className="py-4 flex items-center gap-3">
-            <Lock className="h-5 w-5 text-destructive" />
-            <p className="text-sm">Your scholarship has been disbursed. The application is now read-only.</p>
-          </CardContent>
-        </Card>
-      )}
-      {currentApp ? (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="font-display">My Application</CardTitle>
-              <CardDescription>{currentApp.scholarships?.name}</CardDescription>
-            </div>
-            {statusBadge(currentApp.status)}
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div><p className="text-muted-foreground">Submitted</p><p className="font-medium">{new Date(currentApp.created_at).toLocaleDateString()}</p></div>
-              <div><p className="text-muted-foreground">Year Level</p><p className="font-medium">{profile?.year_level || "—"}</p></div>
-              <div><p className="text-muted-foreground">School</p><p className="font-medium">{profile?.school_name || "—"}</p></div>
-              <div><p className="text-muted-foreground">Course</p><p className="font-medium">{profile?.course || "—"}</p></div>
-            </div>
-            <div className="flex flex-wrap gap-2 pt-2">
-              <Button size="sm" variant="outline" disabled={locked || currentApp.status !== "Pending"} onClick={guard(() => toast.success("Edit mode enabled"))}><Pencil className="mr-1 h-3 w-3" /> Edit</Button>
-              <Button size="sm" variant="outline" disabled={locked || currentApp.status === "Approved"} onClick={guard(async () => {
-                await supabase.from("applications").delete().eq("id", currentApp.id);
-                toast.success("Application cancelled");
-                loadData();
-              })}><Trash2 className="mr-1 h-3 w-3" /> Cancel</Button>
-              <Button size="sm" variant="outline"><Eye className="mr-1 h-3 w-3" /> View</Button>
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardContent className="py-8 text-center space-y-4">
-            {/* Annual-limit info banner */}
-            <div className="inline-flex items-center gap-2 rounded-full bg-orange-100 px-4 py-1.5 text-sm font-semibold text-orange-700 mx-auto">
-              <GraduationCap className="h-4 w-4" />
-              1 scholarship application allowed per year
-            </div>
-            <p className="text-muted-foreground">
-              You haven&apos;t submitted an application for {currentYear} yet.
+      {/* Gradient hero banner */}
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-hero p-6 sm:p-7">
+        <div className="absolute inset-0 opacity-10 pointer-events-none" style={{
+          backgroundImage: "repeating-linear-gradient(135deg, #fff 0, #fff 1px, transparent 1px, transparent 14px)",
+        }} />
+        <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-display font-bold text-white">Dashboard</h1>
+            <p className="text-sm text-white/80 mt-1">
+              Welcome back, {displayName.split(" ")[0] || "Student"}! Here&apos;s what&apos;s happening today.
             </p>
-            <Dialog open={applyDialogOpen} onOpenChange={setApplyDialogOpen}>
-              <DialogTrigger asChild>
-                <Button className="bg-gradient-primary">
-                  <FileText className="mr-1 h-4 w-4" /> Apply for Scholarship
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Apply for Scholarship</DialogTitle>
-                </DialogHeader>
-                <div className="rounded-md bg-orange-50 border border-orange-200 px-4 py-3 text-sm text-orange-800 flex items-start gap-2">
-                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-orange-600" />
-                  <span>
-                    You may only submit <strong>one application per year</strong>. Choose your scholarship program carefully.
-                  </span>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              onClick={() => setActive("notifications")}
+              className="relative h-10 w-10 rounded-xl bg-white/15 hover:bg-white/25 flex items-center justify-center transition-colors cursor-pointer"
+              aria-label="Notifications"
+            >
+              <Bell className="h-4.5 w-4.5 text-white" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-white text-primary text-[9px] font-bold flex items-center justify-center">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setActive(currentApp ? "application" : "application")}
+              className="inline-flex items-center gap-2 rounded-xl bg-white text-primary text-sm font-semibold px-4 py-2.5 hover:bg-white/90 transition-colors cursor-pointer shadow-sm"
+            >
+              {currentApp ? <Eye className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+              {currentApp ? "View Application" : "Apply for Scholarship"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          icon={FileText}
+          label="Application Status"
+          value={currentApp?.status || "None"}
+          sub={currentApp ? `Submitted ${new Date(currentApp.created_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}` : `No application for ${currentYear}`}
+          subTone={currentApp?.status === "Approved" ? "positive" : "neutral"}
+          accent={!!currentApp && currentApp.status === "Approved"}
+        />
+        <StatCard
+          icon={Upload}
+          label="Documents"
+          value={`${docsUploaded} / ${requiredDocTypes.length}`}
+          sub={docsUploaded === requiredDocTypes.length ? "All complete" : `${requiredDocTypes.length - docsUploaded} remaining`}
+          subTone={docsUploaded === requiredDocTypes.length ? "positive" : "warning"}
+        />
+        <StatCard
+          icon={Banknote}
+          label="Disbursed"
+          value={`₱${payments.filter(p => p.status === "Disbursed").reduce((s, p) => s + p.amount, 0).toLocaleString("en-PH", { minimumFractionDigits: 0 })}`}
+          sub={currentApp?.disbursement_status || "Not yet disbursed"}
+        />
+        <StatCard
+          icon={Bell}
+          label="Notifications"
+          value={unreadCount}
+          sub={unreadCount === 0 ? "All caught up" : `${unreadCount} unread`}
+          subTone={unreadCount === 0 ? "positive" : "warning"}
+        />
+      </div>
+
+      {/* Two-column body */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Left: profile + progress + available scholarships */}
+        <div className="lg:col-span-2 space-y-5">
+          <Panel className="p-5">
+            <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
+              <div className="relative shrink-0">
+                {profile?.profile_picture_url ? (
+                  <img src={profile.profile_picture_url} alt="Profile" className="h-16 w-16 rounded-2xl object-cover" />
+                ) : (
+                  <div className="h-16 w-16 rounded-2xl bg-accent flex items-center justify-center">
+                    <User className="h-7 w-7 text-accent-foreground" />
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 text-center sm:text-left min-w-0">
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                  <h2 className="text-lg font-display font-bold text-foreground">{displayName || "Student"}</h2>
+                  {locked && (
+                    <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${isDisbursed ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-accent text-accent-foreground border-primary/20"}`}>
+                      <Lock className="h-3 w-3" />{isDisbursed ? "Disbursed" : "Approved — Locked"}
+                    </span>
+                  )}
                 </div>
-                <div className="space-y-3">
-                  <div>
-                    <Label>Scholarship Program *</Label>
-                    <Select value={applyScholarshipId} onValueChange={setApplyScholarshipId}>
-                      <SelectTrigger><SelectValue placeholder="Select program" /></SelectTrigger>
-                      <SelectContent>
-                        {scholarships.map((s) => (
-                          <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  {profile?.course || "—"}{profile?.year_level ? ` · ${profile.year_level}` : ""}
+                </p>
+                <p className="text-sm text-muted-foreground">{profile?.school_name || "—"}</p>
+              </div>
+              <button
+                onClick={() => setActive("profile")}
+                className="flex items-center gap-1.5 text-xs text-primary font-semibold hover:text-primary/80 transition-colors shrink-0 cursor-pointer"
+              >
+                Edit Profile <ChevronRight className="h-3 w-3" />
+              </button>
+            </div>
+          </Panel>
+
+          <Panel className="p-5">
+            <SectionTitle>Application Progress</SectionTitle>
+            <ApplicationProgressBar currentStep={isDisbursed ? 2 : currentApp?.status === "Approved" ? 1 : 0} />
+          </Panel>
+
+          <Panel>
+            <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+              <SectionTitle>Available Scholarships</SectionTitle>
+              <button onClick={() => setActive("application")} className="text-xs text-primary font-semibold hover:text-primary/80 cursor-pointer">
+                View All
+              </button>
+            </div>
+            <div className="divide-y divide-border">
+              {scholarships.length === 0 && (
+                <div className="text-center py-10">
+                  <GraduationCap className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">No active scholarships right now.</p>
+                </div>
+              )}
+              {scholarships.slice(0, 3).map((s) => (
+                <div key={s.id} className="p-5 hover:bg-muted/40 transition-colors">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-foreground truncate">{s.name}</p>
+                      {s.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{s.description}</p>}
+                    </div>
+                    <button
+                      onClick={guard(() => { setApplyScholarshipId(s.id); setApplyDialogOpen(true); setActive("application"); })}
+                      disabled={!!currentApp}
+                      className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-primary/30 text-primary text-xs font-semibold px-3 py-1.5 hover:bg-accent transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                    >
+                      View <ArrowRight className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-4 mt-3 text-xs text-muted-foreground">
+                    <span className="inline-flex items-center gap-1"><Banknote className="h-3.5 w-3.5" /> ₱{s.amount.toLocaleString("en-PH")}</span>
+                    {s.deadline && <span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {new Date(s.deadline).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</span>}
+                    <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" /> {s.slots} slots</span>
                   </div>
                 </div>
-                <DialogFooter>
-                  <Button
-                    disabled={!applyScholarshipId || applyLoading}
-                    className="bg-gradient-primary"
-                    onClick={async () => {
-                      if (!applyScholarshipId) return;
-                      setApplyLoading(true);
-                      try {
-                        const res = await fetch("/api/applications", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ scholarship_id: applyScholarshipId }),
-                        });
-                        const json = await res.json();
-                        if (!res.ok) {
-                          toast.error(json.error ?? "Failed to submit application.");
-                        } else {
-                          toast.success("Application submitted!");
-                          setApplyDialogOpen(false);
-                          setApplyScholarshipId("");
-                          loadData();
-                        }
-                      } catch {
-                        toast.error("Network error. Please try again.");
-                      } finally {
-                        setApplyLoading(false);
+              ))}
+            </div>
+          </Panel>
+        </div>
+
+        {/* Right: recent notifications panel */}
+        <div className="space-y-5">
+          <Panel>
+            <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+              <SectionTitle>Recent Notifications</SectionTitle>
+              {notifications.length > 4 && (
+                <button onClick={() => setActive("notifications")} className="text-xs text-primary font-semibold hover:text-primary/80 cursor-pointer">
+                  View all
+                </button>
+              )}
+            </div>
+            <div className="divide-y divide-border">
+              {notifications.length === 0 && (
+                <div className="text-center py-10 px-4">
+                  <Bell className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">No notifications yet.</p>
+                </div>
+              )}
+              {notifications.slice(0, 4).map((n) => (
+                <div key={n.id} className={`flex items-start gap-3 px-5 py-4 ${!n.read ? "bg-accent/50" : ""}`}>
+                  <div className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                    n.type === "success" ? "bg-emerald-100" : n.type === "warning" ? "bg-amber-100" : "bg-accent"
+                  }`}>
+                    <Bell className={`h-4 w-4 ${
+                      n.type === "success" ? "text-emerald-600" : n.type === "warning" ? "text-amber-600" : "text-accent-foreground"
+                    }`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate">{n.title}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed line-clamp-2">{n.message}</p>
+                    <p className="text-[11px] text-muted-foreground/70 mt-1">{new Date(n.created_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── Section: Application ───────────────────────────────────────────────────
+  const Application = () => (
+    <div className="space-y-5">
+      {locked && (
+        <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+          <Lock className="h-4 w-4 text-amber-600 shrink-0" />
+          <p className="text-sm text-amber-800">Your scholarship has been {isDisbursed ? "disbursed" : "approved"}. The application is now read-only.</p>
+        </div>
+      )}
+      {currentApp ? (
+        <Panel>
+          <div className="px-6 py-5 border-b border-muted flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <SectionTitle>My Application</SectionTitle>
+              <p className="text-sm text-muted-foreground -mt-3">{currentApp.scholarships?.name}</p>
+            </div>
+            <StatusBadge status={currentApp.status} />
+          </div>
+          <div className="p-6">
+            <div className="grid grid-cols-2 gap-4 text-sm mb-5">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Submitted</p>
+                <p className="font-semibold text-sidebar-accent">{new Date(currentApp.created_at).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Year Level</p>
+                <p className="font-semibold text-sidebar-accent">{profile?.year_level || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">School</p>
+                <p className="font-semibold text-sidebar-accent">{profile?.school_name || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Course</p>
+                <p className="font-semibold text-sidebar-accent">{profile?.course || "—"}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" className="text-xs border-border rounded-xl hover:bg-muted"
+                disabled={locked || currentApp.status !== "Pending"}
+                onClick={guard(() => toast.success("Edit mode enabled"))}>
+                <Pencil className="mr-1 h-3 w-3" /> Edit
+              </Button>
+              <Button size="sm" variant="outline" className="text-xs border-red-200 text-red-600 hover:bg-red-50 rounded-xl"
+                disabled={locked || currentApp.status === "Approved"}
+                onClick={guard(async () => {
+                  await supabase.from("applications").delete().eq("id", currentApp.id);
+                  toast.success("Application cancelled");
+                  loadData();
+                })}>
+                <Trash2 className="mr-1 h-3 w-3" /> Cancel
+              </Button>
+              <Button size="sm" variant="outline" className="text-xs border-border rounded-xl hover:bg-muted">
+                <Eye className="mr-1 h-3 w-3" /> View
+              </Button>
+            </div>
+          </div>
+        </Panel>
+      ) : (
+        <Panel className="p-10 text-center">
+          <div className="h-14 w-14 rounded-2xl bg-accent flex items-center justify-center mx-auto mb-4">
+            <GraduationCap className="h-7 w-7 text-primary" />
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-1.5 text-sm font-semibold text-primary mb-3">
+            1 scholarship application allowed per year
+          </div>
+          <p className="text-muted-foreground text-sm mb-6">You haven&apos;t submitted an application for {currentYear} yet.</p>
+          <Dialog open={applyDialogOpen} onOpenChange={setApplyDialogOpen}>
+            <DialogTrigger asChild>
+              <Button className="bg-primary hover:bg-primary text-white rounded-xl px-6">
+                <FileText className="mr-2 h-4 w-4" /> Apply for Scholarship
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="rounded-2xl">
+              <DialogHeader>
+                <DialogTitle className="font-display">Apply for Scholarship</DialogTitle>
+              </DialogHeader>
+              <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+                <span>You may only submit <strong>one application per year</strong>. Choose your scholarship program carefully.</span>
+              </div>
+              <div>
+                <Label className="text-sm font-medium text-foreground mb-1.5 block">Scholarship Program *</Label>
+                <Select value={applyScholarshipId} onValueChange={setApplyScholarshipId}>
+                  <SelectTrigger className="rounded-xl border-border"><SelectValue placeholder="Select program" /></SelectTrigger>
+                  <SelectContent>
+                    {scholarships.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <DialogFooter>
+                <Button disabled={!applyScholarshipId || applyLoading}
+                  className="bg-primary hover:bg-primary text-white rounded-xl w-full"
+                  onClick={async () => {
+                    if (!applyScholarshipId) return;
+                    setApplyLoading(true);
+                    try {
+                      const res = await fetch("/api/applications", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ scholarship_id: applyScholarshipId }),
+                      });
+                      const json = await res.json();
+                      if (!res.ok) {
+                        toast.error(json.error ?? "Failed to submit application.");
+                      } else {
+                        toast.success("Application submitted!");
+                        setApplyDialogOpen(false);
+                        setApplyScholarshipId("");
+                        loadData();
                       }
-                    }}
-                  >
-                    {applyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Submit Application
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          </CardContent>
-        </Card>
+                    } catch {
+                      toast.error("Network error. Please try again.");
+                    } finally {
+                      setApplyLoading(false);
+                    }
+                  }}>
+                  {applyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Submit Application
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </Panel>
       )}
     </div>
   );
 
+  // ── Section: Documents ─────────────────────────────────────────────────────
   const Documents = () => (
     <div className="space-y-4">
       {locked && (
-        <Card className="border-destructive/40 bg-destructive/5">
-          <CardContent className="py-3 flex items-center gap-2 text-sm"><Lock className="h-4 w-4 text-destructive" /> Documents are locked after disbursement.</CardContent>
-        </Card>
+        <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+          <Lock className="h-4 w-4 text-red-600 shrink-0" />
+          <p className="text-sm text-red-700">Documents are locked after disbursement.</p>
+        </div>
       )}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+      {/* Progress bar */}
+      <Panel className="p-5">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-sm font-semibold text-foreground">Upload Progress</span>
+          <span className="text-sm font-bold text-primary">{docsUploaded}/{requiredDocTypes.length}</span>
+        </div>
+        <div className="h-2.5 w-full rounded-full bg-muted overflow-hidden">
+          <div
+            className="h-full rounded-full bg-primary transition-all duration-500"
+            style={{ width: `${(docsUploaded / requiredDocTypes.length) * 100}%` }}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground mt-2">
+          {docsUploaded === requiredDocTypes.length ? "All required documents uploaded." : `${requiredDocTypes.length - docsUploaded} document(s) remaining.`}
+        </p>
+      </Panel>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {requiredDocTypes.map((docType) => {
           const uploaded = documents.find((d) => d.document_type === docType);
           return (
-            <Card key={docType} className={uploaded ? "border-success/30" : ""}>
-              <CardContent className="flex items-center justify-between py-4">
-                <div className="flex items-center gap-3">
-                  <FileText className={`h-5 w-5 ${uploaded ? "text-success" : "text-muted-foreground"}`} />
-                  <div>
-                    <p className="text-sm font-medium">{docType}</p>
-                    <p className="text-xs text-muted-foreground">{uploaded ? uploaded.file_name : "Not uploaded"}</p>
-                  </div>
+            <Panel key={docType} className={`p-4 flex items-center justify-between ${uploaded ? "border-emerald-100" : ""}`}>
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${uploaded ? "bg-emerald-100" : "bg-muted"}`}>
+                  <FileText className={`h-5 w-5 ${uploaded ? "text-emerald-600" : "text-muted-foreground"}`} />
                 </div>
-                <div className="flex gap-2">
-                  {uploaded && <Button size="sm" variant="outline"><Eye className="h-3 w-3" /></Button>}
-                  <Label className="cursor-pointer">
-                    <Input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" disabled={locked} onChange={async (e) => {
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground truncate">{docType}</p>
+                  <p className="text-xs text-muted-foreground truncate">{uploaded ? uploaded.file_name : "Not uploaded"}</p>
+                </div>
+              </div>
+              <div className="flex gap-2 shrink-0 ml-2">
+                {uploaded && (
+                  <Button size="sm" variant="outline" className="h-8 w-8 p-0 rounded-xl border-border hover:bg-muted">
+                    <Eye className="h-3.5 w-3.5 text-muted-foreground" />
+                  </Button>
+                )}
+                <Label className="cursor-pointer">
+                  <Input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" disabled={locked}
+                    onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
                       const { data: { user } } = await supabase.auth.getUser();
@@ -607,74 +883,112 @@ export default function StudentDashboardPage() {
                       toast.success(`${docType} uploaded`);
                       loadData();
                     }} />
-                    <span className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm font-medium cursor-pointer ${locked ? "opacity-50 pointer-events-none" : "hover:bg-muted"}`}>
-                      <Upload className="h-3 w-3" />{uploaded ? "Replace" : "Upload"}
-                    </span>
-                  </Label>
-                </div>
-              </CardContent>
-            </Card>
+                  <span className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    locked ? "opacity-50 pointer-events-none border-border text-muted-foreground" :
+                    uploaded ? "border-primary/20 text-primary hover:bg-accent" : "border-primary bg-primary text-white hover:bg-primary"
+                  }`}>
+                    <Upload className="h-3 w-3" />{uploaded ? "Replace" : "Upload"}
+                  </span>
+                </Label>
+              </div>
+            </Panel>
           );
         })}
       </div>
     </div>
   );
 
+  // ── Section: Scholarship ───────────────────────────────────────────────────
   const Scholarship = () => (
-    <Card>
-      <CardHeader>
-        <CardTitle className="font-display">{currentApp?.scholarships?.name || "No Active Scholarship"}</CardTitle>
-        <CardDescription>Program details and conditions</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-          <div><p className="text-muted-foreground">Approved Amount</p><p className="font-medium">{currentApp?.amount_approved ? `₱${currentApp.amount_approved.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</p></div>
-          <div><p className="text-muted-foreground">Required Grade</p><p className="font-medium">85% and above</p></div>
+    <Panel>
+      <div className="px-6 py-5 border-b border-muted">
+        <SectionTitle>{currentApp?.scholarships?.name || "No Active Scholarship"}</SectionTitle>
+        <p className="text-sm text-muted-foreground -mt-3">Program details and conditions</p>
+      </div>
+      <div className="p-6 space-y-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="rounded-xl bg-accent border border-accent p-4">
+            <p className="text-xs text-muted-foreground mb-1">Approved Amount</p>
+            <p className="text-xl font-bold text-primary">
+              {currentApp?.amount_approved ? `₱${currentApp.amount_approved.toLocaleString("en-PH", { minimumFractionDigits: 2 })}` : "—"}
+            </p>
+          </div>
+          <div className="rounded-xl bg-muted border border-muted p-4">
+            <p className="text-xs text-muted-foreground mb-1">Required Grade</p>
+            <p className="text-xl font-bold text-sidebar-accent">85% and above</p>
+          </div>
         </div>
         <div>
-          <p className="text-sm font-semibold mb-2">Conditions</p>
-          <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
-            <li>Maintain a minimum grade of 85.</li>
-            <li>Submit a Certificate of Registration each semester.</li>
-            <li>Attend mandatory orientation and progress meetings.</li>
-            <li>No failing grades or dropped subjects.</li>
-          </ul>
+          <p className="text-sm font-semibold text-foreground mb-3">Scholarship Conditions</p>
+          <div className="space-y-2">
+            {[
+              "Maintain a minimum grade of 85.",
+              "Submit a Certificate of Registration each semester.",
+              "Attend mandatory orientation and progress meetings.",
+              "No failing grades or dropped subjects.",
+            ].map((c, i) => (
+              <div key={i} className="flex items-start gap-3">
+                <div className="h-5 w-5 rounded-full bg-accent flex items-center justify-center shrink-0 mt-0.5">
+                  <CheckCircle className="h-3 w-3 text-primary" />
+                </div>
+                <p className="text-sm text-muted-foreground">{c}</p>
+              </div>
+            ))}
+          </div>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   );
 
+  // ── Section: Notifications ─────────────────────────────────────────────────
   const Notifications = () => (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="font-display">All Notifications</CardTitle>
+    <Panel>
+      <div className="px-6 py-4 border-b border-muted flex items-center justify-between">
+        <SectionTitle>All Notifications</SectionTitle>
         {notifications.some(n => !n.read) && (
-          <Button variant="ghost" size="sm" onClick={async () => {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) return;
-            await supabase.from("notifications").update({ read: true }).eq("user_id", user.id).eq("read", false);
-            loadData();
-          }}>Mark all read</Button>
+          <Button variant="ghost" size="sm" className="text-xs text-primary hover:text-primary hover:bg-accent rounded-lg"
+            onClick={async () => {
+              const { data: { user } } = await supabase.auth.getUser();
+              if (!user) return;
+              await supabase.from("notifications").update({ read: true }).eq("user_id", user.id).eq("read", false);
+              loadData();
+            }}>
+            Mark all read
+          </Button>
         )}
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {notifications.length === 0 && <p className="text-sm text-muted-foreground">No notifications yet.</p>}
+      </div>
+      <div className="divide-y divide-muted">
+        {notifications.length === 0 && (
+          <div className="text-center py-12">
+            <Bell className="h-8 w-8 text-border mx-auto mb-2" />
+            <p className="text-sm text-muted-foreground">No notifications yet.</p>
+          </div>
+        )}
         {notifications.map((n) => (
-          <div key={n.id} className={`flex items-start gap-3 p-3 rounded-md border ${n.read ? "opacity-70" : "border-primary/30"}`}>
-            <Bell className={`h-4 w-4 mt-0.5 ${n.type === "success" ? "text-success" : n.type === "warning" ? "text-warning" : "text-primary"}`} />
-            <div className="flex-1">
-              <p className="text-sm font-medium">{n.title}</p>
-              <p className="text-xs text-muted-foreground">{n.message}</p>
+          <div key={n.id} className={`flex items-start gap-3 px-6 py-4 transition-colors ${!n.read ? "bg-accent/60" : "hover:bg-muted/50"}`}>
+            <div className={`h-9 w-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
+              n.type === "success" ? "bg-emerald-100" : n.type === "warning" ? "bg-amber-100" : "bg-accent"
+            }`}>
+              <Bell className={`h-4 w-4 ${
+                n.type === "success" ? "text-emerald-600" : n.type === "warning" ? "text-amber-600" : "text-primary"
+              }`} />
             </div>
-            <span className="text-xs text-muted-foreground">{new Date(n.created_at).toLocaleDateString()}</span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-semibold text-sidebar-accent">{n.title}</p>
+                {!n.read && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{n.message}</p>
+            </div>
+            <span className="text-xs text-muted-foreground shrink-0">{new Date(n.created_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}</span>
           </div>
         ))}
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   );
 
+  // ── Section: Profile ───────────────────────────────────────────────────────
   const Profile = () => {
-
     const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -714,188 +1028,300 @@ export default function StudentDashboardPage() {
     };
 
     return (
-      <div className="space-y-6">
+      <div className="space-y-5">
         {locked && (
-          <Card className="border-destructive/40 bg-destructive/5">
-            <CardContent className="py-3 flex items-center gap-2 text-sm"><Lock className="h-4 w-4 text-destructive" /> Profile editing is disabled after disbursement.</CardContent>
-          </Card>
+          <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+            <Lock className="h-4 w-4 text-red-600 shrink-0" />
+            <p className="text-sm text-red-700">Profile editing is disabled after disbursement.</p>
+          </div>
         )}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <Card className="lg:col-span-1">
-            <CardContent className="py-6 text-center">
-              <div className="relative mx-auto h-24 w-24 mb-4">
-                {profile?.profile_picture_url ? (
-                  <img src={profile.profile_picture_url} alt="Profile" className="h-24 w-24 rounded-full object-cover" />
-                ) : (
-                  <div className="h-24 w-24 rounded-full bg-orange-100 flex items-center justify-center"><User className="h-10 w-10 text-orange-600" /></div>
-                )}
-                <Label className="absolute bottom-0 right-0 h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center cursor-pointer shadow-md hover:bg-primary/90">
-                  <Input type="file" className="hidden" accept="image/*" disabled={locked || uploading} onChange={handlePhotoUpload} />
-                  {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
-                </Label>
-              </div>
-              <h3 className="font-display font-bold">{displayName}</h3>
-              <p className="text-sm text-muted-foreground">{userEmail}</p>
-            </CardContent>
-          </Card>
-          <Card className="lg:col-span-2">
-            <CardHeader><CardTitle className="font-display">Personal Information</CardTitle></CardHeader>
-            <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div><Label>First Name</Label><Input value={editFirst} onChange={e => setEditFirst(e.target.value)} disabled={locked} /></div>
-              <div><Label>Last Name</Label><Input value={editLast} onChange={e => setEditLast(e.target.value)} disabled={locked} /></div>
-              <div><Label>Email</Label><Input defaultValue={userEmail} disabled /></div>
-              <div><Label>Phone</Label><Input value={editPhone} onChange={e => setEditPhone(e.target.value)} disabled={locked} /></div>
-              <div><Label>Barangay</Label><Input value={editBarangay} onChange={e => setEditBarangay(e.target.value)} disabled={locked} /></div>
-              <div><Label>Municipality</Label><Input value={editMunicipality} onChange={e => setEditMunicipality(e.target.value)} disabled={locked} /></div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* Avatar card */}
+          <Panel className="p-6 text-center flex flex-col items-center">
+            <div className="relative mb-4">
+              {profile?.profile_picture_url ? (
+                <img src={profile.profile_picture_url} alt="Profile" className="h-24 w-24 rounded-2xl object-cover" />
+              ) : (
+                <div className="h-24 w-24 rounded-2xl bg-accent flex items-center justify-center">
+                  <User className="h-10 w-10 text-primary" />
+                </div>
+              )}
+              <Label className={`absolute -bottom-2 -right-2 h-8 w-8 rounded-xl flex items-center justify-center cursor-pointer shadow-md transition-colors ${locked || uploading ? "opacity-50 pointer-events-none bg-muted-foreground/70" : "bg-primary hover:bg-primary"}`}>
+                <Input type="file" className="hidden" accept="image/*" disabled={locked || uploading} onChange={handlePhotoUpload} />
+                {uploading ? <Loader2 className="h-4 w-4 animate-spin text-white" /> : <Camera className="h-4 w-4 text-white" />}
+              </Label>
+            </div>
+            <h3 className="font-display font-bold text-sidebar-accent">{displayName}</h3>
+            <p className="text-sm text-muted-foreground mt-0.5">{userEmail}</p>
+            {profile?.course && (
+              <span className="mt-3 inline-flex items-center rounded-full bg-accent px-3 py-1 text-xs font-semibold text-primary">
+                {profile.course}
+              </span>
+            )}
+          </Panel>
+
+          {/* Personal info */}
+          <Panel className="lg:col-span-2">
+            <div className="px-6 py-4 border-b border-muted">
+              <SectionTitle>Personal Information</SectionTitle>
+            </div>
+            <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {[
+                { label: "First Name", value: editFirst, set: setEditFirst },
+                { label: "Last Name", value: editLast, set: setEditLast },
+                { label: "Phone", value: editPhone, set: setEditPhone },
+                { label: "Barangay", value: editBarangay, set: setEditBarangay },
+                { label: "Municipality", value: editMunicipality, set: setEditMunicipality },
+              ].map(({ label, value, set }) => (
+                <div key={label}>
+                  <Label className="text-xs text-muted-foreground font-medium mb-1.5 block">{label}</Label>
+                  <Input value={value} onChange={e => set(e.target.value)} disabled={locked}
+                    className="rounded-xl border-border focus:border-primary focus:ring-primary/20" />
+                </div>
+              ))}
               <div>
-                <Label>School</Label>
+                <Label className="text-xs text-muted-foreground font-medium mb-1.5 block">Email</Label>
+                <Input defaultValue={userEmail} disabled className="rounded-xl border-border bg-muted" />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground font-medium mb-1.5 block">School</Label>
                 <Select value={editSchool} onValueChange={setEditSchool} disabled={locked}>
-                  <SelectTrigger><SelectValue placeholder="Select school" /></SelectTrigger>
+                  <SelectTrigger className="rounded-xl border-border"><SelectValue placeholder="Select school" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="San Jose National High School">San Jose National High School</SelectItem>
-                    <SelectItem value="Ambulong National High School">Ambulong National High School</SelectItem>
-                    <SelectItem value="Bangkuro National High School">Bangkuro National High School</SelectItem>
-                    <SelectItem value="Batong Buhay National High School">Batong Buhay National High School</SelectItem>
-                    <SelectItem value="Bubog National High School">Bubog National High School</SelectItem>
-                    <SelectItem value="Caminawit National High School">Caminawit National High School</SelectItem>
-                    <SelectItem value="Inarawan National High School">Inarawan National High School</SelectItem>
-                    <SelectItem value="Ipil National High School">Ipil National High School</SelectItem>
-                    <SelectItem value="Labangan National High School">Labangan National High School</SelectItem>
-                    <SelectItem value="Mangarin National High School">Mangarin National High School</SelectItem>
-                    <SelectItem value="Poypoy National High School">Poypoy National High School</SelectItem>
-                    <SelectItem value="San Agustin National High School">San Agustin National High School</SelectItem>
-                    <SelectItem value="Tayamaan National High School">Tayamaan National High School</SelectItem>
-                    <SelectItem value="Occidental Mindoro State College (OMSC)">Occidental Mindoro State College (OMSC)</SelectItem>
-                    <SelectItem value="Saint Joseph College of Occidental Mindoro (SJCOM)">Saint Joseph College of Occidental Mindoro (SJCOM)</SelectItem>
-                    <SelectItem value="AMA Computer College - San Jose">AMA Computer College - San Jose</SelectItem>
-                    <SelectItem value="STI College - San Jose">STI College - San Jose</SelectItem>
+                    {["San Jose National High School","Ambulong National High School","Bangkuro National High School","Batong Buhay National High School","Bubog National High School","Caminawit National High School","Inarawan National High School","Ipil National High School","Labangan National High School","Mangarin National High School","Poypoy National High School","San Agustin National High School","Tayamaan National High School","Occidental Mindoro State College (OMSC)","Saint Joseph College of Occidental Mindoro (SJCOM)","AMA Computer College - San Jose","STI College - San Jose"].map(s => (
+                      <SelectItem key={s} value={s}>{s}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
               <div>
-                <Label>Course</Label>
+                <Label className="text-xs text-muted-foreground font-medium mb-1.5 block">Course</Label>
                 <Select value={editCourse} onValueChange={setEditCourse} disabled={locked}>
-                  <SelectTrigger><SelectValue placeholder="Select course" /></SelectTrigger>
+                  <SelectTrigger className="rounded-xl border-border"><SelectValue placeholder="Select course" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="STEM">Science, Technology, Engineering and Mathematics (STEM)</SelectItem>
-                    <SelectItem value="ABM">Accountancy, Business and Management (ABM)</SelectItem>
-                    <SelectItem value="HUMSS">Humanities and Social Sciences (HUMSS)</SelectItem>
-                    <SelectItem value="GAS">General Academic Strand (GAS)</SelectItem>
-                    <SelectItem value="TVL">Technical-Vocational-Livelihood (TVL)</SelectItem>
-                    <SelectItem value="BSEd">Bachelor of Secondary Education (BSEd)</SelectItem>
-                    <SelectItem value="BEEd">Bachelor of Elementary Education (BEEd)</SelectItem>
-                    <SelectItem value="BSBA">Bachelor of Science in Business Administration (BSBA)</SelectItem>
-                    <SelectItem value="BSA">Bachelor of Science in Accountancy (BSA)</SelectItem>
-                    <SelectItem value="BSIT">Bachelor of Science in Information Technology (BSIT)</SelectItem>
-                    <SelectItem value="BSCS">Bachelor of Science in Computer Science (BSCS)</SelectItem>
-                    <SelectItem value="BSN">Bachelor of Science in Nursing (BSN)</SelectItem>
-                    <SelectItem value="BSM">Bachelor of Science in Midwifery (BSM)</SelectItem>
-                    <SelectItem value="BSAg">Bachelor of Science in Agriculture (BSAg)</SelectItem>
-                    <SelectItem value="BSF">Bachelor of Science in Fisheries (BSF)</SelectItem>
-                    <SelectItem value="BSCrim">Bachelor of Science in Criminology (BSCrim)</SelectItem>
-                    <SelectItem value="BSTM">Bachelor of Science in Tourism Management (BSTM)</SelectItem>
-                    <SelectItem value="BSHM">Bachelor of Science in Hospitality Management (BSHM)</SelectItem>
-                    <SelectItem value="BSSW">Bachelor of Science in Social Work (BSSW)</SelectItem>
-                    <SelectItem value="AB Communication">Bachelor of Arts in Communication</SelectItem>
-                    <SelectItem value="BSCE">Bachelor of Science in Civil Engineering (BSCE)</SelectItem>
-                    <SelectItem value="BSEEct">Bachelor of Science in Electrical Engineering (BSEE)</SelectItem>
+                    {[
+                      ["STEM","Science, Technology, Engineering and Mathematics (STEM)"],
+                      ["ABM","Accountancy, Business and Management (ABM)"],
+                      ["HUMSS","Humanities and Social Sciences (HUMSS)"],
+                      ["GAS","General Academic Strand (GAS)"],
+                      ["TVL","Technical-Vocational-Livelihood (TVL)"],
+                      ["BSEd","Bachelor of Secondary Education (BSEd)"],
+                      ["BEEd","Bachelor of Elementary Education (BEEd)"],
+                      ["BSBA","Bachelor of Science in Business Administration (BSBA)"],
+                      ["BSA","Bachelor of Science in Accountancy (BSA)"],
+                      ["BSIT","Bachelor of Science in Information Technology (BSIT)"],
+                      ["BSCS","Bachelor of Science in Computer Science (BSCS)"],
+                      ["BSN","Bachelor of Science in Nursing (BSN)"],
+                      ["BSM","Bachelor of Science in Midwifery (BSM)"],
+                      ["BSAg","Bachelor of Science in Agriculture (BSAg)"],
+                      ["BSF","Bachelor of Science in Fisheries (BSF)"],
+                      ["BSCrim","Bachelor of Science in Criminology (BSCrim)"],
+                      ["BSTM","Bachelor of Science in Tourism Management (BSTM)"],
+                      ["BSHM","Bachelor of Science in Hospitality Management (BSHM)"],
+                      ["BSSW","Bachelor of Science in Social Work (BSSW)"],
+                      ["AB Communication","Bachelor of Arts in Communication"],
+                      ["BSCE","Bachelor of Science in Civil Engineering (BSCE)"],
+                      ["BSEEct","Bachelor of Science in Electrical Engineering (BSEE)"],
+                    ].map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
-              <div><Label>Year Level</Label><Input value={editYearLevel} onChange={e => setEditYearLevel(e.target.value)} disabled={locked} /></div>
-              <div className="sm:col-span-2">
-                <Button disabled={locked} className="bg-gradient-primary" onClick={guard(handleSaveProfile)}>Save Changes</Button>
+              <div>
+                <Label className="text-xs text-muted-foreground font-medium mb-1.5 block">Year Level</Label>
+                <Input value={editYearLevel} onChange={e => setEditYearLevel(e.target.value)} disabled={locked}
+                  className="rounded-xl border-border focus:border-primary focus:ring-primary/20" />
               </div>
-            </CardContent>
-          </Card>
+              <div className="sm:col-span-2">
+                <Button disabled={locked} className="bg-primary hover:bg-primary text-white rounded-xl px-6"
+                  onClick={guard(handleSaveProfile)}>
+                  Save Changes
+                </Button>
+              </div>
+            </div>
+          </Panel>
         </div>
-        <Card>
-          <CardHeader><CardTitle className="font-display">Change Password</CardTitle></CardHeader>
-          <CardContent className="space-y-3 max-w-md">
-            <div><Label>New Password</Label><Input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} /></div>
-            <div><Label>Confirm Password</Label><Input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} /></div>
-            <Button className="bg-gradient-primary" onClick={handleChangePassword}>Update Password</Button>
-          </CardContent>
-        </Card>
+
+        {/* Change password */}
+        <Panel>
+          <div className="px-6 py-4 border-b border-muted">
+            <SectionTitle>Change Password</SectionTitle>
+          </div>
+          <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg">
+            <div>
+              <Label className="text-xs text-muted-foreground font-medium mb-1.5 block">New Password</Label>
+              <Input type="password" value={newPw} onChange={e => setNewPw(e.target.value)}
+                className="rounded-xl border-border focus:border-primary focus:ring-primary/20" />
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground font-medium mb-1.5 block">Confirm Password</Label>
+              <Input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
+                className="rounded-xl border-border focus:border-primary focus:ring-primary/20" />
+            </div>
+            <div>
+              <Button className="bg-primary hover:bg-primary text-white rounded-xl" onClick={handleChangePassword}>
+                Update Password
+              </Button>
+            </div>
+          </div>
+        </Panel>
       </div>
     );
   };
 
+  // ── Section: Settings ──────────────────────────────────────────────────────
   const SettingsView = () => (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader><CardTitle className="font-display">Notification Preferences</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          {["Application updates", "Payment notifications", "General announcements"].map((p) => (
-            <div key={p} className="flex items-center justify-between"><p className="text-sm">{p}</p><Switch defaultChecked /></div>
-          ))}
-        </CardContent>
-      </Card>
-    </div>
+    <Panel>
+      <div className="px-6 py-4 border-b border-muted">
+        <SectionTitle>Notification Preferences</SectionTitle>
+      </div>
+      <div className="p-6 divide-y divide-muted">
+        {["Application updates", "Payment notifications", "General announcements"].map((p) => (
+          <div key={p} className="flex items-center justify-between py-4 first:pt-0 last:pb-0">
+            <p className="text-sm font-medium text-foreground">{p}</p>
+            <Switch defaultChecked className="data-[state=checked]:bg-primary" />
+          </div>
+        ))}
+      </div>
+    </Panel>
   );
 
   const renderActive = () => {
     switch (active) {
-      case "overview": return <Overview />;
-      case "application": return <Application />;
-      case "documents": return <Documents />;
-      case "scholarship": return <Scholarship />;
-      case "disbursement": return <DisbursementSection payments={payments} disbursementStatus={currentApp?.disbursement_status} />;
-      case "payments": return <PaymentsSection payments={payments} />;
+      case "overview":      return <Overview />;
+      case "application":   return <Application />;
+      case "documents":     return <Documents />;
+      case "scholarship":   return <Scholarship />;
+      case "disbursement":  return <DisbursementSection payments={payments} disbursementStatus={currentApp?.disbursement_status} />;
+      case "payments":      return <PaymentsSection payments={payments} />;
       case "notifications": return <Notifications />;
-      case "profile": return <Profile />;
-      case "settings": return <SettingsView />;
-      default: return <Overview />;
+      case "profile":       return <Profile />;
+      case "settings":      return <SettingsView />;
+      default:              return <Overview />;
     }
   };
 
-  const activeLabel = sidebarItems.find((i) => i.key === active)?.label ?? "Dashboard";
+  const activeItem = sidebarItems.find((i) => i.key === active);
 
+  // ══════════════════════════════════════════════════════════════════════════
   return (
-    <div className="min-h-screen flex w-full bg-muted/30">
-      <aside className={`${sidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 fixed lg:sticky top-0 left-0 z-40 h-screen w-64 bg-card border-r transition-transform`}>
-        <div className="flex items-center gap-3 p-4 border-b">
-          <Image src="/municipal-logo.png" alt="Logo" width={36} height={36} className="h-9 w-9" />
-          <div><p className="text-sm font-semibold">SB San Jose Scholarship</p><p className="text-xs text-muted-foreground">Student Panel</p></div>
+    <div className="min-h-screen flex w-full bg-background">
+
+      {/* ── Sidebar ─────────────────────────────────────────────────────── */}
+      <aside className={`${sidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 fixed lg:sticky top-0 left-0 z-40 h-screen w-64 bg-sidebar border-r border-sidebar-border flex flex-col transition-transform duration-300`}>
+
+        {/* Logo */}
+        <div className="flex items-center gap-3 px-5 py-5 border-b border-sidebar-border">
+          <div className="h-9 w-9 rounded-xl bg-primary flex items-center justify-center shrink-0 overflow-hidden">
+            <Image src="/municipal-logo.png" alt="Logo" width={36} height={36} className="h-9 w-9 object-cover" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-display font-bold text-sidebar-foreground truncate">SB San Jose</p>
+            <p className="text-xs text-muted-foreground">Scholarship Portal</p>
+          </div>
+          <button className="lg:hidden ml-auto text-muted-foreground hover:text-sidebar-foreground" onClick={() => setSidebarOpen(false)}>
+            <X className="h-4 w-4" />
+          </button>
         </div>
-        <nav className="p-2 space-y-1 overflow-y-auto" style={{ height: "calc(100vh - 130px)" }}>
+
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto p-3 space-y-0.5">
+          <p className="text-xs font-semibold text-muted-foreground px-3 py-2 uppercase tracking-wider">Menu</p>
           {sidebarItems.map((item) => {
             const Icon = item.icon;
             const isActive = active === item.key;
+            const isNotif = item.key === "notifications";
             return (
-              <button key={item.key} onClick={() => { setActive(item.key); setSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors ${isActive ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
-                <Icon className="h-4 w-4" />{item.label}
+              <button key={item.key}
+                onClick={() => { setActive(item.key); setSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all relative cursor-pointer ${
+                  isActive
+                    ? "bg-primary text-primary-foreground shadow-primary"
+                    : "text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent"
+                }`}>
+                <Icon className="h-4 w-4 shrink-0" />
+                {item.label}
+                {isNotif && unreadCount > 0 && (
+                  <span className={`ml-auto text-xs font-bold rounded-full h-5 min-w-5 flex items-center justify-center px-1 ${isActive ? "bg-white/25 text-primary-foreground" : "bg-primary text-primary-foreground"}`}>
+                    {unreadCount}
+                  </span>
+                )}
               </button>
             );
           })}
         </nav>
-        <div className="absolute bottom-0 left-0 right-0 p-3 border-t bg-card">
-          <Button variant="outline" size="sm" className="w-full" onClick={handleLogout}><LogOut className="mr-1 h-4 w-4" /> Logout</Button>
-        </div>
-      </aside>
 
-      {sidebarOpen && <div className="fixed inset-0 bg-black/40 z-30 lg:hidden" onClick={() => setSidebarOpen(false)} />}
-
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="sticky top-0 z-20 bg-card border-b h-14 flex items-center justify-between px-4">
-          <div className="flex items-center gap-3">
-            <button className="lg:hidden p-2" onClick={() => setSidebarOpen(true)}><Menu className="h-5 w-5" /></button>
-            <h1 className="font-display font-semibold">{activeLabel}</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <Bell className="h-5 w-5 text-muted-foreground" />
-            <span className="hidden sm:block text-sm text-muted-foreground">Hi, {displayName.split(" ")[0]}</span>
-            <button onClick={() => setActive("profile")} className="h-8 w-8 rounded-full overflow-hidden border">
+        {/* User + Logout */}
+        <div className="p-3 border-t border-sidebar-border">
+          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-sidebar-accent mb-2">
+            <div className="h-8 w-8 rounded-xl overflow-hidden shrink-0">
               {profile?.profile_picture_url ? (
                 <img src={profile.profile_picture_url} alt="" className="h-full w-full object-cover" />
               ) : (
-                <div className="h-full w-full bg-orange-100 flex items-center justify-center"><User className="h-4 w-4 text-orange-600" /></div>
+                <div className="h-full w-full bg-primary flex items-center justify-center">
+                  <User className="h-4 w-4 text-primary-foreground" />
+                </div>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-sidebar-foreground truncate">{displayName || "Student"}</p>
+              <p className="text-xs text-muted-foreground truncate">{userEmail}</p>
+            </div>
+          </div>
+          <button onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors cursor-pointer">
+            <LogOut className="h-4 w-4" /> Sign out
+          </button>
+        </div>
+      </aside>
+
+      {/* Overlay (mobile) */}
+      {sidebarOpen && <div className="fixed inset-0 bg-black/60 z-30 lg:hidden" onClick={() => setSidebarOpen(false)} />}
+
+      {/* ── Main ────────────────────────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col min-w-0">
+
+        {/* Top header */}
+        <header className="sticky top-0 z-20 bg-card/80 backdrop-blur-sm border-b border-border h-16 flex items-center justify-between px-5">
+          <div className="flex items-center gap-3">
+            <button className="lg:hidden p-2 rounded-xl hover:bg-muted transition-colors cursor-pointer" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
+              <Menu className="h-5 w-5 text-muted-foreground" />
+            </button>
+            <div>
+              <h1 className="font-display font-bold text-foreground text-base leading-tight">{activeItem?.label ?? "Dashboard"}</h1>
+              <p className="text-xs text-muted-foreground hidden sm:block">
+                Welcome back, {displayName.split(" ")[0] || "Student"}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setActive("notifications")}
+              className="relative p-2 rounded-xl hover:bg-muted transition-colors cursor-pointer"
+              aria-label="Notifications"
+            >
+              <Bell className="h-5 w-5 text-muted-foreground" />
+              {unreadCount > 0 && (
+                <span className="absolute top-1 right-1 h-4 w-4 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+            <button onClick={() => setActive("profile")} className="h-9 w-9 rounded-xl overflow-hidden border-2 border-accent hover:border-primary transition-colors cursor-pointer" aria-label="Profile">
+              {profile?.profile_picture_url ? (
+                <img src={profile.profile_picture_url} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <div className="h-full w-full bg-accent flex items-center justify-center">
+                  <User className="h-4 w-4 text-accent-foreground" />
+                </div>
               )}
             </button>
           </div>
         </header>
-        <main className="flex-1 p-4 md:p-6 overflow-auto">{renderActive()}</main>
+
+        {/* Page content */}
+        <main className="flex-1 p-5 md:p-7 overflow-auto">
+          {renderActive()}
+        </main>
       </div>
     </div>
   );
