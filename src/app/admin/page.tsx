@@ -94,6 +94,8 @@ export default function AdminDashboardPage() {
   const [systemSettings, setSystemSettings] = useState<any[]>([]);
   const [adminProfile, setAdminProfile] = useState<any>(null);
   const [adminEmail, setAdminEmail] = useState("");
+  const [adminUserId, setAdminUserId] = useState("");
+  const [notifications, setNotifications] = useState<Tables<"notifications">[]>([]);
 
   // Disburse dialog state
   const [disbDialog, setDisbDialog] = useState(false);
@@ -111,11 +113,12 @@ export default function AdminDashboardPage() {
     if (!user) { router.push("/login"); return; }
 
     setAdminEmail(user.email || "");
+    setAdminUserId(user.id);
     const { data: roleData } = await supabase.from("user_roles").select("role").eq("user_id", user.id).single();
     const role = (roleData as any)?.role;
     if (!["admin", "super_admin", "finance_admin", "reviewer"].includes(role)) { router.push("/student-dashboard"); return; }
 
-    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, rolesRes, settingsRes, adminProfRes] = await Promise.all([
+    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, rolesRes, settingsRes, adminProfRes, notifsRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("scholarships").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
@@ -125,6 +128,7 @@ export default function AdminDashboardPage() {
       supabase.from("user_roles").select("*, profiles:user_id(first_name, last_name, email)"),
       supabase.from("system_settings").select("*"),
       supabase.from("profiles").select("*").eq("id", user.id).single(),
+      supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
     ]);
 
     if (appsRes.data) {
@@ -142,15 +146,17 @@ export default function AdminDashboardPage() {
     if (rolesRes.data) setAllUserRoles(rolesRes.data);
     if (settingsRes.data) setSystemSettings(settingsRes.data);
     if (adminProfRes.data) setAdminProfile(adminProfRes.data);
+    if (notifsRes.data) setNotifications(notifsRes.data);
     setLoading(false);
   };
 
   // Re-fetch applications/payments in the background (no loading flicker) —
   // used when a live change comes in over realtime.
   const silentRefreshAdmin = async () => {
-    const [appsRes, paymentsRes] = await Promise.all([
+    const [appsRes, paymentsRes, profilesRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("payments").select("*").order("created_at", { ascending: false }),
+      supabase.from("profiles").select("*"),
     ]);
     if (appsRes.data) {
       const appsWithProfiles = await Promise.all(appsRes.data.map(async (app: any) => {
@@ -160,10 +166,13 @@ export default function AdminDashboardPage() {
       setApplications(appsWithProfiles);
     }
     if (paymentsRes.data) setPayments(paymentsRes.data);
+    if (profilesRes.data) setProfiles(profilesRes.data);
   };
 
-  // ── Live updates: new applications and status/disbursement changes ─────────
+  // ── Live updates: new applications, status/disbursement changes, registrations ──
   useEffect(() => {
+    if (!adminUserId) return;
+
     const channel = supabase
       .channel("admin-live")
       .on(
@@ -174,10 +183,39 @@ export default function AdminDashboardPage() {
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "applications" }, () => silentRefreshAdmin())
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "payments" }, () => silentRefreshAdmin())
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "payments" }, () => silentRefreshAdmin())
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "profiles" },
+        (payload) => {
+          const p = payload.new as Tables<"profiles">;
+          const name = `${p.first_name || ""} ${p.last_name || ""}`.trim() || p.email || "A new student";
+          toast.info("New student registered", { description: name });
+          silentRefreshAdmin();
+        }
+      )
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles" }, () => silentRefreshAdmin())
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${adminUserId}` },
+        (payload) => {
+          const n = payload.new as Tables<"notifications">;
+          setNotifications((prev) => [n, ...prev]);
+          const notify = toast[n.type as "info" | "success" | "warning" | "error"] ?? toast.message;
+          notify(n.title, { description: n.message });
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${adminUserId}` },
+        (payload) => {
+          const n = payload.new as Tables<"notifications">;
+          setNotifications((prev) => prev.map((x) => (x.id === n.id ? n : x)));
+        }
+      )
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, []);
+  }, [adminUserId]);
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push("/"); router.refresh(); };
 
@@ -345,12 +383,20 @@ export default function AdminDashboardPage() {
           <button className="lg:hidden" onClick={() => setSidebarOpen(false)}><X className="h-5 w-5" /></button>
         </div>
         <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
-          {sidebarItems.map((item) => (
-            <button key={item.key} onClick={() => { setActiveSection(item.key); setSidebarOpen(false); }}
-              className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeSection === item.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
-              <item.icon className="h-4 w-4 shrink-0" /><span className="truncate">{item.label}</span>
-            </button>
-          ))}
+          {sidebarItems.map((item) => {
+            const unread = item.key === "notifications" ? notifications.filter(n => !n.read).length : 0;
+            return (
+              <button key={item.key} onClick={() => { setActiveSection(item.key); setSidebarOpen(false); }}
+                className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeSection === item.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+                <item.icon className="h-4 w-4 shrink-0" /><span className="truncate">{item.label}</span>
+                {unread > 0 && (
+                  <span className={`ml-auto text-xs font-bold rounded-full h-5 min-w-5 flex items-center justify-center px-1 ${activeSection === item.key ? "bg-white/25 text-primary-foreground" : "bg-primary text-primary-foreground"}`}>
+                    {unread > 99 ? "99+" : unread}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </nav>
         <div className="p-3 border-t">
           <Button variant="destructive" size="sm" className="w-full" onClick={handleLogout}><LogOut className="mr-1 h-4 w-4" /> Logout</Button>
@@ -976,7 +1022,48 @@ export default function AdminDashboardPage() {
           {/* NOTIFICATIONS */}
           {activeSection === "notifications" && (
             <div className="space-y-4 animate-fade-in">
-              <h2 className="text-xl font-display font-bold">Notifications</h2>
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-display font-bold">Notifications</h2>
+                {notifications.some(n => !n.read) && (
+                  <Button variant="ghost" size="sm" className="text-xs text-primary hover:text-primary hover:bg-accent cursor-pointer"
+                    onClick={async () => {
+                      if (!adminUserId) return;
+                      await supabase.from("notifications").update({ read: true }).eq("user_id", adminUserId).eq("read", false);
+                      loadData();
+                    }}>
+                    Mark all read
+                  </Button>
+                )}
+              </div>
+              <Card>
+                <CardContent className="p-0 divide-y divide-border">
+                  {notifications.length === 0 && (
+                    <div className="text-center py-12">
+                      <Bell className="h-8 w-8 text-border mx-auto mb-2" />
+                      <p className="text-sm text-muted-foreground">No notifications yet.</p>
+                    </div>
+                  )}
+                  {notifications.map((n) => (
+                    <div key={n.id} className={`flex items-start gap-3 px-6 py-4 transition-colors ${!n.read ? "bg-accent/60" : "hover:bg-muted/50"}`}>
+                      <div className={`h-9 w-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
+                        n.type === "success" ? "bg-emerald-100" : n.type === "warning" ? "bg-amber-100" : n.type === "error" ? "bg-red-100" : "bg-accent"
+                      }`}>
+                        <Bell className={`h-4 w-4 ${
+                          n.type === "success" ? "text-emerald-600" : n.type === "warning" ? "text-amber-600" : n.type === "error" ? "text-red-600" : "text-primary"
+                        }`} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold">{n.title}</p>
+                          {!n.read && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{n.message}</p>
+                      </div>
+                      <span className="text-xs text-muted-foreground shrink-0">{new Date(n.created_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}</span>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
               <Card>
                 <CardHeader><CardTitle className="text-base">Notification Settings</CardTitle></CardHeader>
                 <CardContent className="space-y-3">

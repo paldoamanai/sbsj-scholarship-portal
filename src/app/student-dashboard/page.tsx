@@ -21,6 +21,7 @@ import {
 import ApplicationProgressBar from "@/components/student/ApplicationProgressBar";
 import { createClient } from "@/lib/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
+import { profileFromUserMetadata } from "@/lib/registration-profile";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Payment = Tables<"payments">;
@@ -393,16 +394,29 @@ export default function StudentDashboardPage() {
       supabase.from("scholarships").select("*").eq("is_active", true),
     ]);
 
-    if (profileRes.data) {
-      setProfile(profileRes.data);
-      setEditFirst(profileRes.data.first_name || "");
-      setEditLast(profileRes.data.last_name || "");
-      setEditPhone(profileRes.data.phone || "");
-      setEditBarangay(profileRes.data.barangay || "");
-      setEditMunicipality(profileRes.data.municipality || "");
-      setEditSchool(profileRes.data.school_name || "");
-      setEditCourse(profileRes.data.course || "");
-      setEditYearLevel(profileRes.data.year_level || "");
+    let profileRow = profileRes.data;
+    if (!profileRow?.first_name || !profileRow?.last_name) {
+      const fromMeta = profileFromUserMetadata(user.user_metadata as Record<string, unknown>);
+      if (fromMeta) {
+        const { data: upserted } = await supabase
+          .from("profiles")
+          .upsert({ id: user.id, email: user.email, ...fromMeta })
+          .select("*")
+          .single();
+        if (upserted) profileRow = upserted;
+      }
+    }
+
+    if (profileRow) {
+      setProfile(profileRow);
+      setEditFirst(profileRow.first_name || "");
+      setEditLast(profileRow.last_name || "");
+      setEditPhone(profileRow.phone || "");
+      setEditBarangay(profileRow.barangay || "");
+      setEditMunicipality(profileRow.municipality || "");
+      setEditSchool(profileRow.school_name || "");
+      setEditCourse(profileRow.course || "");
+      setEditYearLevel(profileRow.year_level || "");
     }
     if (appsRes.data) setApplications(appsRes.data);
     if (docsRes.data) setDocuments(docsRes.data);

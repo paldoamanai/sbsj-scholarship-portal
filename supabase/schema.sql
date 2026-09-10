@@ -113,18 +113,69 @@ AS $$
   );
 $$;
 
--- 10. Auto-create profile + role on signup
+-- 10. Auto-create profile + role on signup (copies registration metadata)
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
+DECLARE
+  meta jsonb := COALESCE(NEW.raw_user_meta_data, '{}'::jsonb);
+  dob_value date;
+  grade_value numeric;
 BEGIN
-  INSERT INTO public.profiles (id, email)
-  VALUES (NEW.id, NEW.email);
+  BEGIN
+    IF COALESCE(meta->>'dob', '') ~ '^\d{4}-\d{2}-\d{2}$' THEN
+      dob_value := (meta->>'dob')::date;
+    ELSE
+      dob_value := NULL;
+    END IF;
+  EXCEPTION WHEN others THEN
+    dob_value := NULL;
+  END;
+
+  BEGIN
+    IF COALESCE(meta->>'average_grade', '') ~ '^[0-9]+(\.[0-9]+)?$' THEN
+      grade_value := (meta->>'average_grade')::numeric;
+    ELSE
+      grade_value := NULL;
+    END IF;
+  EXCEPTION WHEN others THEN
+    grade_value := NULL;
+  END;
+
+  INSERT INTO public.profiles (
+    id, email, first_name, middle_name, last_name, sex, civil_status,
+    nationality, dob, phone, barangay, municipality, school_name,
+    course, year_level, average_grade
+  )
+  VALUES (
+    NEW.id,
+    NEW.email,
+    NULLIF(meta->>'first_name', ''),
+    NULLIF(meta->>'middle_name', ''),
+    NULLIF(meta->>'last_name', ''),
+    NULLIF(meta->>'sex', ''),
+    NULLIF(meta->>'civil_status', ''),
+    COALESCE(NULLIF(meta->>'nationality', ''), 'Filipino'),
+    dob_value,
+    NULLIF(meta->>'phone', ''),
+    NULLIF(meta->>'barangay', ''),
+    NULLIF(meta->>'municipality', ''),
+    NULLIF(meta->>'school_name', ''),
+    NULLIF(meta->>'course', ''),
+    NULLIF(meta->>'year_level', ''),
+    grade_value
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    email = COALESCE(EXCLUDED.email, public.profiles.email),
+    first_name = COALESCE(EXCLUDED.first_name, public.profiles.first_name),
+    last_name = COALESCE(EXCLUDED.last_name, public.profiles.last_name);
 
   INSERT INTO public.user_roles (user_id, role)
-  VALUES (NEW.id, 'student');
+  VALUES (NEW.id, 'student')
+  ON CONFLICT (user_id) DO NOTHING;
 
   RETURN NEW;
 END;
@@ -147,6 +198,8 @@ ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
 -- Profiles: users can read/update their own, admins can read all
 CREATE POLICY "Users can view own profile" ON public.profiles
   FOR SELECT USING (auth.uid() = id);
+CREATE POLICY "Users can insert own profile" ON public.profiles
+  FOR INSERT WITH CHECK (auth.uid() = id);
 CREATE POLICY "Users can update own profile" ON public.profiles
   FOR UPDATE USING (auth.uid() = id);
 CREATE POLICY "Admins can view all profiles" ON public.profiles

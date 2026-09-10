@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import type { RegistrationProfileFields } from "@/lib/registration-profile";
 
 const stepLabels = ["Account", "Personal Info", "School Info", "Documents", "Apply"];
 
@@ -236,36 +237,8 @@ export default function RegisterPage() {
   const handleSubmit = async () => {
     setLoading(true);
     const supabase = createClient();
-
-    // 1. Create auth user
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-    });
-
-    if (authError || !authData.user) {
-      toast.error("Registration failed", { description: authError?.message });
-      setLoading(false);
-      return;
-    }
-
-    // Email confirmation is enabled — user is not authenticated yet, so RLS-protected
-    // writes would silently fail. Direct them to verify first.
-    if (!authData.session) {
-      toast.success("Account created!", {
-        description: "Check your email to verify your account, then log in to complete your profile.",
-      });
-      setLoading(false);
-      router.push("/login");
-      return;
-    }
-
-    const userId = authData.user.id;
     const dob = `${dobYear}-${String(parseInt(dobMonth) + 1).padStart(2, "0")}-${String(parseInt(dobDay)).padStart(2, "0")}`;
-
-    // 2. Update profile
-    const { error: profileError } = await supabase.from("profiles").update({
+    const profileFields: RegistrationProfileFields = {
       first_name: form.firstName,
       middle_name: form.middleName || null,
       last_name: form.lastName,
@@ -280,7 +253,47 @@ export default function RegisterPage() {
       course: academic.course,
       year_level: academic.yearLevel,
       average_grade: parseFloat(academic.averageGrade),
-    }).eq("id", userId);
+    };
+
+    // 1. Create auth user. Metadata is copied into public.profiles by handle_new_user,
+    // including when email confirmation is on and there is no session yet.
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        data: {
+          ...profileFields,
+          average_grade: String(profileFields.average_grade),
+        },
+      },
+    });
+
+    if (authError || !authData.user) {
+      toast.error("Registration failed", { description: authError?.message });
+      setLoading(false);
+      return;
+    }
+
+    const userId = authData.user.id;
+
+    // Email confirmation is enabled — user is not authenticated yet, so RLS-protected
+    // writes would fail. The auth trigger still inserts the profile from metadata.
+    if (!authData.session) {
+      toast.success("Account created!", {
+        description: "Check your email to verify your account, then log in to upload documents and apply.",
+      });
+      setLoading(false);
+      router.push("/login");
+      return;
+    }
+
+    // 2. Upsert profile (update is a no-op if the signup trigger never created a row)
+    const { error: profileError } = await supabase.from("profiles").upsert({
+      id: userId,
+      email,
+      ...profileFields,
+    });
 
     if (profileError) {
       toast.error("Profile save failed", { description: profileError.message });
