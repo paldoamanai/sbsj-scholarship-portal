@@ -11,8 +11,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { createClient } from "@/lib/supabase/client";
 import {
   GraduationCap, ArrowRight, Zap, BarChart3, Wallet, Bell,
   UserPlus, FileText, Search, CheckCircle2, Send, Mail, Phone, MapPin, ChevronDown,
@@ -80,12 +82,25 @@ function SectionLabel({ children, light = false }: { children: string; light?: b
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
-const scholarships = [
-  { name: "Academic Excellence Scholarship", description: "Full scholarship for students maintaining outstanding academic performance throughout their college education.", eligibility: "Must maintain a GPA of 90+ and be a resident of San Jose, Occidental Mindoro", deadline: "June 30, 2026" },
-  { name: "Financial Assistance Grant", description: "Financial support for underprivileged but deserving students pursuing higher education.", eligibility: "Household income below ₱150,000/year, minimum 85 average grade", deadline: "July 15, 2026" },
-  { name: "STEM Leadership Scholarship", description: "Scholarship for students enrolled in Science, Technology, Engineering, and Mathematics programs.", eligibility: "Enrolled in STEM course, minimum 88 average grade", deadline: "August 1, 2026" },
-  { name: "Community Service Award", description: "Recognition and support for students who demonstrate exceptional community involvement.", eligibility: "100+ hours community service, minimum 85 average grade", deadline: "July 31, 2026" },
-];
+interface Scholarship {
+  id: string;
+  name: string;
+  description: string | null;
+  eligibility: string | null;
+  deadline: string | null;
+}
+
+function formatDeadline(deadline: string | null): string {
+  if (!deadline) return "Open";
+  const d = new Date(deadline);
+  if (isNaN(d.getTime())) return deadline;
+  const now = new Date();
+  const diffDays = Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) return "Closed";
+  if (diffDays === 0) return "Due today";
+  if (diffDays <= 7) return `${diffDays}d left`;
+  return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+}
 
 const features = [
   { icon: Zap,      title: "Easy Application",     desc: "Apply in minutes with guided step-by-step forms — no confusion, no paperwork hassle." },
@@ -113,6 +128,37 @@ const contactItems = [
 export default function HomePage() {
   const router = useRouter();
   const [contactSending, setContactSending] = useState(false);
+  const [scholarships, setScholarships] = useState<Scholarship[]>([]);
+  const [scholarshipsLoading, setScholarshipsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchScholarships = () =>
+      fetch("/api/scholarships")
+        .then((r) => r.json())
+        .then((data) => setScholarships(Array.isArray(data) ? data : []))
+        .catch(() => {});
+
+    fetchScholarships().finally(() => setScholarshipsLoading(false));
+
+    // Live updates: reflect admin create/edit/delete/toggle-active instantly.
+    const supabase = createClient();
+    const channel = supabase
+      .channel("landing-scholarships")
+      .on("postgres_changes", { event: "*", schema: "public", table: "scholarships" }, () => {
+        fetchScholarships();
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  const featuredScholarships = [...scholarships]
+    .sort((a, b) => {
+      if (!a.deadline) return 1;
+      if (!b.deadline) return -1;
+      return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
+    })
+    .slice(0, 4);
 
   return (
     <Layout>
@@ -221,13 +267,35 @@ export default function HomePage() {
             </p>
           </Reveal>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
-            {scholarships.map((s, i) => (
-              <Reveal key={i} delay={i * 80}>
-                <ScholarshipCard {...s} onApply={() => router.push("/register")} />
-              </Reveal>
-            ))}
-          </div>
+          {scholarshipsLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
+              {[1, 2].map((i) => (
+                <div key={i} className="space-y-3">
+                  <Skeleton className="h-48 rounded-xl" />
+                </div>
+              ))}
+            </div>
+          ) : featuredScholarships.length === 0 ? (
+            <Reveal className="text-center py-12 text-muted-foreground max-w-md mx-auto">
+              <GraduationCap className="h-12 w-12 mx-auto mb-3 opacity-20" />
+              <p className="font-display font-semibold text-foreground">No scholarships available right now</p>
+              <p className="text-sm mt-1">Check back soon — new programs will be posted here.</p>
+            </Reveal>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
+              {featuredScholarships.map((s, i) => (
+                <Reveal key={s.id} delay={i * 80}>
+                  <ScholarshipCard
+                    name={s.name}
+                    description={s.description ?? ""}
+                    eligibility={s.eligibility ?? "Open to all qualified applicants"}
+                    deadline={formatDeadline(s.deadline)}
+                    onApply={() => router.push("/register")}
+                  />
+                </Reveal>
+              ))}
+            </div>
+          )}
 
           <Reveal className="mt-12 text-center">
             <Button

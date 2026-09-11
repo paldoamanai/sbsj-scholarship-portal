@@ -1102,7 +1102,7 @@ export default function StudentDashboardPage() {
                 <Select value={editSchool} onValueChange={setEditSchool} disabled={locked}>
                   <SelectTrigger className="rounded-xl border-border"><SelectValue placeholder="Select school" /></SelectTrigger>
                   <SelectContent>
-                    {["San Jose National High School","Ambulong National High School","Bangkuro National High School","Batong Buhay National High School","Bubog National High School","Caminawit National High School","Inarawan National High School","Ipil National High School","Labangan National High School","Mangarin National High School","Poypoy National High School","San Agustin National High School","Tayamaan National High School","Occidental Mindoro State College (OMSC)","Saint Joseph College of Occidental Mindoro (SJCOM)","AMA Computer College - San Jose","STI College - San Jose"].map(s => (
+                    {["San Jose National High School","Ambulong National High School","Bangkuro National High School","Batong Buhay National High School","Bubog National High School","Caminawit National High School","Inarawan National High School","Ipil National High School","Labangan National High School","Mangarin National High School","Poypoy National High School","San Agustin National High School","Tayamaan National High School","Occidental Mindoro State University (OMSU)","Saint Joseph College of Occidental Mindoro (SJCOM)","AMA Computer College - San Jose","STI College - San Jose"].map(s => (
                       <SelectItem key={s} value={s}>{s}</SelectItem>
                     ))}
                   </SelectContent>

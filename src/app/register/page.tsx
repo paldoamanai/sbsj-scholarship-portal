@@ -11,10 +11,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 import { toast } from "sonner";
 import {
-  User, School, Lock, Upload, ChevronRight, ChevronLeft, AlertTriangle, Loader2, GraduationCap, Eye, EyeOff,
+  User, School, Lock, Upload, ChevronRight, ChevronLeft, AlertTriangle, Loader2, GraduationCap, Eye, EyeOff, CalendarIcon,
 } from "lucide-react";
+import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import type { RegistrationProfileFields } from "@/lib/registration-profile";
@@ -34,7 +37,7 @@ const SHS_STRANDS: Course[] = [
 ];
 
 const COURSES_BY_SCHOOL: Record<string, Course[]> = {
-  "Occidental Mindoro State College - Main Campus": [
+  "Occidental Mindoro State University - Main Campus": [
     { value: "BSIT",              label: "BS Information Technology (BSIT)" },
     { value: "BSCS",              label: "BS Computer Science" },
     { value: "BSAg",              label: "BS Agriculture" },
@@ -53,7 +56,7 @@ const COURSES_BY_SCHOOL: Record<string, Course[]> = {
     { value: "BSM",               label: "BS Midwifery" },
     { value: "BSSA",              label: "BS Social Work" },
   ],
-  "Occidental Mindoro State College - San Jose Campus": [
+  "Occidental Mindoro State University - San Jose Campus": [
     { value: "BSIT",              label: "BS Information Technology (BSIT)" },
     { value: "BSCS",              label: "BS Computer Science" },
     { value: "BSAg",              label: "BS Agriculture" },
@@ -73,7 +76,7 @@ const COURSES_BY_SCHOOL: Record<string, Course[]> = {
     { value: "TESDA-Electrical",  label: "TESDA – Electrical Technology" },
     { value: "TESDA-FoodService", label: "TESDA – Food Service Management" },
   ],
-  "Occidental Mindoro State College - Murtha Lower Campus": [
+  "Occidental Mindoro State University - Murtha Lower Campus": [
     { value: "BSAg",           label: "BS Agriculture" },
     { value: "BSAgTech",       label: "BS Agricultural Technology" },
     { value: "BSAgroforestry", label: "BS Agroforestry" },
@@ -81,7 +84,7 @@ const COURSES_BY_SCHOOL: Record<string, Course[]> = {
     { value: "BSAnimalSci",    label: "Animal Science" },
     { value: "BSCropSci",      label: "Crop Science" },
   ],
-  "Occidental Mindoro State College - Murtha Campus": [
+  "Occidental Mindoro State University - Murtha Campus": [
     { value: "BSAg",           label: "BS Agriculture" },
     { value: "BSAgTech",       label: "BS Agricultural Technology" },
     { value: "BSAgroforestry", label: "BS Agroforestry" },
@@ -154,9 +157,9 @@ export default function RegisterPage() {
     lastName: "", firstName: "", middleName: "", sex: "", civilStatus: "",
     nationality: "Filipino", phone: "", barangay: "", municipality: "",
   });
-  const [dobMonth, setDobMonth] = useState("");
-  const [dobDay, setDobDay] = useState("");
-  const [dobYear, setDobYear] = useState("");
+  const [dob, setDob] = useState<Date | undefined>(undefined);
+  const [dobOpen, setDobOpen] = useState(false);
+  const [pendingDob, setPendingDob] = useState<Date | undefined>(undefined);
 
   // Step 2 — Academic
   const [academic, setAcademic] = useState({
@@ -210,7 +213,7 @@ export default function RegisterPage() {
       if (!form.firstName.trim()) errs.firstName = "Required";
       if (!form.sex) errs.sex = "Required";
       if (!form.civilStatus) errs.civilStatus = "Required";
-      if (!dobMonth || !dobDay || !dobYear) errs.dob = "Required";
+      if (!dob) errs.dob = "Required";
       if (!form.phone.trim() || !/^(09|\+639)\d{9}$/.test(form.phone.replace(/\s/g, "")))
         errs.phone = "Valid PH phone required";
       if (!form.barangay.trim()) errs.barangay = "Required";
@@ -237,7 +240,6 @@ export default function RegisterPage() {
   const handleSubmit = async () => {
     setLoading(true);
     const supabase = createClient();
-    const dob = `${dobYear}-${String(parseInt(dobMonth) + 1).padStart(2, "0")}-${String(parseInt(dobDay)).padStart(2, "0")}`;
     const profileFields: RegistrationProfileFields = {
       first_name: form.firstName,
       middle_name: form.middleName || null,
@@ -245,7 +247,7 @@ export default function RegisterPage() {
       sex: form.sex,
       civil_status: form.civilStatus,
       nationality: form.nationality,
-      dob,
+      dob: dob ? format(dob, "yyyy-MM-dd") : "",
       phone: form.phone,
       barangay: form.barangay,
       municipality: form.municipality,
@@ -454,32 +456,54 @@ export default function RegisterPage() {
                 </div>
                 <div>
                   <Label>Date of Birth *</Label>
-                  <div className="grid grid-cols-3 gap-2">
-                    <Select value={dobMonth} onValueChange={(v) => { setDobMonth(v); setErrors(p => ({ ...p, dob: "" })); }}>
-                      <SelectTrigger><SelectValue placeholder="Month" /></SelectTrigger>
-                      <SelectContent>
-                        {["January","February","March","April","May","June","July","August","September","October","November","December"].map((m, i) => (
-                          <SelectItem key={i} value={String(i)}>{m}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Select value={dobDay} onValueChange={(v) => { setDobDay(v); setErrors(p => ({ ...p, dob: "" })); }}>
-                      <SelectTrigger><SelectValue placeholder="Day" /></SelectTrigger>
-                      <SelectContent>
-                        {Array.from({ length: 31 }, (_, i) => (
-                          <SelectItem key={i + 1} value={String(i + 1)}>{i + 1}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Select value={dobYear} onValueChange={(v) => { setDobYear(v); setErrors(p => ({ ...p, dob: "" })); }}>
-                      <SelectTrigger><SelectValue placeholder="Year" /></SelectTrigger>
-                      <SelectContent>
-                        {Array.from({ length: 50 }, (_, i) => new Date().getFullYear() - i).map((y) => (
-                          <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  <Popover
+                    open={dobOpen}
+                    onOpenChange={(open) => { setDobOpen(open); if (open) setPendingDob(dob); }}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={cn(
+                          "w-full justify-start text-left font-normal",
+                          !dob && "text-muted-foreground",
+                        )}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {dob ? format(dob, "MMMM d, yyyy") : "Select date"}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={pendingDob}
+                        onSelect={setPendingDob}
+                        captionLayout="dropdown-buttons"
+                        fromYear={new Date().getFullYear() - 100}
+                        toYear={new Date().getFullYear()}
+                        disabled={{ after: new Date() }}
+                        defaultMonth={pendingDob ?? dob ?? new Date(new Date().getFullYear() - 18, 0)}
+                        initialFocus
+                      />
+                      <div className="flex justify-end gap-2 border-t p-2">
+                        <Button type="button" variant="ghost" size="sm" onClick={() => setDobOpen(false)}>
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={!pendingDob}
+                          onClick={() => {
+                            setDob(pendingDob);
+                            setErrors((p) => ({ ...p, dob: "" }));
+                            setDobOpen(false);
+                          }}
+                        >
+                          Save
+                        </Button>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
                   <FieldError field="dob" />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -529,7 +553,7 @@ export default function RegisterPage() {
                       type="number"
                       value={academic.averageGrade}
                       onChange={(e) => updateAcademic("averageGrade", e.target.value)}
-                      placeholder="e.g. 88"
+                      placeholder="85% above"
                     />
                     <FieldError field="averageGrade" />
                     {gradeWarning && (
@@ -574,10 +598,10 @@ export default function RegisterPage() {
                         </>
                       ) : ["1st Year", "2nd Year", "3rd Year", "4th Year"].includes(academic.yearLevel) ? (
                         <>
-                          <SelectItem value="Occidental Mindoro State College - Main Campus">Occidental Mindoro State College – Main Campus</SelectItem>
-                          <SelectItem value="Occidental Mindoro State College - San Jose Campus">Occidental Mindoro State College – San Jose Campus</SelectItem>
-                          <SelectItem value="Occidental Mindoro State College - Murtha Lower Campus">Occidental Mindoro State College – Murtha Lower Campus</SelectItem>
-                          <SelectItem value="Occidental Mindoro State College - Murtha Campus">Occidental Mindoro State College – Murtha Campus</SelectItem>
+                          <SelectItem value="Occidental Mindoro State University - Main Campus">Occidental Mindoro State University – Main Campus</SelectItem>
+                          <SelectItem value="Occidental Mindoro State University - San Jose Campus">Occidental Mindoro State University – San Jose Campus</SelectItem>
+                          <SelectItem value="Occidental Mindoro State University - Murtha Lower Campus">Occidental Mindoro State University – Murtha Lower Campus</SelectItem>
+                          <SelectItem value="Occidental Mindoro State University - Murtha Campus">Occidental Mindoro State University – Murtha Campus</SelectItem>
                           <SelectItem value="Divine Word College of San Jose">Divine Word College of San Jose</SelectItem>
                           <SelectItem value="Philippine Central Islands College">Philippine Central Islands College</SelectItem>
                           <SelectItem value="Occidental Mindoro National College">Occidental Mindoro National College</SelectItem>
