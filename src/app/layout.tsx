@@ -3,7 +3,7 @@ import Providers from "@/components/Providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SB San Jose Scholarship Portal",
+  title: "LGU SB San Jose Scholarship Portal",
   description:
     "Sangguniang Bayan ng San Jose Scholarship Portal. Apply, track, and receive scholarships transparently.",
 };

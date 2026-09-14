@@ -99,7 +99,7 @@ const LandingFooter = () => {
             </p>
             <div className="flex items-center gap-1.5 text-xs text-orange-300 font-medium">
               <GraduationCap className="h-3.5 w-3.5" />
-              <span>Ang Kabataan ang Pag-asa ng Bayan</span>
+              <span>LGU SB San Jose Scholarship Portal</span>
             </div>
           </div>
         </div>

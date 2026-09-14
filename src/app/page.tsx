@@ -183,9 +183,8 @@ export default function HomePage() {
               Sangguniang Bayan ng San Jose
             </div>
             <h1 className="text-5xl md:text-6xl lg:text-7xl font-display font-bold text-white leading-[1.05] tracking-tight drop-shadow-xl">
-              Ang Kabataan<br />
-              ang Pag-asa ng<br />
-              <span className="text-orange-400">Bayan</span>
+              LGU Scholarship<br />
+              <span className="text-orange-400">Program</span>
             </h1>
             <p className="text-lg md:text-xl text-white/80 max-w-xl leading-relaxed">
               Apply, track, and receive scholarships with full transparency — built for the students of San Jose, Occidental Mindoro.
