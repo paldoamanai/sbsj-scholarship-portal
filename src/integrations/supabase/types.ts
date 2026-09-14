@@ -305,8 +305,8 @@ export type Database = {
           action: string
           entity_type: string
           entity_id: string | null
-          previous_value: any | null
-          new_value: any | null
+          previous_value: Json | null
+          new_value: Json | null
           ip_address: string | null
           user_agent: string | null
           created_at: string
@@ -318,8 +318,8 @@ export type Database = {
           action: string
           entity_type: string
           entity_id?: string | null
-          previous_value?: any | null
-          new_value?: any | null
+          previous_value?: Json | null
+          new_value?: Json | null
           ip_address?: string | null
           user_agent?: string | null
           created_at?: string
@@ -331,8 +331,8 @@ export type Database = {
           action?: string
           entity_type?: string
           entity_id?: string | null
-          previous_value?: any | null
-          new_value?: any | null
+          previous_value?: Json | null
+          new_value?: Json | null
           ip_address?: string | null
           user_agent?: string | null
           created_at?: string
@@ -343,7 +343,7 @@ export type Database = {
         Row: {
           id: string
           key: string
-          value: any
+          value: Json
           description: string | null
           updated_by: string | null
           updated_at: string
@@ -351,7 +351,7 @@ export type Database = {
         Insert: {
           id?: string
           key: string
-          value: any
+          value: Json
           description?: string | null
           updated_by?: string | null
           updated_at?: string
@@ -359,7 +359,7 @@ export type Database = {
         Update: {
           id?: string
           key?: string
-          value?: any
+          value?: Json
           description?: string | null
           updated_by?: string | null
           updated_at?: string

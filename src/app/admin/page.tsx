@@ -29,7 +29,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import { createClient } from "@/lib/supabase/client";
-import type { Tables } from "@/integrations/supabase/types";
+import type { Tables, Json } from "@/integrations/supabase/types";
 
 const sidebarItems = [
   { icon: LayoutDashboard, label: "Dashboard", key: "overview" },
@@ -88,11 +88,11 @@ export default function AdminDashboardPage() {
   const [profiles, setProfiles] = useState<Tables<"profiles">[]>([]);
   const [payments, setPayments] = useState<Tables<"payments">[]>([]);
   const [viewApp, setViewApp] = useState<typeof applications[0] | null>(null);
-  const [auditLogs, setAuditLogs] = useState<any[]>([]);
-  const [verifications, setVerifications] = useState<any[]>([]);
-  const [allUserRoles, setAllUserRoles] = useState<any[]>([]);
-  const [systemSettings, setSystemSettings] = useState<any[]>([]);
-  const [adminProfile, setAdminProfile] = useState<any>(null);
+  const [auditLogs, setAuditLogs] = useState<Tables<"audit_logs">[]>([]);
+  const [verifications, setVerifications] = useState<Tables<"scholar_verifications">[]>([]);
+  const [allUserRoles, setAllUserRoles] = useState<(Tables<"user_roles"> & { profiles: { first_name: string | null; last_name: string | null; email: string | null } | null })[]>([]);
+  const [systemSettings, setSystemSettings] = useState<Tables<"system_settings">[]>([]);
+  const [adminProfile, setAdminProfile] = useState<Tables<"profiles"> | null>(null);
   const [adminEmail, setAdminEmail] = useState("");
   const [adminUserId, setAdminUserId] = useState("");
   const [notifications, setNotifications] = useState<Tables<"notifications">[]>([]);
@@ -115,8 +115,8 @@ export default function AdminDashboardPage() {
     setAdminEmail(user.email || "");
     setAdminUserId(user.id);
     const { data: roleData } = await supabase.from("user_roles").select("role").eq("user_id", user.id).single();
-    const role = (roleData as any)?.role;
-    if (!["admin", "super_admin", "finance_admin", "reviewer"].includes(role)) { router.push("/student-dashboard"); return; }
+    const role = (roleData as { role?: string } | null)?.role;
+    if (!role || !["admin", "super_admin", "finance_admin", "reviewer"].includes(role)) { router.push("/student-dashboard"); return; }
 
     const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, rolesRes, settingsRes, adminProfRes, notifsRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
@@ -132,7 +132,7 @@ export default function AdminDashboardPage() {
     ]);
 
     if (appsRes.data) {
-      const appsWithProfiles = await Promise.all(appsRes.data.map(async (app: any) => {
+      const appsWithProfiles = await Promise.all(appsRes.data.map(async (app: Tables<"applications"> & { scholarships: { name: string } | null }) => {
         const { data: prof } = await supabase.from("profiles").select("*").eq("id", app.user_id).single();
         return { ...app, profiles: prof };
       }));
@@ -159,7 +159,7 @@ export default function AdminDashboardPage() {
       supabase.from("profiles").select("*"),
     ]);
     if (appsRes.data) {
-      const appsWithProfiles = await Promise.all(appsRes.data.map(async (app: any) => {
+      const appsWithProfiles = await Promise.all(appsRes.data.map(async (app: Tables<"applications"> & { scholarships: { name: string } | null }) => {
         const { data: prof } = await supabase.from("profiles").select("*").eq("id", app.user_id).single();
         return { ...app, profiles: prof };
       }));
@@ -219,7 +219,7 @@ export default function AdminDashboardPage() {
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push("/"); router.refresh(); };
 
-  const logAudit = async (action: string, entityType: string, entityId?: string, prev?: any, next?: any) => {
+  const logAudit = async (action: string, entityType: string, entityId?: string, prev?: Json, next?: Json) => {
     const { data: { user } } = await supabase.auth.getUser();
     await supabase.from("audit_logs").insert({
       user_id: user?.id, user_email: user?.email || adminEmail,
@@ -1095,7 +1095,7 @@ export default function AdminDashboardPage() {
                   </TableRow></TableHeader>
                   <TableBody>
                     {verifications.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No verification records</TableCell></TableRow>}
-                    {verifications.map((v: any) => {
+                    {verifications.map((v) => {
                       const prof = profiles.find(p => p.id === v.user_id);
                       const name = prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() : "Unknown";
                       return (
@@ -1198,7 +1198,7 @@ export default function AdminDashboardPage() {
                     <TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead>Role</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {allUserRoles.filter(u => u.role !== "student").map((u: any) => {
+                    {allUserRoles.filter(u => u.role !== "student").map((u) => {
                       const prof = profiles.find(p => p.id === u.user_id);
                       const name = prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() || prof.email : "Unknown";
                       return (
@@ -1242,7 +1242,7 @@ export default function AdminDashboardPage() {
                   </TableRow></TableHeader>
                   <TableBody>
                     {auditLogs.length === 0 && <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">No audit logs yet</TableCell></TableRow>}
-                    {auditLogs.map((log: any) => (
+                    {auditLogs.map((log) => (
                       <TableRow key={log.id}>
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{new Date(log.created_at).toLocaleString()}</TableCell>
                         <TableCell className="text-sm">{log.user_email || "System"}</TableCell>
@@ -1347,11 +1347,11 @@ export default function AdminDashboardPage() {
                 <CardHeader><CardTitle className="text-base">Academic Year & Semester</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
                   <div className="grid grid-cols-2 gap-3">
-                    <div><Label>Academic Year</Label><Input defaultValue={systemSettings.find(s => s.key === "academic_year")?.value?.replace(/"/g, "") || "2025-2026"} onChange={async (e) => {
+                    <div><Label>Academic Year</Label><Input defaultValue={String(systemSettings.find(s => s.key === "academic_year")?.value ?? "").replace(/"/g, "") || "2025-2026"} onChange={async (e) => {
                       await supabase.from("system_settings").update({ value: JSON.stringify(e.target.value) }).eq("key", "academic_year");
                     }} /></div>
                     <div><Label>Semester</Label>
-                      <Select defaultValue={systemSettings.find(s => s.key === "current_semester")?.value?.replace(/"/g, "") || "1st Semester"} onValueChange={async (val) => {
+                      <Select defaultValue={String(systemSettings.find(s => s.key === "current_semester")?.value ?? "").replace(/"/g, "") || "1st Semester"} onValueChange={async (val) => {
                         await supabase.from("system_settings").update({ value: JSON.stringify(val) }).eq("key", "current_semester");
                         toast.success("Semester updated");
                       }}>
@@ -1369,10 +1369,10 @@ export default function AdminDashboardPage() {
               <Card>
                 <CardHeader><CardTitle className="text-base">Scholarship Criteria</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
-                  <div><Label>Minimum Grade Average</Label><Input type="number" defaultValue={systemSettings.find(s => s.key === "min_grade_requirement")?.value || 85} onChange={async (e) => {
+                  <div><Label>Minimum Grade Average</Label><Input type="number" defaultValue={String(systemSettings.find(s => s.key === "min_grade_requirement")?.value ?? 85)} onChange={async (e) => {
                     await supabase.from("system_settings").update({ value: e.target.value }).eq("key", "min_grade_requirement");
                   }} /></div>
-                  <div><Label>Max Scholarships Per Student</Label><Input type="number" defaultValue={systemSettings.find(s => s.key === "max_scholarships_per_student")?.value || 1} onChange={async (e) => {
+                  <div><Label>Max Scholarships Per Student</Label><Input type="number" defaultValue={String(systemSettings.find(s => s.key === "max_scholarships_per_student")?.value ?? 1)} onChange={async (e) => {
                     await supabase.from("system_settings").update({ value: e.target.value }).eq("key", "max_scholarships_per_student");
                   }} /></div>
                   <Button onClick={() => toast.success("Criteria saved")}>Save Criteria</Button>

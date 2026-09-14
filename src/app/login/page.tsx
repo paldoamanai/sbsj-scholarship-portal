@@ -53,7 +53,7 @@ export default function LoginPage() {
     }
 
     toast.success("Login successful!");
-    const userRole = (roleData as any)?.role || "student";
+    const userRole = (roleData as { role?: string } | null)?.role || "student";
     const dest = userRole === "admin" ? "/admin" : "/student-dashboard";
     router.push(dest);
     router.refresh();
