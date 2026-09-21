@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -14,23 +13,22 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import {
   LayoutDashboard, GraduationCap, FileText, Users, ShieldCheck,
   Plus, Pencil, Trash2, CheckCircle, XCircle, Clock, Eye,
   Menu, X, Search, BookOpen, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock, Download,
-  FileDown, Receipt, Loader2, User, Upload, Camera, ArrowRight,
-  CalendarClock, ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw,
+  FileDown, Receipt, Loader2, User, Upload, ArrowRight,
+   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw,
 } from "lucide-react";
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { createClient } from "@/lib/supabase/client";
 import NotificationInbox from "@/components/notifications/NotificationInbox";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
+import OverviewPanel from "@/components/admin/OverviewPanel";
 import AdminProfilePanel from "@/components/admin/AdminProfilePanel";
 import SettingsPanel from "@/components/admin/SettingsPanel";
 import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
@@ -51,10 +49,7 @@ const sidebarItems = [
   { icon: User, label: "Profile", key: "profile" },
 ];
 
-const COLORS = ["hsl(var(--primary))", "hsl(var(--success))", "hsl(var(--destructive))", "hsl(var(--muted-foreground))"];
 const formatPHP = (n: number) => `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const initials = (first?: string | null, last?: string | null) =>
-  `${(first || "?")[0] || ""}${(last || "")[0] || ""}`.toUpperCase();
 
 // ── Status badge (pastel pill + icon, mirrors student-dashboard's pattern) ──────
 function StatusBadge({ status }: { status: string | null | undefined }) {
@@ -165,6 +160,9 @@ export default function AdminDashboardPage() {
   const [adminEmail, setAdminEmail] = useState("");
   const [adminUserId, setAdminUserId] = useState("");
   const [adminRole, setAdminRole] = useState("admin");
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [verifFilter, setVerifFilter] = useState("all");
   const [verifAction, setVerifAction] = useState<{ v: Tables<"scholar_verifications">; status: "Verified" | "Flagged" | "Cleared" } | null>(null);
   const [verifNotes, setVerifNotes] = useState("");
@@ -187,8 +185,13 @@ export default function AdminDashboardPage() {
     return rows.filter((p) => !staff.has(p.id));
   };
 
-  const loadData = async () => {
-    setLoading(true);
+  const joinProfiles = (apps: (Tables<"applications"> & { scholarships: { name: string } | null })[], rows: Tables<"profiles">[]) => {
+    const byId = new Map(rows.map((p) => [p.id, p]));
+    return apps.map((a) => ({ ...a, profiles: byId.get(a.user_id) ?? null }));
+  };
+
+  const loadData = async (silent = false) => {
+    if (silent) setRefreshing(true); else setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push("/login"); return; }
 
@@ -211,13 +214,9 @@ export default function AdminDashboardPage() {
       supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
     ]);
 
-    if (appsRes.data) {
-      const appsWithProfiles = await Promise.all(appsRes.data.map(async (app: Tables<"applications"> & { scholarships: { name: string } | null }) => {
-        const { data: prof } = await supabase.from("profiles").select("*").eq("id", app.user_id).single();
-        return { ...app, profiles: prof };
-      }));
-      setApplications(appsWithProfiles);
-    }
+    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes].find((r) => r.error);
+    setLoadError(failed?.error ? failed.error.message : null);
+    if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (scholsRes.data) setScholarships(scholsRes.data);
     if (profilesRes.data) setProfiles(await withoutStaff(profilesRes.data));
     if (paymentsRes.data) setPayments(paymentsRes.data);
@@ -226,7 +225,9 @@ export default function AdminDashboardPage() {
     if (settingsRes.data) setSystemSettings(settingsRes.data);
     if (adminProfRes.data) setAdminProfile(adminProfRes.data);
     if (notifsRes.data) setNotifications(notifsRes.data);
+    setLastUpdated(new Date());
     setLoading(false);
+    setRefreshing(false);
   };
 
   // Re-fetch applications/payments in the background (no loading flicker) —
@@ -237,15 +238,10 @@ export default function AdminDashboardPage() {
       supabase.from("payments").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
     ]);
-    if (appsRes.data) {
-      const appsWithProfiles = await Promise.all(appsRes.data.map(async (app: Tables<"applications"> & { scholarships: { name: string } | null }) => {
-        const { data: prof } = await supabase.from("profiles").select("*").eq("id", app.user_id).single();
-        return { ...app, profiles: prof };
-      }));
-      setApplications(appsWithProfiles);
-    }
+    if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (paymentsRes.data) setPayments(paymentsRes.data);
     if (profilesRes.data) setProfiles(await withoutStaff(profilesRes.data));
+    setLastUpdated(new Date());
   };
 
   // ── Live updates: new applications, status/disbursement changes, registrations ──
@@ -826,13 +822,6 @@ export default function AdminDashboardPage() {
   const exportExcel = (key: string) => renderExcel(buildReport(key), `${key}-report.xlsx`);
 
 
-  const totals = useMemo(() => {
-    const approved = applications.filter(a => a.status === "Approved").length;
-    const rejected = applications.filter(a => a.status === "Rejected").length;
-    const pending = applications.filter(a => a.status === "Pending").length;
-    const totalDisbursed = payments.filter(p => p.status === "Disbursed").reduce((s, p) => s + p.amount, 0);
-    return { total: applications.length, approved, rejected, pending, totalDisbursed };
-  }, [applications, payments]);
 
   const statusBadge = (status: string) => <StatusBadge status={status} />;
 
@@ -865,12 +854,6 @@ export default function AdminDashboardPage() {
   const appPages = Math.max(1, Math.ceil(filteredApps.length / APP_PAGE_SIZE));
   const currentAppPage = Math.min(appPage, appPages);
   const pagedApps = filteredApps.slice((currentAppPage - 1) * APP_PAGE_SIZE, currentAppPage * APP_PAGE_SIZE);
-
-  const statusPieData = [
-    { name: "Approved", value: totals.approved },
-    { name: "Rejected", value: totals.rejected },
-    { name: "Pending", value: totals.pending },
-  ].filter(d => d.value > 0);
 
   // ── Fund management (derived from payments + applications) ──
   const fundData = useMemo(() => {
@@ -931,36 +914,6 @@ export default function AdminDashboardPage() {
 
     return { pipeline, byProgram, byMethod, monthly, recent, awaiting, disbursedTotal };
   }, [payments, applications, scholarships, fundPeriod, fromDate, toDate]);
-
-  const applicationsPerMonth = useMemo(() => {
-    const months: Record<string, number> = {};
-    applications.forEach(a => {
-      const d = new Date(a.created_at);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      months[key] = (months[key] || 0) + 1;
-    });
-    return Object.entries(months).sort().slice(-6).map(([month, count]) => ({
-      month: new Date(month + "-01").toLocaleString("default", { month: "short", year: "2-digit" }),
-      count,
-    }));
-  }, [applications]);
-
-  const approvalRate = totals.total > 0 ? Math.round((totals.approved / totals.total) * 100) : 0;
-  const rejectionRate = totals.total > 0 ? Math.round((totals.rejected / totals.total) * 100) : 0;
-
-  const scholarshipDistribution = useMemo(() => {
-    const counts: Record<string, number> = {};
-    applications.forEach(a => {
-      const name = a.scholarships?.name || "Unassigned";
-      counts[name] = (counts[name] || 0) + 1;
-    });
-    return Object.entries(counts).map(([name, value]) => ({ name, value }));
-  }, [applications]);
-
-  const activeInactiveScholars = useMemo(() => [
-    { name: "Active", value: profiles.filter(p => p.is_active).length },
-    { name: "Inactive", value: profiles.filter(p => !p.is_active).length },
-  ], [profiles]);
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
@@ -1027,208 +980,25 @@ export default function AdminDashboardPage() {
         <main className="flex-1 p-4 md:p-6 overflow-auto">
           {/* OVERVIEW */}
           {activeSection === "overview" && (
-            <div className="space-y-6 animate-fade-in">
-              {/* Hero banner */}
-              <div className="relative overflow-hidden rounded-2xl bg-gradient-hero p-6 md:p-8 text-primary-foreground shadow-primary">
-                <div className="absolute inset-0 opacity-[0.08] [background-image:repeating-linear-gradient(135deg,#fff_0,#fff_1px,transparent_1px,transparent_14px)]" />
-                <div className="relative flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <h2 className="text-2xl md:text-3xl font-display font-bold">Dashboard</h2>
-                    <p className="mt-1 text-sm text-primary-foreground/80">
-                      Welcome back{adminProfile?.first_name ? `, ${adminProfile.first_name}` : ""}! Here&apos;s what&apos;s happening today.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => { setActiveSection("applications"); setStatusFilter("pending"); }}
-                      aria-label={`${totals.pending} pending applications need review`}
-                      className="relative h-10 w-10 rounded-full bg-white/15 hover:bg-white/25 transition-colors flex items-center justify-center cursor-pointer"
-                    >
-                      <Bell className="h-5 w-5" />
-                      {totals.pending > 0 && (
-                        <span className="absolute -top-1 -right-1 h-4 min-w-4 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">
-                          {totals.pending > 99 ? "99+" : totals.pending}
-                        </span>
-                      )}
-                    </button>
-                    <Button
-                      onClick={() => setActiveSection("scholarships")}
-                      className="bg-white text-primary hover:bg-white/90 cursor-pointer"
-                    >
-                      <Plus className="mr-1 h-4 w-4" /> Create Scholarship
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Stat Cards */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {[
-                  { label: "Total Applicants", value: totals.total, sub: `${totals.pending} pending`, icon: FileText, color: "text-primary", section: "applications" },
-                  { label: "Approved", value: totals.approved, sub: `${approvalRate}% approval rate`, icon: CheckCircle, color: "text-success", section: "applications" },
-                  { label: "Rejected", value: totals.rejected, sub: `${rejectionRate}% rejection rate`, icon: XCircle, color: "text-destructive", section: "applications" },
-                  { label: "Pending", value: totals.pending, sub: "Needs review", icon: Clock, color: "text-warning", section: "verification" },
-                ].map((stat, i) => (
-                  <Card
-                    key={i}
-                    className="hover-lift cursor-pointer"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setActiveSection(stat.section)}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setActiveSection(stat.section); }}
-                  >
-                    <CardContent className="py-5">
-                      <div className="flex items-center justify-between">
-                        <div className="h-10 w-10 rounded-lg bg-accent flex items-center justify-center shrink-0"><stat.icon className={`h-5 w-5 ${stat.color}`} /></div>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                      <p className="mt-3 text-2xl font-bold font-display">{stat.value}</p>
-                      <p className="text-xs text-muted-foreground truncate">{stat.label} · {stat.sub}</p>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-
-              {/* Active Scholarships + Pending Review */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <Card className="lg:col-span-2">
-                  <CardHeader className="flex flex-row items-center justify-between">
-                    <CardTitle className="text-base">Active Scholarships</CardTitle>
-                    <button type="button" onClick={() => setActiveSection("scholarships")} className="text-xs font-medium text-primary hover:underline cursor-pointer">View All</button>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {scholarships.filter(s => s.is_active).length === 0 && (
-                      <p className="text-sm text-muted-foreground py-6 text-center">No active scholarships yet.</p>
-                    )}
-                    {scholarships.filter(s => s.is_active).slice(0, 4).map((s) => {
-                      const applicantCount = applications.filter(a => a.scholarships?.name === s.name).length;
-                      return (
-                        <div key={s.id} className="rounded-lg border border-border p-3 hover:bg-muted/40 transition-colors">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="font-medium truncate">{s.name}</p>
-                              <p className="text-xs text-muted-foreground mt-0.5">
-                                Deadline: {s.deadline || "—"}
-                              </p>
-                              <p className="text-xs text-muted-foreground mt-1 flex items-center gap-3">
-                                <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {applicantCount} applicants</span>
-                                <span className="flex items-center gap-1"><GraduationCap className="h-3 w-3" /> {s.slots} slots</span>
-                              </p>
-                            </div>
-                            <Button size="sm" variant="secondary" className="shrink-0 cursor-pointer" onClick={() => setActiveSection("scholarships")}>View</Button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between">
-                    <CardTitle className="text-base">Pending Review</CardTitle>
-                    <button type="button" onClick={() => { setActiveSection("applications"); setStatusFilter("pending"); }} className="text-xs font-medium text-primary hover:underline cursor-pointer">View All</button>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {applications.filter(a => a.status === "Pending").length === 0 && (
-                      <p className="text-sm text-muted-foreground py-6 text-center">Nothing pending review.</p>
-                    )}
-                    {applications.filter(a => a.status === "Pending").slice(0, 5).map((a) => (
-                      <button
-                        key={a.id}
-                        type="button"
-                        onClick={() => setViewApp(a)}
-                        className="w-full flex items-center gap-3 text-left rounded-lg p-2 hover:bg-muted/40 transition-colors cursor-pointer"
-                      >
-                        <div className="h-9 w-9 rounded-full bg-accent text-accent-foreground text-xs font-semibold flex items-center justify-center shrink-0">
-                          {initials(a.profiles?.first_name, a.profiles?.last_name)}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium truncate">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "—"}</p>
-                          <p className="text-xs text-muted-foreground truncate">{a.scholarships?.name || "—"}</p>
-                        </div>
-                        <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                      </button>
-                    ))}
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Disbursed + Rates Row */}
-              <div className="grid grid-cols-2 md:grid-cols-2 gap-4">
-                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Disbursed</p><p className="text-xl font-bold font-display text-success">{formatPHP(totals.totalDisbursed)}</p></CardContent></Card>
-                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Approval Rate</p><p className="text-xl font-bold font-display text-success">{approvalRate}%</p><Progress value={approvalRate} className="mt-2 h-1.5" /></CardContent></Card>
-              </div>
-
-              {/* Charts Row 1: Applications per Month + Status Distribution */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Card>
-                  <CardHeader><CardTitle className="text-base">Applications per Month</CardTitle></CardHeader>
-                  <CardContent>
-                    <ResponsiveContainer width="100%" height={240}>
-                      <BarChart data={applicationsPerMonth}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                        <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                        <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                        <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
-                        <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </CardContent>
-                </Card>
-
-                {statusPieData.length > 0 && (
-                  <Card>
-                    <CardHeader><CardTitle className="text-base">Approval vs Rejection Rate</CardTitle></CardHeader>
-                    <CardContent>
-                      <ResponsiveContainer width="100%" height={240}>
-                        <PieChart>
-                          <Pie data={statusPieData} dataKey="value" nameKey="name" outerRadius={80} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
-                            {statusPieData.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}
-                          </Pie>
-                          <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
-                          <Legend />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-
-              {/* Charts Row 2: Scholarship Distribution + Active/Inactive Scholars */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Card>
-                  <CardHeader><CardTitle className="text-base">Scholarship Distribution</CardTitle></CardHeader>
-                  <CardContent>
-                    <ResponsiveContainer width="100%" height={240}>
-                      <BarChart data={scholarshipDistribution} layout="vertical">
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                        <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12 }} />
-                        <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
-                        <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
-                        <Bar dataKey="value" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader><CardTitle className="text-base">Active vs Inactive Scholars</CardTitle></CardHeader>
-                  <CardContent>
-                    <ResponsiveContainer width="100%" height={240}>
-                      <PieChart>
-                        <Pie data={activeInactiveScholars} dataKey="value" nameKey="name" outerRadius={80} label>
-                          <Cell fill="hsl(var(--success))" />
-                          <Cell fill="hsl(var(--muted-foreground))" />
-                        </Pie>
-                        <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
-                        <Legend />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </CardContent>
-                </Card>
-              </div>
-            </div>
+            <OverviewPanel
+              applications={applications}
+              scholarships={scholarships}
+              profiles={profiles}
+              payments={payments}
+              verifications={verifications}
+              auditLogs={auditLogs}
+              firstName={adminProfile?.first_name}
+              refreshing={refreshing}
+              lastUpdated={lastUpdated}
+              loadError={loadError}
+              onRefresh={() => loadData(true)}
+              onViewApp={setViewApp}
+              onNavigate={(section, opts) => {
+                setActiveSection(section);
+                if (opts?.status !== undefined) { setStatusFilter(opts.status); setAppPage(1); }
+                if (opts?.verif !== undefined) setVerifFilter(opts.verif);
+              }}
+            />
           )}
 
           {/* APPLICATIONS */}
@@ -2271,7 +2041,7 @@ export default function AdminDashboardPage() {
               role={adminRole}
               auditLogs={auditLogs}
               logAudit={logAudit}
-              onChanged={loadData}
+              onChanged={() => loadData(true)}
             />
           )}
 
