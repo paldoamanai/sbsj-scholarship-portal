@@ -327,6 +327,81 @@ export type Database = {
         }
         Relationships: []
       }
+      grade_updates: {
+        Row: {
+          id: string
+          user_id: string
+          grade: number
+          term: string
+          file_path: string
+          status: string
+          review_note: string | null
+          reviewed_by: string | null
+          reviewed_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          grade: number
+          term: string
+          file_path: string
+          status?: string
+          review_note?: string | null
+          reviewed_by?: string | null
+          reviewed_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          grade?: number
+          term?: string
+          file_path?: string
+          status?: string
+          review_note?: string | null
+          reviewed_by?: string | null
+          reviewed_at?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      data_requests: {
+        Row: {
+          id: string
+          user_id: string
+          kind: string
+          reason: string | null
+          status: string
+          response: string | null
+          created_at: string
+          handled_at: string | null
+          handled_by: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          kind?: string
+          reason?: string | null
+          status?: string
+          response?: string | null
+          created_at?: string
+          handled_at?: string | null
+          handled_by?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          kind?: string
+          reason?: string | null
+          status?: string
+          response?: string | null
+          created_at?: string
+          handled_at?: string | null
+          handled_by?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           id: string
@@ -346,6 +421,14 @@ export type Database = {
           course: string | null
           year_level: string | null
           average_grade: number | null
+          street_address: string | null
+          province: string | null
+          zip_code: string | null
+          guardian_name: string | null
+          guardian_relationship: string | null
+          guardian_phone: string | null
+          grade_verified_at: string | null
+          grade_term: string | null
           student_id_number: string | null
           government_id: string | null
           is_active: boolean
@@ -370,6 +453,14 @@ export type Database = {
           course?: string | null
           year_level?: string | null
           average_grade?: number | null
+          street_address?: string | null
+          province?: string | null
+          zip_code?: string | null
+          guardian_name?: string | null
+          guardian_relationship?: string | null
+          guardian_phone?: string | null
+          grade_verified_at?: string | null
+          grade_term?: string | null
           student_id_number?: string | null
           government_id?: string | null
           is_active?: boolean
@@ -394,6 +485,14 @@ export type Database = {
           course?: string | null
           year_level?: string | null
           average_grade?: number | null
+          street_address?: string | null
+          province?: string | null
+          zip_code?: string | null
+          guardian_name?: string | null
+          guardian_relationship?: string | null
+          guardian_phone?: string | null
+          grade_verified_at?: string | null
+          grade_term?: string | null
           student_id_number?: string | null
           government_id?: string | null
           is_active?: boolean
@@ -646,6 +745,36 @@ export type Database = {
           _payment_id: string
           _status: string
           _note?: string | null
+        }
+        Returns: undefined
+      }
+      submit_grade_update: {
+        Args: {
+          _grade: number
+          _term: string
+          _path: string
+        }
+        Returns: string
+      }
+      review_grade_update: {
+        Args: {
+          _id: string
+          _status: string
+          _note?: string | null
+        }
+        Returns: undefined
+      }
+      request_account_deletion: {
+        Args: {
+          _reason?: string | null
+        }
+        Returns: string
+      }
+      handle_data_request: {
+        Args: {
+          _id: string
+          _status: string
+          _response: string
         }
         Returns: undefined
       }

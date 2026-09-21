@@ -25,6 +25,10 @@ import {
 } from "lucide-react";
 import ApplicationProgressBar from "@/components/student/ApplicationProgressBar";
 import { createClient } from "@/lib/supabase/client";
+import ProfileSection from "@/components/student/ProfileSection";
+import ProfileImage from "@/components/ProfileImage";
+import { Panel, SectionTitle } from "@/components/student/ui";
+import { profileCompleteness } from "@/lib/profile";
 import NotificationInbox from "@/components/notifications/NotificationInbox";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
 import type { Tables } from "@/integrations/supabase/types";
@@ -109,24 +113,6 @@ function StatCard({ icon: Icon, label, value, sub, subTone = "neutral", accent =
 }
 
 // ── Section heading ────────────────────────────────────────────────────────────
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-3 mb-4">
-      <div className="h-5 w-1 rounded-full bg-primary" />
-      <h2 className="font-display font-semibold text-foreground text-base">{children}</h2>
-    </div>
-  );
-}
-
-// ── Card wrapper ───────────────────────────────────────────────────────────────
-function Panel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={`bg-card rounded-2xl border border-border shadow-sm ${className}`}>
-      {children}
-    </div>
-  );
-}
-
 // ── Disbursement section ───────────────────────────────────────────────────────
 // Shared receipt-upload logic. The file goes to private storage first; the database then checks it
 // exists, its type and size, and refuses a second submission (unless staff rejected the first).
@@ -523,6 +509,8 @@ export default function StudentDashboardPage() {
   const [documents, setDocuments]       = useState<Tables<"documents">[]>([]);
   const [payments, setPayments]         = useState<Tables<"payments">[]>([]);
   const [issues, setIssues]             = useState<Tables<"payment_issues">[]>([]);
+  const [gradeUpdates, setGradeUpdates] = useState<Tables<"grade_updates">[]>([]);
+  const [dataRequests, setDataRequests] = useState<Tables<"data_requests">[]>([]);
   const [notifications, setNotifications] = useState<Tables<"notifications">[]>([]);
   const [scholarships, setScholarships] = useState<PublicScholarship[]>([]);
   const [userEmail, setUserEmail]       = useState("");
@@ -549,18 +537,6 @@ export default function StudentDashboardPage() {
   const { settings } = useSystemSettings();
   const applyBlocked = applicationsBlockedReason(settings);
 
-  // Profile edit state
-  const [editFirst, setEditFirst]               = useState("");
-  const [editLast, setEditLast]                 = useState("");
-  const [editPhone, setEditPhone]               = useState("");
-  const [editBarangay, setEditBarangay]         = useState("");
-  const [editMunicipality, setEditMunicipality] = useState("");
-  const [editSchool, setEditSchool]             = useState("");
-  const [editCourse, setEditCourse]             = useState("");
-  const [editYearLevel, setEditYearLevel]       = useState("");
-  const [uploading, setUploading]               = useState(false);
-  const [newPw, setNewPw]                       = useState("");
-  const [confirmPw, setConfirmPw]               = useState("");
 
   useEffect(() => { loadData(); }, []);
 
@@ -588,7 +564,7 @@ export default function StudentDashboardPage() {
     setUserEmail(user.email || "");
     setUserId(user.id);
 
-    const [profileRes, appsRes, docsRes, paymentsRes, notifsRes, scholsRes, issuesRes] = await Promise.all([
+    const [profileRes, appsRes, docsRes, paymentsRes, notifsRes, scholsRes, issuesRes, gradesRes, requestsRes] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", user.id).single(),
       supabase.from("applications").select("*, scholarships(name)").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("documents").select("*").eq("user_id", user.id),
@@ -596,6 +572,8 @@ export default function StudentDashboardPage() {
       supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.rpc("scholarships_public"),
       supabase.from("payment_issues").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
+      supabase.from("grade_updates").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
+      supabase.from("data_requests").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
     ]);
 
     let profileRow = profileRes.data;
@@ -611,21 +589,13 @@ export default function StudentDashboardPage() {
       }
     }
 
-    if (profileRow) {
-      setProfile(profileRow);
-      setEditFirst(profileRow.first_name || "");
-      setEditLast(profileRow.last_name || "");
-      setEditPhone(profileRow.phone || "");
-      setEditBarangay(profileRow.barangay || "");
-      setEditMunicipality(profileRow.municipality || "");
-      setEditSchool(profileRow.school_name || "");
-      setEditCourse(profileRow.course || "");
-      setEditYearLevel(profileRow.year_level || "");
-    }
+    if (profileRow) setProfile(profileRow);
     if (appsRes.data) setApplications(appsRes.data);
     if (docsRes.data) setDocuments(docsRes.data);
     if (paymentsRes.data) setPayments(paymentsRes.data);
     if (issuesRes.data) setIssues(issuesRes.data);
+    if (gradesRes.data) setGradeUpdates(gradesRes.data);
+    if (requestsRes.data) setDataRequests(requestsRes.data);
     if (notifsRes.data) setNotifications(notifsRes.data);
     if (scholsRes.data) setScholarships(scholsRes.data);
     setLoading(false);
@@ -642,6 +612,18 @@ export default function StudentDashboardPage() {
     if (appsRes.data) setApplications(appsRes.data);
     if (paymentsRes.data) setPayments(paymentsRes.data);
     if (issuesRes.data) setIssues(issuesRes.data);
+  };
+
+  // A grade verification changes the profile itself; a deletion response changes the requests list.
+  const refreshProfile = async (uid: string) => {
+    const [p, g, r] = await Promise.all([
+      supabase.from("profiles").select("*").eq("id", uid).single(),
+      supabase.from("grade_updates").select("*").eq("user_id", uid).order("created_at", { ascending: false }),
+      supabase.from("data_requests").select("*").eq("user_id", uid).order("created_at", { ascending: false }),
+    ]);
+    if (p.data) setProfile(p.data);
+    if (g.data) setGradeUpdates(g.data);
+    if (r.data) setDataRequests(r.data);
   };
 
   const refreshDocuments = async (uid: string) => {
@@ -668,6 +650,7 @@ export default function StudentDashboardPage() {
           setNotifications((prev) => (prev.some((x) => x.id === n.id) ? prev : [n, ...prev]));
           if (n.entity_type === "documents") refreshDocuments(userId);
           if (n.entity_type === "payments" || n.entity_type === "payment_issues") silentRefresh(userId);
+          if (n.entity_type === "grade_updates" || n.entity_type === "data_requests") refreshProfile(userId);
           const notify = toast[n.type as "info" | "success" | "warning" | "error"] ?? toast.message;
           notify(n.title, { description: n.message });
         }
@@ -740,6 +723,10 @@ export default function StudentDashboardPage() {
   if (isRenewing && approvedBefore > settings.max_renewals) applyIssues.push(`You have reached the maximum of ${settings.max_renewals} renewal(s).`);
   if (minGrade > 0 && myGrade == null) applyIssues.push(`Add your average grade to your profile (minimum required: ${minGrade}).`);
   else if (minGrade > 0 && myGrade != null && myGrade < minGrade) applyIssues.push(`Your average grade (${myGrade}) is below the minimum of ${minGrade}.`);
+
+  // The office can't review an application without the basics.
+  const profileGaps = profileCompleteness(profile).missing.filter((m) => ["first_name", "last_name", "phone", "school_name", "course", "year_level", "average_grade"].includes(m.key));
+  if (profileGaps.length > 0) applyIssues.push(`Complete your profile first (Profile tab): ${profileGaps.map((m) => m.label).join(", ")}.`);
 
   // The chosen program's own rules (the database enforces the same ones).
   const applyProgram = scholarships.find((s) => s.id === applyScholarshipId);
@@ -976,13 +963,8 @@ export default function StudentDashboardPage() {
           <Panel className="p-5">
             <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
               <div className="relative shrink-0">
-                {profile?.profile_picture_url ? (
-                  <img src={profile.profile_picture_url} alt="Profile" className="h-16 w-16 rounded-2xl object-cover" />
-                ) : (
-                  <div className="h-16 w-16 rounded-2xl bg-accent flex items-center justify-center">
-                    <User className="h-7 w-7 text-accent-foreground" />
-                  </div>
-                )}
+                <ProfileImage value={profile?.profile_picture_url} alt="Profile" className="h-16 w-16 rounded-2xl object-cover"
+                  fallback={<div className="h-16 w-16 rounded-2xl bg-accent flex items-center justify-center"><User className="h-7 w-7 text-accent-foreground" /></div>} />
               </div>
               <div className="flex-1 text-center sm:text-left min-w-0">
                 <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
@@ -1557,187 +1539,6 @@ export default function StudentDashboardPage() {
     <NotificationInbox notifications={notifications} setNotifications={setNotifications} onNavigate={goToLink} />
   );
 
-  // ── Section: Profile ───────────────────────────────────────────────────────
-  const Profile = () => {
-    const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      setUploading(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { setUploading(false); return; }
-      const filePath = `${user.id}/avatar-${Date.now()}.${file.name.split(".").pop()}`;
-      const { error } = await supabase.storage.from("profile-pictures").upload(filePath, file, { upsert: true });
-      if (error) { toast.error(error.message); setUploading(false); return; }
-      const { data: urlData } = supabase.storage.from("profile-pictures").getPublicUrl(filePath);
-      await supabase.from("profiles").update({ profile_picture_url: urlData.publicUrl }).eq("id", user.id);
-      toast.success("Profile photo updated");
-      setUploading(false);
-      loadData();
-    };
-
-    const handleSaveProfile = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { error } = await supabase.from("profiles").update({
-        first_name: editFirst, last_name: editLast, phone: editPhone,
-        barangay: editBarangay, municipality: editMunicipality,
-        school_name: editSchool, course: editCourse, year_level: editYearLevel,
-      }).eq("id", user.id);
-      if (error) { toast.error(error.message); return; }
-      toast.success("Profile saved");
-      loadData();
-    };
-
-    const handleChangePassword = async () => {
-      if (!newPw || newPw.length < 6) { toast.error("Password must be at least 6 characters"); return; }
-      if (newPw !== confirmPw) { toast.error("Passwords do not match"); return; }
-      const { error } = await supabase.auth.updateUser({ password: newPw });
-      if (error) { toast.error(error.message); return; }
-      toast.success("Password updated");
-      setNewPw(""); setConfirmPw("");
-    };
-
-    return (
-      <div className="space-y-5">
-        {locked && (
-          <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-            <Lock className="h-4 w-4 text-red-600 shrink-0" />
-            <p className="text-sm text-red-700">Profile editing is disabled after disbursement.</p>
-          </div>
-        )}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          {/* Avatar card */}
-          <Panel className="p-6 text-center flex flex-col items-center">
-            <div className="relative mb-4">
-              {profile?.profile_picture_url ? (
-                <img src={profile.profile_picture_url} alt="Profile" className="h-24 w-24 rounded-2xl object-cover" />
-              ) : (
-                <div className="h-24 w-24 rounded-2xl bg-accent flex items-center justify-center">
-                  <User className="h-10 w-10 text-primary" />
-                </div>
-              )}
-              <Label className={`absolute -bottom-2 -right-2 h-8 w-8 rounded-xl flex items-center justify-center cursor-pointer shadow-md transition-colors ${locked || uploading ? "opacity-50 pointer-events-none bg-muted-foreground/70" : "bg-primary hover:bg-primary"}`}>
-                <Input type="file" className="hidden" accept="image/*" disabled={locked || uploading} onChange={handlePhotoUpload} />
-                {uploading ? <Loader2 className="h-4 w-4 animate-spin text-white" /> : <Camera className="h-4 w-4 text-white" />}
-              </Label>
-            </div>
-            <h3 className="font-display font-bold text-sidebar-accent">{displayName}</h3>
-            <p className="text-sm text-muted-foreground mt-0.5">{userEmail}</p>
-            {profile?.course && (
-              <span className="mt-3 inline-flex items-center rounded-full bg-accent px-3 py-1 text-xs font-semibold text-primary">
-                {profile.course}
-              </span>
-            )}
-          </Panel>
-
-          {/* Personal info */}
-          <Panel className="lg:col-span-2">
-            <div className="px-6 py-4 border-b border-muted">
-              <SectionTitle>Personal Information</SectionTitle>
-            </div>
-            <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {[
-                { label: "First Name", value: editFirst, set: setEditFirst },
-                { label: "Last Name", value: editLast, set: setEditLast },
-                { label: "Phone", value: editPhone, set: setEditPhone },
-                { label: "Barangay", value: editBarangay, set: setEditBarangay },
-                { label: "Municipality", value: editMunicipality, set: setEditMunicipality },
-              ].map(({ label, value, set }) => (
-                <div key={label}>
-                  <Label className="text-xs text-muted-foreground font-medium mb-1.5 block">{label}</Label>
-                  <Input value={value} onChange={e => set(e.target.value)} disabled={locked}
-                    className="rounded-xl border-border focus:border-primary focus:ring-primary/20" />
-                </div>
-              ))}
-              <div>
-                <Label className="text-xs text-muted-foreground font-medium mb-1.5 block">Email</Label>
-                <Input defaultValue={userEmail} disabled className="rounded-xl border-border bg-muted" />
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground font-medium mb-1.5 block">School</Label>
-                <Select value={editSchool} onValueChange={setEditSchool} disabled={locked}>
-                  <SelectTrigger className="rounded-xl border-border"><SelectValue placeholder="Select school" /></SelectTrigger>
-                  <SelectContent>
-                    {["San Jose National High School","Ambulong National High School","Bangkuro National High School","Batong Buhay National High School","Bubog National High School","Caminawit National High School","Inarawan National High School","Ipil National High School","Labangan National High School","Mangarin National High School","Poypoy National High School","San Agustin National High School","Tayamaan National High School","Occidental Mindoro State University (OMSU)","Saint Joseph College of Occidental Mindoro (SJCOM)","AMA Computer College - San Jose","STI College - San Jose"].map(s => (
-                      <SelectItem key={s} value={s}>{s}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground font-medium mb-1.5 block">Course</Label>
-                <Select value={editCourse} onValueChange={setEditCourse} disabled={locked}>
-                  <SelectTrigger className="rounded-xl border-border"><SelectValue placeholder="Select course" /></SelectTrigger>
-                  <SelectContent>
-                    {[
-                      ["STEM","Science, Technology, Engineering and Mathematics (STEM)"],
-                      ["ABM","Accountancy, Business and Management (ABM)"],
-                      ["HUMSS","Humanities and Social Sciences (HUMSS)"],
-                      ["GAS","General Academic Strand (GAS)"],
-                      ["TVL","Technical-Vocational-Livelihood (TVL)"],
-                      ["BSEd","Bachelor of Secondary Education (BSEd)"],
-                      ["BEEd","Bachelor of Elementary Education (BEEd)"],
-                      ["BSBA","Bachelor of Science in Business Administration (BSBA)"],
-                      ["BSA","Bachelor of Science in Accountancy (BSA)"],
-                      ["BSIT","Bachelor of Science in Information Technology (BSIT)"],
-                      ["BSCS","Bachelor of Science in Computer Science (BSCS)"],
-                      ["BSN","Bachelor of Science in Nursing (BSN)"],
-                      ["BSM","Bachelor of Science in Midwifery (BSM)"],
-                      ["BSAg","Bachelor of Science in Agriculture (BSAg)"],
-                      ["BSF","Bachelor of Science in Fisheries (BSF)"],
-                      ["BSCrim","Bachelor of Science in Criminology (BSCrim)"],
-                      ["BSTM","Bachelor of Science in Tourism Management (BSTM)"],
-                      ["BSHM","Bachelor of Science in Hospitality Management (BSHM)"],
-                      ["BSSW","Bachelor of Science in Social Work (BSSW)"],
-                      ["AB Communication","Bachelor of Arts in Communication"],
-                      ["BSCE","Bachelor of Science in Civil Engineering (BSCE)"],
-                      ["BSEEct","Bachelor of Science in Electrical Engineering (BSEE)"],
-                    ].map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground font-medium mb-1.5 block">Year Level</Label>
-                <Input value={editYearLevel} onChange={e => setEditYearLevel(e.target.value)} disabled={locked}
-                  className="rounded-xl border-border focus:border-primary focus:ring-primary/20" />
-              </div>
-              <div className="sm:col-span-2">
-                <Button disabled={locked} className="bg-primary hover:bg-primary text-white rounded-xl px-6"
-                  onClick={guard(handleSaveProfile)}>
-                  Save Changes
-                </Button>
-              </div>
-            </div>
-          </Panel>
-        </div>
-
-        {/* Change password */}
-        <Panel>
-          <div className="px-6 py-4 border-b border-muted">
-            <SectionTitle>Change Password</SectionTitle>
-          </div>
-          <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg">
-            <div>
-              <Label className="text-xs text-muted-foreground font-medium mb-1.5 block">New Password</Label>
-              <Input type="password" value={newPw} onChange={e => setNewPw(e.target.value)}
-                className="rounded-xl border-border focus:border-primary focus:ring-primary/20" />
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground font-medium mb-1.5 block">Confirm Password</Label>
-              <Input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
-                className="rounded-xl border-border focus:border-primary focus:ring-primary/20" />
-            </div>
-            <div>
-              <Button className="bg-primary hover:bg-primary text-white rounded-xl" onClick={handleChangePassword}>
-                Update Password
-              </Button>
-            </div>
-          </div>
-        </Panel>
-      </div>
-    );
-  };
-
   // ── Section: Settings ──────────────────────────────────────────────────────
   const SettingsView = () => (
     <Panel>
@@ -1775,7 +1576,10 @@ export default function StudentDashboardPage() {
       case "payments":      // old deep links (?section=payments) land on the merged tab
       case "disbursement":  return <DisbursementSection payments={payments} issues={issues} disbursementStatus={currentApp?.disbursement_status} approvedTotal={approvedTotal} onChanged={refreshPayments} />;
       case "notifications": return <Notifications />;
-      case "profile":       return <Profile />;
+      case "profile":       return (
+        <ProfileSection profile={profile} userId={userId} userEmail={userEmail} applications={applications} locked={locked}
+          gradeUpdates={gradeUpdates} dataRequests={dataRequests} onChanged={() => refreshProfile(userId)} />
+      );
       case "settings":      return <SettingsView />;
       default:              return <Overview />;
     }
@@ -1835,13 +1639,8 @@ export default function StudentDashboardPage() {
         <div className="p-3 border-t border-sidebar-border">
           <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-sidebar-accent mb-2">
             <div className="h-8 w-8 rounded-xl overflow-hidden shrink-0">
-              {profile?.profile_picture_url ? (
-                <img src={profile.profile_picture_url} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <div className="h-full w-full bg-primary flex items-center justify-center">
-                  <User className="h-4 w-4 text-primary-foreground" />
-                </div>
-              )}
+              <ProfileImage value={profile?.profile_picture_url} className="h-full w-full object-cover"
+                fallback={<div className="h-full w-full bg-primary flex items-center justify-center"><User className="h-4 w-4 text-primary-foreground" /></div>} />
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold text-sidebar-foreground truncate">{displayName || "Student"}</p>
@@ -1888,13 +1687,8 @@ export default function StudentDashboardPage() {
               )}
             </button>
             <button onClick={() => setActive("profile")} className="h-9 w-9 rounded-xl overflow-hidden border-2 border-accent hover:border-primary transition-colors cursor-pointer" aria-label="Profile">
-              {profile?.profile_picture_url ? (
-                <img src={profile.profile_picture_url} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <div className="h-full w-full bg-accent flex items-center justify-center">
-                  <User className="h-4 w-4 text-accent-foreground" />
-                </div>
-              )}
+              <ProfileImage value={profile?.profile_picture_url} className="h-full w-full object-cover"
+                fallback={<div className="h-full w-full bg-accent flex items-center justify-center"><User className="h-4 w-4 text-accent-foreground" /></div>} />
             </button>
           </div>
         </header>

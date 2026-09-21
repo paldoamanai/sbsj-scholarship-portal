@@ -21,115 +21,11 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { DOC_MIME, uploadUserDocument } from "@/lib/documents";
+import { YEAR_LEVEL_OPTIONS, coursesFor, isCollege, isSHS, schoolsFor } from "@/lib/academics";
 import { availabilityInfo, peso, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
 import type { RegistrationProfileFields } from "@/lib/registration-profile";
 
 const stepLabels = ["Account", "Personal Info", "School Info", "Documents", "Apply"];
-
-// ── School → courses map ──────────────────────────────────────────────────────
-
-type Course = { value: string; label: string };
-
-const SHS_STRANDS: Course[] = [
-  { value: "STEM", label: "Science, Technology, Engineering and Mathematics (STEM)" },
-  { value: "ABM",  label: "Accountancy, Business and Management (ABM)" },
-  { value: "HUMSS", label: "Humanities and Social Sciences (HUMSS)" },
-  { value: "GAS",  label: "General Academic Strand (GAS)" },
-  { value: "TVL",  label: "Technical-Vocational-Livelihood (TVL)" },
-];
-
-const COURSES_BY_SCHOOL: Record<string, Course[]> = {
-  "Occidental Mindoro State University - Main Campus": [
-    { value: "BSIT",              label: "BS Information Technology (BSIT)" },
-    { value: "BSCS",              label: "BS Computer Science" },
-    { value: "BSAg",              label: "BS Agriculture" },
-    { value: "BSAgTech",          label: "BS Agricultural Technology" },
-    { value: "BSAgroforestry",    label: "BS Agroforestry" },
-    { value: "BSCrim",            label: "BS Criminology" },
-    { value: "BSHM",              label: "BS Hospitality Management" },
-    { value: "BSTM",              label: "BS Tourism Management" },
-    { value: "BSBA",              label: "BS Business Administration" },
-    { value: "BSEntrepreneurship", label: "BS Entrepreneurship" },
-    { value: "BEEd",              label: "Bachelor of Elementary Education (BEEd)" },
-    { value: "BSEd",              label: "Bachelor of Secondary Education (BSEd)" },
-    { value: "BPE",               label: "Bachelor of Physical Education" },
-    { value: "BSF",               label: "BS Fisheries" },
-    { value: "BSN",               label: "BS Nursing" },
-    { value: "BSM",               label: "BS Midwifery" },
-    { value: "BSSA",              label: "BS Social Work" },
-  ],
-  "Occidental Mindoro State University - San Jose Campus": [
-    { value: "BSIT",              label: "BS Information Technology (BSIT)" },
-    { value: "BSCS",              label: "BS Computer Science" },
-    { value: "BSAg",              label: "BS Agriculture" },
-    { value: "BSAgTech",          label: "BS Agricultural Technology" },
-    { value: "BSAgroforestry",    label: "BS Agroforestry" },
-    { value: "BSCrim",            label: "BS Criminology" },
-    { value: "BSHM",              label: "BS Hospitality Management" },
-    { value: "BSTM",              label: "BS Tourism Management" },
-    { value: "BSBA",              label: "BS Business Administration" },
-    { value: "BSEntrepreneurship", label: "BS Entrepreneurship" },
-    { value: "BEEd",              label: "Bachelor of Elementary Education (BEEd)" },
-    { value: "BSEd",              label: "Bachelor of Secondary Education (BSEd)" },
-    { value: "BPE",               label: "Bachelor of Physical Education" },
-    { value: "BSF",               label: "BS Fisheries" },
-    { value: "TESDA-Automotive",  label: "TESDA – Automotive Servicing" },
-    { value: "TESDA-Welding",     label: "TESDA – Welding Technology" },
-    { value: "TESDA-Electrical",  label: "TESDA – Electrical Technology" },
-    { value: "TESDA-FoodService", label: "TESDA – Food Service Management" },
-  ],
-  "Occidental Mindoro State University - Murtha Lower Campus": [
-    { value: "BSAg",           label: "BS Agriculture" },
-    { value: "BSAgTech",       label: "BS Agricultural Technology" },
-    { value: "BSAgroforestry", label: "BS Agroforestry" },
-    { value: "BSAgribusiness", label: "Agribusiness Management" },
-    { value: "BSAnimalSci",    label: "Animal Science" },
-    { value: "BSCropSci",      label: "Crop Science" },
-  ],
-  "Occidental Mindoro State University - Murtha Campus": [
-    { value: "BSAg",           label: "BS Agriculture" },
-    { value: "BSAgTech",       label: "BS Agricultural Technology" },
-    { value: "BSAgroforestry", label: "BS Agroforestry" },
-    { value: "BSAgribusiness", label: "Agribusiness Management" },
-    { value: "BSAnimalSci",    label: "Animal Science" },
-    { value: "BSCropSci",      label: "Crop Science" },
-  ],
-  "Divine Word College of San Jose": [
-    { value: "BSN",   label: "BS Nursing" },
-    { value: "BSIT",  label: "BS Information Technology" },
-    { value: "BSBA",  label: "BS Business Administration" },
-    { value: "BSCrim", label: "BS Criminology" },
-    { value: "BSHM",  label: "BS Hospitality Management" },
-    { value: "BSTM",  label: "BS Tourism Management" },
-    { value: "BEEd",  label: "Bachelor of Elementary Education (BEEd)" },
-    { value: "BSEd",  label: "Bachelor of Secondary Education (BSEd)" },
-  ],
-  "Philippine Central Islands College": [
-    { value: "BSCrim", label: "BS Criminology" },
-    { value: "BSBA",  label: "BS Business Administration" },
-    { value: "BSIT",  label: "BS Information Technology" },
-    { value: "BSHM",  label: "BS Hospitality Management" },
-    { value: "BEEd",  label: "Education Programs" },
-    { value: "TESDA-PICOL", label: "TESDA Courses" },
-  ],
-  "Occidental Mindoro National College": [
-    { value: "BSBA-OMNC",  label: "Business Courses" },
-    { value: "BEEd-OMNC",  label: "Education Courses" },
-    { value: "BSIT-OMNC",  label: "Computer-related Programs" },
-    { value: "TVL-OMNC",   label: "Technical-Vocational Courses" },
-  ],
-  "CAPT. LAWRENCE A. COOPER TECHNICAL COLLEGE": [
-    { value: "BSIT-Cooper",      label: "BS Information Technology" },
-    { value: "BSEE-Cooper",      label: "BS Electrical Engineering Technology" },
-    { value: "BSME-Cooper",      label: "BS Mechanical Engineering Technology" },
-    { value: "TESDA-Cooper",     label: "TESDA Technical Programs" },
-  ],
-  "Saint Joseph College Seminary": [
-    { value: "AB-Philosophy",   label: "AB Philosophy" },
-    { value: "AB-Theology",     label: "AB Theology" },
-    { value: "BEEd-Seminary",  label: "Bachelor of Elementary Education" },
-  ],
-};
 
 const PREREQUISITE_DOCS = ["Valid ID", "Grades"] as const;
 
@@ -523,8 +419,8 @@ export default function RegisterPage() {
                       value={academic.yearLevel}
                       onValueChange={(v) => {
                         // Reset school & course when level category changes
-                        const wasSHS = ["Grade 11", "Grade 12"].includes(academic.yearLevel);
-                        const nowSHS = ["Grade 11", "Grade 12"].includes(v);
+                        const wasSHS = isSHS(academic.yearLevel);
+                        const nowSHS = isSHS(v);
                         if (wasSHS !== nowSHS) {
                           setAcademic((p) => ({ ...p, yearLevel: v, schoolName: "", course: "" }));
                           setErrors((p) => ({ ...p, yearLevel: "", schoolName: "", course: "" }));
@@ -535,12 +431,7 @@ export default function RegisterPage() {
                     >
                       <SelectTrigger><SelectValue placeholder="Select year level" /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Grade 11">Grade 11 (SHS)</SelectItem>
-                        <SelectItem value="Grade 12">Grade 12 (SHS)</SelectItem>
-                        <SelectItem value="1st Year">1st Year (College)</SelectItem>
-                        <SelectItem value="2nd Year">2nd Year (College)</SelectItem>
-                        <SelectItem value="3rd Year">3rd Year (College)</SelectItem>
-                        <SelectItem value="4th Year">4th Year (College)</SelectItem>
+                        {YEAR_LEVEL_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
                       </SelectContent>
                     </Select>
                     <FieldError field="yearLevel" />
@@ -578,35 +469,7 @@ export default function RegisterPage() {
                       <SelectValue placeholder={academic.yearLevel ? "Select school" : "Select year level first"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {["Grade 11", "Grade 12"].includes(academic.yearLevel) ? (
-                        <>
-                          <SelectItem value="San Jose National High School">San Jose National High School</SelectItem>
-                          <SelectItem value="San Jose National Agricultural & Industrial High School">San Jose National Agricultural &amp; Industrial High School</SelectItem>
-                          <SelectItem value="Divine Word College of San Jose (SHS)">Divine Word College of San Jose</SelectItem>
-                          <SelectItem value="Pedro T. Mendiola Sr. Memorial National High School">Pedro T. Mendiola Sr. Memorial National High School</SelectItem>
-                          <SelectItem value="Mangarin National High School">Mangarin National High School</SelectItem>
-                          <SelectItem value="Central National High School">Central National High School</SelectItem>
-                          <SelectItem value="301600 Central National High School">301600 Central National High School</SelectItem>
-                          <SelectItem value="San Agustin High School">San Agustin High School</SelectItem>
-                          <SelectItem value="Caminawit National High School">Caminawit National High School</SelectItem>
-                          <SelectItem value="Iling National High School">Iling National High School</SelectItem>
-                          <SelectItem value="Iling National High School – Pawican Annex">Iling National High School – Pawican Annex</SelectItem>
-                          <SelectItem value="Holy Family Academy of Central">Holy Family Academy of Central</SelectItem>
-                          <SelectItem value="San Jose Adventist Academy Inc.">San Jose Adventist Academy Inc.</SelectItem>
-                        </>
-                      ) : ["1st Year", "2nd Year", "3rd Year", "4th Year"].includes(academic.yearLevel) ? (
-                        <>
-                          <SelectItem value="Occidental Mindoro State University - Main Campus">Occidental Mindoro State University – Main Campus</SelectItem>
-                          <SelectItem value="Occidental Mindoro State University - San Jose Campus">Occidental Mindoro State University – San Jose Campus</SelectItem>
-                          <SelectItem value="Occidental Mindoro State University - Murtha Lower Campus">Occidental Mindoro State University – Murtha Lower Campus</SelectItem>
-                          <SelectItem value="Occidental Mindoro State University - Murtha Campus">Occidental Mindoro State University – Murtha Campus</SelectItem>
-                          <SelectItem value="Divine Word College of San Jose">Divine Word College of San Jose</SelectItem>
-                          <SelectItem value="Philippine Central Islands College">Philippine Central Islands College</SelectItem>
-                          <SelectItem value="Occidental Mindoro National College">Occidental Mindoro National College</SelectItem>
-                          <SelectItem value="CAPT. LAWRENCE A. COOPER TECHNICAL COLLEGE">CAPT. LAWRENCE A. COOPER TECHNICAL COLLEGE</SelectItem>
-                          <SelectItem value="Saint Joseph College Seminary">Saint Joseph College Seminary</SelectItem>
-                        </>
-                      ) : null}
+                      {schoolsFor(academic.yearLevel).map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
                     </SelectContent>
                   </Select>
                   <FieldError field="schoolName" />
@@ -618,25 +481,20 @@ export default function RegisterPage() {
                   <Select
                     value={academic.course}
                     onValueChange={(v) => updateAcademic("course", v)}
-                    disabled={!academic.yearLevel || (["1st Year", "2nd Year", "3rd Year", "4th Year"].includes(academic.yearLevel) && !academic.schoolName)}
+                    disabled={!academic.yearLevel || (isCollege(academic.yearLevel) && !academic.schoolName)}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder={
                         !academic.yearLevel ? "Select year level first"
-                        : ["1st Year", "2nd Year", "3rd Year", "4th Year"].includes(academic.yearLevel) && !academic.schoolName
+                        : isCollege(academic.yearLevel) && !academic.schoolName
                           ? "Select school first"
                           : "Select course / strand"
                       } />
                     </SelectTrigger>
                     <SelectContent>
-                      {["Grade 11", "Grade 12"].includes(academic.yearLevel)
-                        ? SHS_STRANDS.map((c) => (
-                            <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                          ))
-                        : (COURSES_BY_SCHOOL[academic.schoolName] ?? []).map((c) => (
-                            <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                          ))
-                      }
+                      {coursesFor(academic.yearLevel, academic.schoolName).map((c) => (
+                        <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <FieldError field="course" />

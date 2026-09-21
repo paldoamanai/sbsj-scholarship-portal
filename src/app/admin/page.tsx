@@ -27,6 +27,7 @@ import {
 } from "recharts";
 import { createClient } from "@/lib/supabase/client";
 import { scholarshipSchema } from "@/validations/scholarship";
+import ProfileImage from "@/components/ProfileImage";
 import { YEAR_LEVELS } from "@/lib/scholarships";
 import NotificationInbox from "@/components/notifications/NotificationInbox";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
@@ -149,6 +150,12 @@ export default function AdminDashboardPage() {
   const [rejectReceipt, setRejectReceipt] = useState<Tables<"payments"> | null>(null);
   const [receiptNote, setReceiptNote] = useState("");
   const [payBusy, setPayBusy] = useState(false);
+  const [gradeReviews, setGradeReviews] = useState<Tables<"grade_updates">[]>([]);
+  const [dataReqs, setDataReqs] = useState<Tables<"data_requests">[]>([]);
+  const [rejectGrade, setRejectGrade] = useState<Tables<"grade_updates"> | null>(null);
+  const [gradeNote, setGradeNote] = useState("");
+  const [handleReq, setHandleReq] = useState<{ req: Tables<"data_requests">; status: "Completed" | "Declined" } | null>(null);
+  const [reqResponse, setReqResponse] = useState("");
   const [studentSearch, setStudentSearch] = useState("");
   const [studentFilter, setStudentFilter] = useState("all");
   const [studentSort, setStudentSort] = useState("name");
@@ -219,7 +226,7 @@ export default function AdminDashboardPage() {
     if (!isAdminRole(role)) { router.push("/student-dashboard"); return; }
     setAdminRole(role as string);
 
-    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, docsRes, issuesRes] = await Promise.all([
+    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, docsRes, issuesRes, gradesRes, reqsRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("scholarships").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
@@ -231,9 +238,11 @@ export default function AdminDashboardPage() {
       supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at"),
       supabase.from("payment_issues").select("*").order("created_at", { ascending: false }),
+      supabase.from("grade_updates").select("*").order("created_at", { ascending: false }),
+      supabase.from("data_requests").select("*").order("created_at", { ascending: false }),
     ]);
 
-    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, docsRes, issuesRes].find((r) => r.error);
+    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, docsRes, issuesRes, gradesRes, reqsRes].find((r) => r.error);
     setLoadError(failed?.error ? failed.error.message : null);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (scholsRes.data) setScholarships(scholsRes.data);
@@ -246,6 +255,8 @@ export default function AdminDashboardPage() {
     if (notifsRes.data) setNotifications(notifsRes.data);
     if (docsRes.data) setAllDocs(docsRes.data);
     if (issuesRes.data) setPayIssues(issuesRes.data);
+    if (gradesRes.data) setGradeReviews(gradesRes.data);
+    if (reqsRes.data) setDataReqs(reqsRes.data);
     setLastUpdated(new Date());
     setLoading(false);
     setRefreshing(false);
@@ -568,6 +579,31 @@ export default function AdminDashboardPage() {
   };
   const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment");
   const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The student hasn't submitted a receipt");
+
+  // Verify or reject a grade a student submitted. Verifying replaces their average grade; the student is notified.
+  const reviewGrade = async (g: Tables<"grade_updates">, status: "Verified" | "Rejected", note?: string) => {
+    setPayBusy(true);
+    const { error } = await supabase.rpc("review_grade_update", { _id: g.id, _status: status, _note: note ?? null });
+    setPayBusy(false);
+    if (error) { toast.error(error.message); return false; }
+    toast.success(status === "Verified" ? "Grade verified" : "Grade rejected — the student was asked to resubmit");
+    if (status === "Verified") {
+      setViewStudent((v) => (v && v.id === g.user_id ? { ...v, average_grade: g.grade, grade_verified_at: new Date().toISOString(), grade_term: g.term } : v));
+    }
+    loadData();
+    return true;
+  };
+
+  const respondToRequest = async () => {
+    if (!handleReq) return;
+    setPayBusy(true);
+    const { error } = await supabase.rpc("handle_data_request", { _id: handleReq.req.id, _status: handleReq.status, _response: reqResponse });
+    setPayBusy(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success(handleReq.status === "Completed" ? "Marked as completed" : "Request declined");
+    setHandleReq(null); setReqResponse("");
+    loadData();
+  };
 
   // Accept or reject the receipt a student submitted. The student is notified by the database.
   const reviewReceipt = async (p: Tables<"payments">, status: "Accepted" | "Rejected", note?: string) => {
@@ -1096,13 +1132,8 @@ export default function AdminDashboardPage() {
         <div className="p-3 border-t">
           <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-muted mb-2">
             <div className="h-8 w-8 rounded-xl overflow-hidden shrink-0">
-              {adminProfile?.profile_picture_url ? (
-                <img src={adminProfile.profile_picture_url} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <div className="h-full w-full bg-primary flex items-center justify-center">
-                  <User className="h-4 w-4 text-primary-foreground" />
-                </div>
-              )}
+              <ProfileImage value={adminProfile?.profile_picture_url} className="h-full w-full object-cover"
+                fallback={<div className="h-full w-full bg-primary flex items-center justify-center"><User className="h-4 w-4 text-primary-foreground" /></div>} />
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold truncate">{adminProfile?.first_name ? `${adminProfile.first_name} ${adminProfile.last_name || ""}`.trim() : "Admin"}</p>
@@ -1480,7 +1511,13 @@ export default function AdminDashboardPage() {
                       const ver = verificationForUser(p.id);
                       return (
                         <TableRow key={p.id}>
-                          <TableCell><p className="font-medium">{p.first_name} {p.last_name}</p><p className="text-xs text-muted-foreground">{p.email}</p></TableCell>
+                          <TableCell>
+                            <p className="font-medium">{p.first_name} {p.last_name}</p><p className="text-xs text-muted-foreground">{p.email}</p>
+                            <div className="mt-1 flex gap-1 flex-wrap">
+                              {gradeReviews.some((g) => g.user_id === p.id && g.status === "Pending") && <Badge variant="secondary" className="text-[10px]">Grade to review</Badge>}
+                              {dataReqs.some((r) => r.user_id === p.id && r.status === "Pending") && <Badge variant="destructive" className="text-[10px]">Deletion requested</Badge>}
+                            </div>
+                          </TableCell>
                           <TableCell className="font-mono text-xs">{p.student_id_number || "—"}</TableCell>
                           <TableCell className="text-xs"><p>{p.school_name || "—"}</p><p className="text-muted-foreground">{p.course || "—"}</p></TableCell>
                           <TableCell>{p.year_level || "—"}</TableCell>
@@ -1526,13 +1563,21 @@ export default function AdminDashboardPage() {
                           {field("Name", `${viewStudent.first_name || ""} ${viewStudent.middle_name || ""} ${viewStudent.last_name || ""}`.replace(/\s+/g, " ").trim())}
                           {field("Email", viewStudent.email)}
                           {field("Phone", viewStudent.phone)}
-                          {field("Address", [viewStudent.barangay, viewStudent.municipality].filter(Boolean).join(", "))}
+                          {field("Sex · Civil status", [viewStudent.sex, viewStudent.civil_status].filter(Boolean).join(" · "))}
+                          {field("Date of birth", viewStudent.dob)}
+                          {field("Nationality", viewStudent.nationality)}
+                          {field("Address", [viewStudent.street_address, viewStudent.barangay, viewStudent.municipality, viewStudent.province, viewStudent.zip_code].filter(Boolean).join(", "))}
+                          {field("Guardian", [viewStudent.guardian_name, viewStudent.guardian_relationship && `(${viewStudent.guardian_relationship})`].filter(Boolean).join(" "))}
+                          {field("Guardian phone", viewStudent.guardian_phone)}
                           {field("Student ID", viewStudent.student_id_number)}
                           {field("Government ID", viewStudent.government_id)}
                           {field("School", viewStudent.school_name)}
                           {field("Course", viewStudent.course)}
                           {field("Year Level", viewStudent.year_level)}
-                          {field("Average Grade", viewStudent.average_grade)}
+                          {field("Average Grade", viewStudent.average_grade != null ? (
+                            <span className="inline-flex items-center gap-2">{viewStudent.average_grade}
+                              <Badge variant={viewStudent.grade_verified_at ? "default" : "secondary"}>{viewStudent.grade_verified_at ? `Verified${viewStudent.grade_term ? ` · ${viewStudent.grade_term}` : ""}` : "Self-declared"}</Badge>
+                            </span>) : null)}
                           {field("Account", <Badge variant={viewStudent.is_active ? "default" : "secondary"}>{viewStudent.is_active ? "Active" : "Inactive"}</Badge>)}
                           {field("Verification", ver ? <Badge variant={ver.verification_status === "Verified" ? "default" : ver.verification_status === "Flagged" ? "destructive" : "secondary"}>{ver.verification_status}</Badge> : null)}
                         </div>
@@ -1549,6 +1594,62 @@ export default function AdminDashboardPage() {
                             </ul>
                           )}
                         </div>
+                        {(() => {
+                          const grades = gradeReviews.filter((g) => g.user_id === viewStudent.id);
+                          if (grades.length === 0) return null;
+                          return (
+                            <div>
+                              <Label className="text-xs">Grade submissions</Label>
+                              <ul className="mt-1 space-y-1.5">
+                                {grades.map((g) => (
+                                  <li key={g.id} className="rounded-md border px-3 py-2 text-sm">
+                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                      <span><span className="font-medium">{g.grade}</span> · {g.term} · {new Date(g.created_at).toLocaleDateString()}</span>
+                                      <span className="flex items-center gap-1.5">
+                                        <Badge variant={g.status === "Verified" ? "default" : "secondary"} className={g.status === "Rejected" ? "text-destructive" : undefined}>{g.status}</Badge>
+                                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openStoredFile(g.file_path, "No grade report on file")}>View report</Button>
+                                        {g.status === "Pending" && (<>
+                                          <Button size="sm" className="h-7 text-xs" disabled={payBusy} onClick={() => reviewGrade(g, "Verified")}>Verify</Button>
+                                          <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={payBusy} onClick={() => { setGradeNote(""); setRejectGrade(g); }}>Reject</Button>
+                                        </>)}
+                                      </span>
+                                    </div>
+                                    {g.status === "Rejected" && g.review_note && <p className="mt-1 text-xs text-destructive">Reason: {g.review_note}</p>}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          );
+                        })()}
+                        {(() => {
+                          const reqs = dataReqs.filter((r) => r.user_id === viewStudent.id);
+                          if (reqs.length === 0) return null;
+                          return (
+                            <div>
+                              <Label className="text-xs">Privacy requests</Label>
+                              <ul className="mt-1 space-y-1.5">
+                                {reqs.map((r) => (
+                                  <li key={r.id} className={`rounded-md border px-3 py-2 text-sm ${r.status === "Pending" ? "border-warning/40 bg-warning/5" : ""}`}>
+                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                      <span className="font-medium">Account deletion · {r.status} <span className="font-normal text-muted-foreground">· {new Date(r.created_at).toLocaleDateString()}</span></span>
+                                      {r.status === "Pending" && (
+                                        <span className="flex gap-1.5">
+                                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setReqResponse(""); setHandleReq({ req: r, status: "Declined" }); }}>Decline</Button>
+                                          <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => { setReqResponse("Your account and data have been deleted."); setHandleReq({ req: r, status: "Completed" }); }}>Mark completed</Button>
+                                        </span>
+                                      )}
+                                    </div>
+                                    {r.reason && <p className="mt-1 text-xs text-muted-foreground">Student&apos;s reason: {r.reason}</p>}
+                                    {r.response && <p className="mt-1 text-xs"><span className="font-medium">Response: </span>{r.response}</p>}
+                                  </li>
+                                ))}
+                              </ul>
+                              {reqs.some((r) => r.status === "Pending") && (
+                                <p className="mt-1 text-xs text-muted-foreground">Deleting the account itself is done in the Supabase dashboard (Authentication → Users), then remove their files from Storage. Mark it completed afterwards.</p>
+                              )}
+                            </div>
+                          );
+                        })()}
                         <div>
                           <Label className="text-xs">Documents</Label>
                           {docList(studentDocs, studentDocsLoading)}
@@ -2258,6 +2359,38 @@ export default function AdminDashboardPage() {
           )}
         </main>
       </div>
+
+      <Dialog open={!!rejectGrade} onOpenChange={(o) => { if (!o) setRejectGrade(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Reject the grade submission</DialogTitle></DialogHeader>
+          <div>
+            <Label className="text-xs">Reason (shown to the student, who will be asked to resubmit)</Label>
+            <Textarea value={gradeNote} onChange={(e) => setGradeNote(e.target.value)} placeholder="e.g. The grade report is unreadable or doesn't show the average." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRejectGrade(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={payBusy || !gradeNote.trim()} onClick={async () => {
+              if (rejectGrade && await reviewGrade(rejectGrade, "Rejected", gradeNote)) setRejectGrade(null);
+            }}>Reject grade</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!handleReq} onOpenChange={(o) => { if (!o) setHandleReq(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{handleReq?.status === "Completed" ? "Complete deletion request" : "Decline deletion request"}</DialogTitle></DialogHeader>
+          <div>
+            <Label className="text-xs">Message to the student</Label>
+            <Textarea value={reqResponse} onChange={(e) => setReqResponse(e.target.value)} placeholder={handleReq?.status === "Declined" ? "Explain why, e.g. payment records must be kept for audit." : ""} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHandleReq(null)}>Cancel</Button>
+            <Button variant={handleReq?.status === "Declined" ? "outline" : "destructive"} disabled={payBusy || !reqResponse.trim()} onClick={respondToRequest}>
+              {handleReq?.status === "Completed" ? "Mark completed" : "Decline request"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!rejectReceipt} onOpenChange={(o) => { if (!o) setRejectReceipt(null); }}>
         <DialogContent>

@@ -11,6 +11,8 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
 import { createClient } from "@/lib/supabase/client";
+import { uploadAvatar } from "@/lib/avatar";
+import ProfileImage from "@/components/ProfileImage";
 import { adminProfileSchema, passwordSchema } from "@/validations/profile";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
@@ -57,29 +59,13 @@ export default function AdminProfilePanel({ profile, email, userId, role, auditL
   const [photoBusy, setPhotoBusy] = useState(false);
   const uploadPhoto = async (file: File | undefined) => {
     if (!file || !userId) return;
-    if (!file.type.startsWith("image/")) { toast.error("Please choose an image file"); return; }
-    if (file.size > MAX_PHOTO_BYTES) { toast.error("Photo must be 2 MB or smaller"); return; }
     setPhotoBusy(true);
-    try {
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
-      const filePath = `${userId}/avatar/${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage.from("profile-pictures").upload(filePath, file, { upsert: true, contentType: file.type });
-      if (upErr) throw upErr;
-      const { data: urlData } = supabase.storage.from("profile-pictures").getPublicUrl(filePath);
-      const { error: dbErr } = await supabase.from("profiles").update({ profile_picture_url: urlData.publicUrl }).eq("id", userId);
-      if (dbErr) throw dbErr;
-      // Remove previous avatars so files don't pile up (best effort).
-      const { data: existing } = await supabase.storage.from("profile-pictures").list(`${userId}/avatar`);
-      const stale = (existing ?? []).map((f) => `${userId}/avatar/${f.name}`).filter((p) => p !== filePath);
-      if (stale.length) await supabase.storage.from("profile-pictures").remove(stale);
-      await logAudit("update_profile_photo", "profiles", userId);
-      toast.success("Profile photo updated");
-      onChanged();
-    } catch (e) {
-      toast.error("Could not update photo", { description: e instanceof Error ? e.message : undefined });
-    } finally {
-      setPhotoBusy(false);
-    }
+    const err = await uploadAvatar(supabase, userId, file);
+    setPhotoBusy(false);
+    if (err) { toast.error("Could not update photo", { description: err }); return; }
+    await logAudit("update_profile_photo", "profiles", userId);
+    toast.success("Profile photo updated");
+    onChanged();
   };
 
   // ── personal info ──
@@ -224,11 +210,8 @@ export default function AdminProfilePanel({ profile, email, userId, role, auditL
           <div className="flex items-center gap-4">
             <div className="relative">
               <div className="h-20 w-20 rounded-full bg-accent flex items-center justify-center overflow-hidden">
-                {profile?.profile_picture_url ? (
-                  <img src={profile.profile_picture_url} alt="Profile" className="h-20 w-20 rounded-full object-cover" />
-                ) : (
-                  <User className="h-10 w-10 text-muted-foreground" />
-                )}
+                <ProfileImage value={profile?.profile_picture_url} alt="Profile" className="h-20 w-20 rounded-full object-cover"
+                  fallback={<User className="h-10 w-10 text-muted-foreground" />} />
               </div>
               <label aria-label="Change photo" className="absolute bottom-0 right-0 h-7 w-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center cursor-pointer hover:bg-primary/90">
                 {photoBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
