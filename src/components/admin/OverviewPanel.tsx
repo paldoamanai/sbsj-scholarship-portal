@@ -1,13 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import {
-  BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
-} from "recharts";
-import {
-  FileText, CheckCircle, XCircle, Clock, Users, Banknote, Plus, Bell, ChevronRight, ArrowRight, GraduationCap,
+  FileText, CheckCircle, XCircle, Clock, Users, Banknote, Plus, Bell, ArrowRight, GraduationCap,
   RefreshCw, Loader2, AlertTriangle, ShieldCheck, Wallet, CalendarClock, TrendingUp, TrendingDown, Minus,
-  FileDown, ScrollText,
+  FileDown, ScrollText, Table2, BarChart3,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -40,7 +38,6 @@ const PERIODS: Record<string, string> = { all: "All time", "30d": "Last 30 days"
 const STATUS_COLOR: Record<string, string> = {
   Approved: "hsl(var(--success))", Rejected: "hsl(var(--destructive))", Pending: "hsl(var(--warning))", Waitlisted: "hsl(var(--muted-foreground))",
 };
-const tooltipStyle = { background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" };
 
 function periodStart(period: string): Date | null {
   const now = new Date();
@@ -48,6 +45,105 @@ function periodStart(period: string): Date | null {
   if (period === "6m") return new Date(now.getFullYear(), now.getMonth() - 5, 1);
   if (period === "30d") return new Date(now.getTime() - 30 * DAY);
   return null;
+}
+
+
+// ── Chart building blocks ─────────────────────────────────────────────────────
+type TableSpec = { head: string[]; rows: (string | number)[][] };
+
+// Every chart can flip to a table (accessibility + exact values).
+function ChartCard({ title, subtitle, table, empty, children, className }: {
+  title: string; subtitle?: string; table: TableSpec; empty?: boolean; children: React.ReactNode; className?: string;
+}) {
+  const [asTable, setAsTable] = useState(false);
+  return (
+    <Card className={className}>
+      <CardHeader className="pb-2">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <CardTitle className="text-base">{title}</CardTitle>
+            {subtitle && <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>}
+          </div>
+          {!empty && (
+            <button type="button" onClick={() => setAsTable((v) => !v)} aria-pressed={asTable}
+              aria-label={asTable ? `Show ${title} as chart` : `Show ${title} as table`}
+              className="shrink-0 h-8 w-8 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground flex items-center justify-center cursor-pointer transition-colors">
+              {asTable ? <BarChart3 className="h-4 w-4" /> : <Table2 className="h-4 w-4" />}
+            </button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {empty ? (
+          <div className="h-[220px] flex flex-col items-center justify-center gap-2 text-center">
+            <BarChart3 className="h-8 w-8 text-muted-foreground/40" />
+            <p className="text-sm text-muted-foreground">No data for this period yet.</p>
+          </div>
+        ) : asTable ? (
+          <div className="max-h-[260px] overflow-auto rounded-md border">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{table.head.map((h, i) => <th key={h} className={`px-3 py-2 font-medium ${i === 0 ? "text-left" : "text-right"}`}>{h}</th>)}</tr></thead>
+              <tbody className="divide-y">{table.rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className={`px-3 py-1.5 ${j === 0 ? "text-left" : "text-right tabular-nums"}`}>{c}</td>)}</tr>)}</tbody>
+            </table>
+          </div>
+        ) : children}
+      </CardContent>
+    </Card>
+  );
+}
+
+function MonthTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number }[]; label?: string }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-lg border bg-card px-3 py-2 shadow-md">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-sm font-semibold tabular-nums">{payload[0].value} application{payload[0].value === 1 ? "" : "s"}</p>
+    </div>
+  );
+}
+
+// Horizontal ranked bars with direct value labels — clearer than a pie for many categories.
+function RankedBars({ rows, unit }: { rows: { name: string; value: number }[]; unit: string }) {
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  const total = rows.reduce((t, r) => t + r.value, 0);
+  return (
+    <ul className="space-y-3">
+      {rows.map((r) => (
+        <li key={r.name} title={`${r.name}: ${r.value} ${unit} (${total ? Math.round((r.value / total) * 100) : 0}%)`}>
+          <div className="flex items-baseline justify-between gap-3 text-sm">
+            <span className="truncate">{r.name}</span>
+            <span className="tabular-nums font-semibold shrink-0">{r.value}<span className="ml-1 text-xs font-normal text-muted-foreground">{total ? Math.round((r.value / total) * 100) : 0}%</span></span>
+          </div>
+          <div className="mt-1 h-2 rounded-full bg-muted overflow-hidden">
+            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${(r.value / max) * 100}%` }} />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// One segmented bar (2px gaps) + a legend that carries label, count and share, so colour is never the only cue.
+function SegmentedBar({ segments, total, ariaLabel }: { segments: { name: string; value: number; color: string; icon?: React.ReactNode }[]; total: number; ariaLabel: string }) {
+  return (
+    <div>
+      <div role="img" aria-label={ariaLabel} className="flex h-4 w-full gap-0.5 overflow-hidden rounded-full">
+        {segments.filter((x) => x.value > 0).map((x) => (
+          <div key={x.name} title={`${x.name}: ${x.value}`} className="h-full first:rounded-l-full last:rounded-r-full transition-all hover:opacity-80" style={{ width: `${(x.value / Math.max(1, total)) * 100}%`, background: x.color }} />
+        ))}
+      </div>
+      <ul className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
+        {segments.map((x) => (
+          <li key={x.name} className="flex items-center gap-2 text-sm min-w-0">
+            <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: x.color }} />
+            <span className="text-muted-foreground truncate">{x.name}</span>
+            <span className="ml-auto tabular-nums font-semibold">{x.value}</span>
+            <span className="w-9 text-right text-xs tabular-nums text-muted-foreground">{total ? Math.round((x.value / total) * 100) : 0}%</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function Trend({ current, previous }: { current: number; previous: number | null }) {
@@ -138,7 +234,8 @@ export default function OverviewPanel({
       total, approved, rejected, pending, waitlisted, prevApps, prevTotal: prevApps?.length ?? null,
       prevApproved: prevApps ? cnt(prevApps, "Approved") : null, prevRejected: prevApps ? cnt(prevApps, "Rejected") : null,
       prevPending: prevApps ? cnt(prevApps, "Pending") : null,
-      disbCur, disbPrev, newStudents, newStudentsPrev, perMonth, months, statusPie, distribution: [...dist.values()],
+      disbCur, disbPrev, newStudents, newStudentsPrev, perMonth, months, statusPie, distribution: (() => { const all = [...dist.values()].sort((x, y) => y.value - x.value); if (all.length <= 6) return all; const rest = all.slice(5).reduce((t, r) => t + r.value, 0); return [...all.slice(0, 5), { name: "Other programs", value: rest }]; })(),
+      monthTotal: perMonth.reduce((t, m) => t + m.count, 0), monthAvg: perMonth.reduce((t, m) => t + m.count, 0) / perMonth.length, monthPeak: perMonth.reduce((b, m) => (m.count > b.count ? m : b), perMonth[0]),
       active, approvedBy, applicantsBy, closingSoon, pastDeadline, fullPrograms,
       budget, disbursedAll, queued, remaining, queuedCount: queuedList.length, awaiting, flagged, unverified,
       approvalRate: total ? Math.round((approved / total) * 100) : 0,
@@ -227,16 +324,16 @@ export default function OverviewPanel({
         {stats.map((stat) => (
           <Card key={stat.label} className="hover-lift cursor-pointer" role="button" tabIndex={0} onClick={stat.go}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") stat.go(); }}>
-            <CardContent className="py-5">
-              <div className="flex items-center justify-between">
-                <div className="h-10 w-10 rounded-lg bg-accent flex items-center justify-center shrink-0"><stat.icon className={`h-5 w-5 ${stat.color}`} /></div>
-                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            <CardContent className="py-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-muted-foreground truncate">{stat.label}</p>
+                <div className="h-8 w-8 rounded-lg bg-accent flex items-center justify-center shrink-0"><stat.icon className={`h-4 w-4 ${stat.color}`} /></div>
               </div>
-              <div className="mt-3 flex items-baseline gap-2 flex-wrap">
-                <p className={`${stat.small ? "text-lg" : "text-2xl"} font-bold font-display`}>{stat.value}</p>
+              <p className={`mt-2 ${stat.small ? "text-xl" : "text-3xl"} font-bold font-display tabular-nums leading-none`}>{stat.value}</p>
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground truncate">{stat.sub}</p>
                 {stat.trend}
               </div>
-              <p className="text-xs text-muted-foreground">{stat.label} · {stat.sub}</p>
             </CardContent>
           </Card>
         ))}
@@ -280,6 +377,33 @@ export default function OverviewPanel({
             {data.remaining < 0 && <p className="text-xs text-destructive">Committed payments exceed the budget.</p>}
           </CardContent>
         </Card>
+      </div>
+
+      {/* Trends + status */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <ChartCard className="lg:col-span-2" title="Applications per Month"
+          subtitle={`${data.monthTotal} in the last ${data.months} months · peak ${data.monthPeak.month} (${data.monthPeak.count}) · avg ${data.monthAvg.toFixed(1)}/mo`}
+          table={{ head: ["Month", "Applications"], rows: data.perMonth.map((m) => [m.month, m.count]) }} empty={data.monthTotal === 0}>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={data.perMonth} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+              <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+              <Tooltip content={<MonthTooltip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.6 }} />
+              <ReferenceLine y={data.monthAvg} stroke="hsl(var(--muted-foreground))" strokeDasharray="4 4" strokeOpacity={0.6} />
+              <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={28} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard title="Application Status" subtitle={`${data.total} application${data.total === 1 ? "" : "s"} · ${PERIODS[period].toLowerCase()}`}
+          table={{ head: ["Status", "Count", "Share"], rows: data.statusPie.map((d) => [d.name, d.value, `${data.total ? Math.round((d.value / data.total) * 100) : 0}%`]) }} empty={data.statusPie.length === 0}>
+          <div className="pt-2">
+            <p className="mb-3 text-3xl font-bold font-display tabular-nums">{data.approvalRate}%<span className="ml-2 text-sm font-normal text-muted-foreground">approved</span></p>
+            <SegmentedBar total={data.total} ariaLabel={`Application status: ${data.statusPie.map((d) => `${d.value} ${d.name}`).join(", ")}`}
+              segments={["Approved", "Pending", "Waitlisted", "Rejected"].map((n) => ({ name: n, value: data.statusPie.find((d) => d.name === n)?.value ?? 0, color: STATUS_COLOR[n] }))} />
+          </div>
+        </ChartCard>
       </div>
 
       {/* Active scholarships + Pending review */}
@@ -335,80 +459,22 @@ export default function OverviewPanel({
         </Card>
       </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader><CardTitle className="text-base">Applications per Month <span className="text-xs font-normal text-muted-foreground">(last {data.months})</span></CardTitle></CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={data.perMonth}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardHeader><CardTitle className="text-base">Application Status</CardTitle></CardHeader>
-          <CardContent>
-            {data.statusPie.length === 0 ? (
-              <p className="text-sm text-muted-foreground h-[240px] flex items-center justify-center">No applications in this period.</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={240}>
-                <PieChart>
-                  <Pie data={data.statusPie} dataKey="value" nameKey="name" outerRadius={80} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
-                    {data.statusPie.map((d) => <Cell key={d.name} fill={STATUS_COLOR[d.name]} />)}
-                  </Pie>
-                  <Tooltip contentStyle={tooltipStyle} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
+      {/* Distribution + students */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <ChartCard className="lg:col-span-2" title="Applications by Scholarship" subtitle={`Top programs · ${PERIODS[period].toLowerCase()}`}
+          table={{ head: ["Scholarship", "Applications"], rows: data.distribution.map((d) => [d.name, d.value]) }} empty={data.distribution.length === 0}>
+          <RankedBars rows={data.distribution} unit="applications" />
+        </ChartCard>
 
-        <Card>
-          <CardHeader><CardTitle className="text-base">Scholarship Distribution</CardTitle></CardHeader>
-          <CardContent>
-            {data.distribution.length === 0 ? (
-              <p className="text-sm text-muted-foreground h-[240px] flex items-center justify-center">No applications in this period.</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={data.distribution} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12 }} />
-                  <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
-                  <Tooltip contentStyle={tooltipStyle} />
-                  <Bar dataKey="value" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><CardTitle className="text-base">Active vs Inactive Scholars</CardTitle></CardHeader>
-          <CardContent>
-            {profiles.length === 0 ? (
-              <p className="text-sm text-muted-foreground h-[240px] flex items-center justify-center">No students yet.</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={240}>
-                <PieChart>
-                  <Pie data={[{ name: "Active", value: data.activeStudents }, { name: "Inactive", value: profiles.length - data.activeStudents }]} dataKey="value" nameKey="name" outerRadius={80} label>
-                    <Cell fill="hsl(var(--success))" />
-                    <Cell fill="hsl(var(--muted-foreground))" />
-                  </Pie>
-                  <Tooltip contentStyle={tooltipStyle} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
+        <ChartCard title="Students" subtitle="Active vs inactive accounts"
+          table={{ head: ["Group", "Students"], rows: [["Active", data.activeStudents], ["Inactive", profiles.length - data.activeStudents]] }} empty={profiles.length === 0}>
+          <div className="pt-2">
+            <p className="mb-3 text-3xl font-bold font-display tabular-nums">{profiles.length ? Math.round((data.activeStudents / profiles.length) * 100) : 0}%<span className="ml-2 text-sm font-normal text-muted-foreground">active</span></p>
+            <SegmentedBar total={profiles.length} ariaLabel={`${data.activeStudents} active and ${profiles.length - data.activeStudents} inactive students`}
+              segments={[{ name: "Active", value: data.activeStudents, color: "hsl(var(--success))" }, { name: "Inactive", value: profiles.length - data.activeStudents, color: "hsl(var(--muted-foreground))" }]} />
+          </div>
+        </ChartCard>
       </div>
 
       {/* Recent activity */}

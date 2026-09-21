@@ -214,7 +214,7 @@ export default function AdminDashboardPage() {
       supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
     ]);
 
-    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes].find((r) => r.error);
+    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes].find((r) => r.error);
     setLoadError(failed?.error ? failed.error.message : null);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (scholsRes.data) setScholarships(scholsRes.data);
