@@ -75,7 +75,6 @@ export const studentProfileSchema = z.object({
   course: text(80),
   year_level: z.enum(["", "Grade 11", "Grade 12", "1st Year", "2nd Year", "3rd Year", "4th Year"]),
   student_id_number: text(40),
-  government_id: text(40),
 });
 
 export type StudentProfileForm = z.infer<typeof studentProfileSchema>;

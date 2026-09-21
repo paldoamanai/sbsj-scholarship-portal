@@ -14,7 +14,6 @@ export type RegistrationProfileFields = {
   year_level: string;
   average_grade: number;
   student_id_number: string;
-  government_id: string;
 };
 
 export function profileFromUserMetadata(
@@ -49,6 +48,5 @@ export function profileFromUserMetadata(
     year_level: typeof meta.year_level === "string" ? meta.year_level : undefined,
     average_grade: Number.isFinite(average_grade) ? average_grade : undefined,
     student_id_number: typeof meta.student_id_number === "string" ? meta.student_id_number : undefined,
-    government_id: typeof meta.government_id === "string" ? meta.government_id : undefined,
   };
 }

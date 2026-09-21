@@ -28,7 +28,7 @@ const toForm = (p: Tables<"profiles"> | null): StudentProfileForm => ({
   province: p?.province ?? "", zip_code: p?.zip_code ?? "",
   guardian_name: p?.guardian_name ?? "", guardian_relationship: p?.guardian_relationship ?? "", guardian_phone: p?.guardian_phone ?? "",
   school_name: p?.school_name ?? "", course: p?.course ?? "", year_level: (p?.year_level as StudentProfileForm["year_level"]) ?? "",
-  student_id_number: p?.student_id_number ?? "", government_id: p?.government_id ?? "",
+  student_id_number: p?.student_id_number ?? "",
 });
 
 const fmtDay = (d: string | null | undefined) =>
@@ -351,9 +351,6 @@ export default function ProfileSection({ profile, userId, userEmail, application
               </Field>
               <Field label="Student ID number" error={errors.student_id_number} hint={idsLocked ? "Locked once you have applied. Contact the office to correct it." : undefined}>
                 <Input className={inputCls} value={form.student_id_number} disabled={idsLocked} onChange={(e) => set("student_id_number", e.target.value)} />
-              </Field>
-              <Field label="Government ID number" error={errors.government_id} hint={idsLocked ? "Locked once you have applied." : undefined}>
-                <Input className={inputCls} value={form.government_id} disabled={idsLocked} onChange={(e) => set("government_id", e.target.value)} />
               </Field>
             </div>
           </Panel>

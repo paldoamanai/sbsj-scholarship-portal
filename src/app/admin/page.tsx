@@ -742,7 +742,6 @@ export default function AdminDashboardPage() {
       Name: `${p.first_name || ""} ${p.last_name || ""}`.trim(),
       Email: p.email || "—",
       "Student ID": p.student_id_number || "—",
-      "Government ID": p.government_id || "—",
       School: p.school_name || "—",
       Course: p.course || "—",
       "Year Level": p.year_level || "—",
@@ -1596,7 +1595,6 @@ export default function AdminDashboardPage() {
                           {field("Guardian", [viewStudent.guardian_name, viewStudent.guardian_relationship && `(${viewStudent.guardian_relationship})`].filter(Boolean).join(" "))}
                           {field("Guardian phone", viewStudent.guardian_phone)}
                           {field("Student ID", viewStudent.student_id_number)}
-                          {field("Government ID", viewStudent.government_id)}
                           {field("School", viewStudent.school_name)}
                           {field("Course", viewStudent.course)}
                           {field("Year Level", viewStudent.year_level)}
@@ -2195,17 +2193,17 @@ export default function AdminDashboardPage() {
               <Card className="border-warning/30 bg-warning/5">
                 <CardContent className="py-3 flex items-start gap-2">
                   <ShieldCheck className="h-4 w-4 text-warning mt-0.5" />
-                  <p className="text-sm text-muted-foreground">Applications can only be approved once their verification is Verified or Cleared. Flagged records share a student or government ID with another applicant.</p>
+                  <p className="text-sm text-muted-foreground">Applications can only be approved once their verification is Verified or Cleared. Flagged records share a student ID with another applicant.</p>
                 </CardContent>
               </Card>
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Applicant</TableHead><TableHead>Application</TableHead><TableHead>Student ID</TableHead><TableHead>Gov ID</TableHead><TableHead>Existing Scholarship</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Applicant</TableHead><TableHead>Application</TableHead><TableHead>Student ID</TableHead><TableHead>Existing Scholarship</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {verifications.filter((v) => verifFilter === "all" || v.verification_status === verifFilter).length === 0 && (
-                      <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No verification records</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No verification records</TableCell></TableRow>
                     )}
                     {verifications.filter((v) => verifFilter === "all" || v.verification_status === verifFilter).map((v) => {
                       const prof = profiles.find(p => p.id === v.user_id);
@@ -2218,7 +2216,6 @@ export default function AdminDashboardPage() {
                             {app ? (<><div>{app.scholarships?.name || "—"}</div><div className="text-muted-foreground">{app.status}</div></>) : "—"}
                           </TableCell>
                           <TableCell className="font-mono text-xs">{v.student_id_number || "—"}</TableCell>
-                          <TableCell className="font-mono text-xs">{v.government_id || "—"}</TableCell>
                           <TableCell>
                             {v.has_existing_scholarship ? <Badge variant="destructive">Yes</Badge> : <Badge variant="outline">No</Badge>}
                             {v.existing_scholarship_details && <p className="text-xs text-muted-foreground mt-1 max-w-[200px]">{v.existing_scholarship_details}</p>}

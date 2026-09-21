@@ -54,7 +54,7 @@ export default function RegisterPage() {
   const [form, setForm] = useState({
     lastName: "", firstName: "", middleName: "", sex: "", civilStatus: "",
     nationality: "Filipino", phone: "", barangay: "", municipality: "",
-    studentIdNumber: "", governmentId: "",
+    studentIdNumber: "",
   });
   const [dob, setDob] = useState<Date | undefined>(undefined);
   const [dobOpen, setDobOpen] = useState(false);
@@ -120,7 +120,6 @@ export default function RegisterPage() {
       if (!form.barangay.trim()) errs.barangay = "Required";
       if (!form.municipality.trim()) errs.municipality = "Required";
       if (!form.studentIdNumber.trim()) errs.studentIdNumber = "Required";
-      if (!form.governmentId.trim()) errs.governmentId = "Required";
     } else if (step === 2) {
       if (!academic.schoolName.trim()) errs.schoolName = "Required";
       if (!academic.course.trim()) errs.course = "Required";
@@ -159,7 +158,6 @@ export default function RegisterPage() {
       year_level: academic.yearLevel,
       average_grade: parseFloat(academic.averageGrade),
       student_id_number: form.studentIdNumber,
-      government_id: form.governmentId,
     };
 
     // 1. Create auth user. Metadata is copied into public.profiles by handle_new_user,
@@ -431,6 +429,11 @@ export default function RegisterPage() {
                   <div><Label>Barangay *</Label><Input autoComplete="address-level3" value={form.barangay} onChange={(e) => update("barangay", e.target.value)} /><FieldError field="barangay" /></div>
                 </div>
                 <div><Label>Municipality *</Label><Input autoComplete="address-level2" value={form.municipality} onChange={(e) => update("municipality", e.target.value)} /><FieldError field="municipality" /></div>
+                <div>
+                  <Label>Student ID Number *</Label>
+                  <Input autoComplete="off" value={form.studentIdNumber} onChange={(e) => update("studentIdNumber", e.target.value)} />
+                  <FieldError field="studentIdNumber" />
+                </div>
               </>
             )}
 
