@@ -18,6 +18,8 @@ export type Database = {
           disbursement_status: string
           amount_approved: number | null
           notes: string | null
+          academic_year: string | null
+          semester: string | null
           created_at: string
           updated_at: string
         }
@@ -29,6 +31,8 @@ export type Database = {
           disbursement_status?: string
           amount_approved?: number | null
           notes?: string | null
+          academic_year?: string | null
+          semester?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -40,6 +44,8 @@ export type Database = {
           disbursement_status?: string
           amount_approved?: number | null
           notes?: string | null
+          academic_year?: string | null
+          semester?: string | null
           created_at?: string
           updated_at?: string
         }

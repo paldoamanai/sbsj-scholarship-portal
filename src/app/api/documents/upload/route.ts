@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { parseSettings } from "@/lib/settings";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -7,6 +8,16 @@ export async function POST(request: Request) {
 
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { data: settingRows } = await supabase.from("system_settings").select("key, value");
+  const settings = parseSettings(settingRows);
+
+  if (settings.maintenance_mode) {
+    const { data: role } = await supabase.from("user_roles").select("role").eq("user_id", user.id).maybeSingle();
+    if (role?.role !== "admin") {
+      return NextResponse.json({ error: settings.maintenance_message, code: "MAINTENANCE" }, { status: 503 });
+    }
   }
 
   const formData = await request.formData();
@@ -29,9 +40,9 @@ export async function POST(request: Request) {
     );
   }
 
-  if (file.size > 5 * 1024 * 1024) {
+  if (file.size > settings.max_upload_mb * 1024 * 1024) {
     return NextResponse.json(
-      { error: "File size must be under 5MB" },
+      { error: `File size must be under ${settings.max_upload_mb}MB` },
       { status: 400 }
     );
   }

@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import { useSystemSettings } from "@/hooks/use-system-settings";
 import { GraduationCap, Mail, Phone, MapPin, Facebook, ExternalLink } from "lucide-react";
 
 const LandingFooter = () => {
+  const { settings } = useSystemSettings();
   return (
     <>
       {/* Footer */}
@@ -23,7 +25,7 @@ const LandingFooter = () => {
               />
               <div>
                 <p className="text-base font-bold text-white leading-tight group-hover:text-orange-300 transition-colors">
-                  SB San Jose<br />Scholarship Portal
+                  {settings.program_name}
                 </p>
               </div>
             </Link>
@@ -71,21 +73,19 @@ const LandingFooter = () => {
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10">
                   <Mail className="h-4 w-4 text-orange-300" />
                 </div>
-                <span>scholarship@sbsj.gov.ph</span>
+                <span>{settings.contact_email}</span>
               </li>
               <li className="flex items-center gap-3">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10">
                   <Phone className="h-4 w-4 text-orange-300" />
                 </div>
-                <span>(043) 123-4567</span>
+                <span>{settings.contact_phone}</span>
               </li>
               <li className="flex items-start gap-3">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 mt-0.5">
                   <MapPin className="h-4 w-4 text-orange-300" />
                 </div>
-                <span className="leading-relaxed">
-                  Sangguniang Bayan ng San Jose,<br />Occidental Mindoro
-                </span>
+                <span className="leading-relaxed">{settings.contact_address}</span>
               </li>
             </ul>
           </div>

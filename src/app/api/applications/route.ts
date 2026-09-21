@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { applicationsBlockedReason, parseSettings } from "@/lib/settings";
 
 export async function GET() {
   const supabase = await createClient();
@@ -43,33 +44,44 @@ export async function POST(request: Request) {
 
   const body = await request.json();
 
-  // ── Annual limit: 1 application per student per calendar year ──
+  const { data: settingRows } = await supabase.from("system_settings").select("key, value");
+  const settings = parseSettings(settingRows);
+
+  const blocked = applicationsBlockedReason(settings);
+  if (blocked) {
+    return NextResponse.json(
+      { error: blocked, code: settings.maintenance_mode ? "MAINTENANCE" : "APPLICATIONS_CLOSED" },
+      { status: 503 }
+    );
+  }
+
+  // ── Per-year limit (max_scholarships_per_student, default 1) ──
   const currentYear = new Date().getFullYear();
   const yearStart = `${currentYear}-01-01T00:00:00.000Z`;
   const yearEnd   = `${currentYear + 1}-01-01T00:00:00.000Z`;
 
-  const { data: existing, error: checkError } = await supabase
+  const { count, error: checkError } = await supabase
     .from("applications")
-    .select("id, status")
+    .select("id", { count: "exact", head: true })
     .eq("user_id", user.id)
     .gte("created_at", yearStart)
-    .lt("created_at", yearEnd)
-    .limit(1);
+    .lt("created_at", yearEnd);
 
   if (checkError) {
     return NextResponse.json({ error: checkError.message }, { status: 500 });
   }
 
-  if (existing && existing.length > 0) {
+  const limit = settings.max_scholarships_per_student;
+  if ((count ?? 0) >= limit) {
     return NextResponse.json(
       {
-        error: `You have already submitted a scholarship application for ${currentYear}. You may apply again starting January ${currentYear + 1}.`,
+        error: `You have already submitted ${limit === 1 ? "a scholarship application" : `${limit} scholarship applications`} for ${currentYear}. You may apply again starting January ${currentYear + 1}.`,
         code: "ANNUAL_LIMIT_REACHED",
       },
       { status: 409 }
     );
   }
-  // ──────────────────────────────────────────────────────────────
+  // Minimum grade, application window and the same limit are also enforced by a database trigger.
 
   const { data, error } = await supabase
     .from("applications")
@@ -79,7 +91,7 @@ export async function POST(request: Request) {
 
   if (error) {
     // P0001 = RAISE EXCEPTION from the scholarship rules trigger (closed, past deadline, full).
-    return NextResponse.json({ error: error.message, code: error.code === "P0001" ? "PROGRAM_CLOSED" : undefined }, { status: error.code === "P0001" ? 409 : 500 });
+    return NextResponse.json({ error: error.message, code: error.code === "P0001" ? "APPLICATION_RULE" : undefined }, { status: error.code === "P0001" ? 409 : 500 });
   }
 
   return NextResponse.json(data, { status: 201 });

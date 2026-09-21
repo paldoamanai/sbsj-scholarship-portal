@@ -31,6 +31,8 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import NotificationInbox from "@/components/notifications/NotificationInbox";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
+import SettingsPanel from "@/components/admin/SettingsPanel";
+import { parseSettings, type AppSettings } from "@/lib/settings";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
 const sidebarItems = [
@@ -610,12 +612,43 @@ export default function AdminDashboardPage() {
     }
   };
 
-  const saveSetting = async (key: string, value: string, storedValue: string) => {
-    const previous = systemSettings.find((st) => st.key === key)?.value ?? null;
-    const { error } = await supabase.from("system_settings").update({ value: storedValue }).eq("key", key);
-    if (error) { toast.error(error.message); return; }
-    await logAudit("update_setting", "system_settings", undefined, { key, value: previous as Json }, { key, value });
-    toast.success("Setting saved");
+  const enabledMethods = parseSettings(systemSettings).payment_methods;
+  // Keep the selected methods valid when a method gets turned off in Settings.
+  useEffect(() => {
+    if (!enabledMethods.includes(payMethod)) setPayMethod(enabledMethods[0]);
+    if (!enabledMethods.includes(disbMethod)) setDisbMethod(enabledMethods[0]);
+  }, [systemSettings, payDialog, disbDialog]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveSettings = async (changes: Partial<AppSettings>, action: "update_setting" | "reset_settings" = "update_setting") => {
+    const prev = parseSettings(systemSettings) as unknown as Record<string, Json>;
+    const changed = Object.entries(changes).filter(([k, v]) => JSON.stringify(prev[k]) !== JSON.stringify(v));
+    if (!changed.length) { toast.info("No changes to save"); return true; }
+
+    const saved: [string, Json][] = [];
+    let failed: string | null = null;
+    for (const [key, value] of changed) {
+      const { error } = await supabase.from("system_settings").upsert({ key, value: value as Json }, { onConflict: "key" });
+      if (error) { failed = error.message; break; }
+      saved.push([key, value as Json]);
+    }
+
+    if (action === "reset_settings" && saved.length) {
+      await logAudit("reset_settings", "system_settings", undefined,
+        Object.fromEntries(saved.map(([k]) => [k, prev[k]])) as Json, Object.fromEntries(saved) as Json);
+    } else {
+      for (const [key, value] of saved) await logAudit("update_setting", "system_settings", undefined, { key, value: prev[key] }, { key, value });
+    }
+
+    const [settingsRes, logsRes] = await Promise.all([
+      supabase.from("system_settings").select("*"),
+      supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(1000),
+    ]);
+    if (settingsRes.data) setSystemSettings(settingsRes.data);
+    if (logsRes.data) setAuditLogs(logsRes.data);
+
+    if (failed) { toast.error("Some settings were not saved", { description: failed }); return false; }
+    toast.success(action === "reset_settings" ? "Settings reset to defaults" : "Settings saved");
+    return true;
   };
 
   // ── Reports ──
@@ -1715,7 +1748,7 @@ export default function AdminDashboardPage() {
               <Card className="border-warning/30 bg-warning/5">
                 <CardContent className="py-3 flex items-start gap-2">
                   <Lock className="h-4 w-4 text-warning mt-0.5" />
-                  <p className="text-sm text-muted-foreground">Payments can only be created for <strong className="text-foreground">approved</strong> applications. Disbursed payments are <strong className="text-foreground">locked</strong>. Only <strong className="text-foreground">Cheque</strong> and <strong className="text-foreground">Cash</strong> are accepted, and a receipt upload is required before marking as disbursed.</p>
+                  <p className="text-sm text-muted-foreground">Payments can only be created for <strong className="text-foreground">approved</strong> applications. Disbursed payments are <strong className="text-foreground">locked</strong>. Only the methods enabled in <strong className="text-foreground">Settings</strong> ({enabledMethods.join(" and ")}) are accepted, and a receipt upload is required before marking as disbursed.</p>
                 </CardContent>
               </Card>
               <Card>
@@ -1832,7 +1865,7 @@ export default function AdminDashboardPage() {
                         <div>
                           <Label>Method</Label>
                           <div className="grid grid-cols-2 gap-3 mt-1">
-                            {(["Cash", "Cheque"] as const).map((m) => (
+                            {enabledMethods.map((m) => (
                               <button key={m} type="button" disabled={!!cur?.preferred_method} onClick={() => setPayMethod(m)}
                                 className={`rounded-lg border p-2 text-sm font-medium ${cur?.preferred_method ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${payMethod === m ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/40"}`}>{m}</button>
                             ))}
@@ -1872,7 +1905,7 @@ export default function AdminDashboardPage() {
                     <div>
                       <Label>Payment Method *</Label>
                       <div className="grid grid-cols-2 gap-3 mt-2">
-                        {(["Cash", "Cheque"] as const).map((m) => (
+                        {enabledMethods.map((m) => (
                           <button
                             key={m}
                             type="button"
@@ -2303,59 +2336,7 @@ export default function AdminDashboardPage() {
 
           {/* SETTINGS */}
           {activeSection === "settings" && (
-            <div className="space-y-4 animate-fade-in max-w-2xl">
-              <h2 className="text-xl font-display font-bold">System Settings</h2>
-              <Card>
-                <CardHeader><CardTitle className="text-base">Academic Year & Semester</CardTitle></CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div><Label>Academic Year</Label><Input defaultValue={String(systemSettings.find(s => s.key === "academic_year")?.value ?? "").replace(/"/g, "") || "2025-2026"} onBlur={(e) => saveSetting("academic_year", e.target.value, JSON.stringify(e.target.value))} /></div>
-                    <div><Label>Semester</Label>
-                      <Select defaultValue={String(systemSettings.find(s => s.key === "current_semester")?.value ?? "").replace(/"/g, "") || "1st Semester"} onValueChange={async (val) => {
-                        await saveSetting("current_semester", val, JSON.stringify(val));
-                      }}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="1st Semester">1st Semester</SelectItem>
-                          <SelectItem value="2nd Semester">2nd Semester</SelectItem>
-                          <SelectItem value="Summer">Summer</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader><CardTitle className="text-base">Scholarship Criteria</CardTitle></CardHeader>
-                <CardContent className="space-y-3">
-                  <div><Label>Minimum Grade Average</Label><Input type="number" defaultValue={String(systemSettings.find(s => s.key === "min_grade_requirement")?.value ?? 85)} onBlur={(e) => saveSetting("min_grade_requirement", e.target.value, e.target.value)} /></div>
-                  <div><Label>Max Scholarships Per Student</Label><Input type="number" defaultValue={String(systemSettings.find(s => s.key === "max_scholarships_per_student")?.value ?? 1)} onBlur={(e) => saveSetting("max_scholarships_per_student", e.target.value, e.target.value)} /></div>
-                  <Button onClick={() => toast.success("Criteria saved")}>Save Criteria</Button>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader><CardTitle className="text-base">Payment Methods</CardTitle></CardHeader>
-                <CardContent className="space-y-3">
-                  {["Cheque", "Cash"].map((m) => (
-                    <div key={m} className="flex items-center justify-between border-b last:border-0 pb-3 last:pb-0">
-                      <span className="text-sm">{m}</span><Switch defaultChecked={m !== "Cash Assistance"} />
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader><CardTitle className="text-base">Notifications</CardTitle></CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div><p className="text-sm font-medium">Email Notifications</p><p className="text-xs text-muted-foreground">Master switch for all emails (applications, payments, reminders)</p></div>
-                    <Switch defaultChecked={systemSettings.find(s => s.key === "email_notifications")?.value === true || systemSettings.find(s => s.key === "email_notifications")?.value === "true"} onCheckedChange={async (val) => {
-                      await supabase.from("system_settings").update({ value: val }).eq("key", "email_notifications");
-                    }} />
-                  </div>
-                  <p className="text-xs text-muted-foreground">Emails are sent through Resend. SMS is not available. Each person can also turn categories on or off under Notifications.</p>
-                </CardContent>
-              </Card>
-            </div>
+            <SettingsPanel rows={systemSettings} auditLogs={auditLogs} onSave={saveSettings} />
           )}
         </main>
       </div>

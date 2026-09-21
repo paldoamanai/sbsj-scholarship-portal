@@ -23,6 +23,8 @@ import NotificationInbox from "@/components/notifications/NotificationInbox";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
 import type { Tables } from "@/integrations/supabase/types";
 import { profileFromUserMetadata } from "@/lib/registration-profile";
+import { useSystemSettings } from "@/hooks/use-system-settings";
+import { applicationsBlockedReason } from "@/lib/settings";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Payment = Tables<"payments">;
@@ -164,6 +166,7 @@ function useReceiptUpload(onUploaded: () => void) {
 function MethodPreference({ payment, onChanged, compact = false }: { payment: Payment; onChanged: () => void; compact?: boolean }) {
   const supabase = createClient();
   const [saving, setSaving] = useState(false);
+  const { settings } = useSystemSettings();
   if (payment.status !== "Pending" && payment.status !== "Processing") return null;
 
   const choose = async (method: "Cash" | "Cheque") => {
@@ -180,7 +183,7 @@ function MethodPreference({ payment, onChanged, compact = false }: { payment: Pa
     <div className={compact ? "space-y-1" : "flex items-center gap-2 pt-2 border-t border-muted flex-wrap"}>
       <span className="text-xs text-muted-foreground">{payment.preferred_method ? "I prefer:" : "How would you like to be paid?"}</span>
       <div className="inline-flex rounded-lg border border-border overflow-hidden">
-        {(["Cash", "Cheque"] as const).map((m) => (
+        {settings.payment_methods.map((m) => (
           <button key={m} type="button" disabled={saving} onClick={() => choose(m)}
             className={`px-3 py-1 text-xs font-medium cursor-pointer transition-colors ${
               payment.preferred_method === m ? "bg-primary text-white" : "bg-card text-muted-foreground hover:bg-muted"
@@ -409,6 +412,8 @@ export default function StudentDashboardPage() {
   const [applyScholarshipId, setApplyScholarshipId] = useState("");
   const [applyDialogOpen, setApplyDialogOpen]       = useState(false);
   const [applyLoading, setApplyLoading]             = useState(false);
+  const { settings } = useSystemSettings();
+  const applyBlocked = applicationsBlockedReason(settings);
 
   // Profile edit state
   const [editFirst, setEditFirst]               = useState("");
@@ -827,12 +832,18 @@ export default function StudentDashboardPage() {
             <GraduationCap className="h-7 w-7 text-primary" />
           </div>
           <div className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-1.5 text-sm font-semibold text-primary mb-3">
-            1 scholarship application allowed per year
+            {settings.max_scholarships_per_student === 1 ? "1 scholarship application allowed per year" : `${settings.max_scholarships_per_student} scholarship applications allowed per year`}
           </div>
+          {applyBlocked && (
+            <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800 text-left mb-4">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+              <span>{applyBlocked}</span>
+            </div>
+          )}
           <p className="text-muted-foreground text-sm mb-6">You haven&apos;t submitted an application for {currentYear} yet.</p>
           <Dialog open={applyDialogOpen} onOpenChange={setApplyDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="bg-primary hover:bg-primary text-white rounded-xl px-6">
+              <Button disabled={!!applyBlocked} className="bg-primary hover:bg-primary text-white rounded-xl px-6">
                 <FileText className="mr-2 h-4 w-4" /> Apply for Scholarship
               </Button>
             </DialogTrigger>
@@ -842,7 +853,7 @@ export default function StudentDashboardPage() {
               </DialogHeader>
               <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
-                <span>You may only submit <strong>one application per year</strong>. Choose your scholarship program carefully.</span>
+                <span>You may only submit <strong>{settings.max_scholarships_per_student === 1 ? "one application" : `${settings.max_scholarships_per_student} applications`} per year</strong>{settings.min_grade_requirement > 0 && <> and need an average grade of at least <strong>{settings.min_grade_requirement}</strong></>}. Choose your scholarship program carefully.</span>
               </div>
               <div>
                 <Label className="text-sm font-medium text-foreground mb-1.5 block">Scholarship Program *</Label>

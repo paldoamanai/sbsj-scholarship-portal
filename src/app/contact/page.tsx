@@ -8,16 +8,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { useSystemSettings } from "@/hooks/use-system-settings";
 import { Mail, Phone, MapPin, Send, Clock } from "lucide-react";
 
-const contactInfo = [
-  { icon: Mail, label: "Email", value: "scholarship@sbsj.gov.ph" },
-  { icon: Phone, label: "Phone", value: "(043) 457-0001" },
-  { icon: MapPin, label: "Address", value: "Sangguniang Bayan Building, San Jose, Occidental Mindoro, Philippines 5100" },
-  { icon: Clock, label: "Office Hours", value: "Monday to Friday, 8:00 AM – 5:00 PM" },
-];
 
 export default function ContactPage() {
+  const { settings } = useSystemSettings();
+  const contactInfo = [
+    { icon: Mail, label: "Email", value: settings.contact_email },
+    { icon: Phone, label: "Phone", value: settings.contact_phone },
+    { icon: MapPin, label: "Address", value: settings.contact_address },
+    { icon: Clock, label: "Office Hours", value: settings.office_hours },
+  ].filter((c) => c.value);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     toast.success("Message sent successfully!", { description: "We'll get back to you within 1-2 business days." });
