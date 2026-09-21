@@ -32,6 +32,7 @@ import { profileFromUserMetadata } from "@/lib/registration-profile";
 import { useSystemSettings } from "@/hooks/use-system-settings";
 import { applicationsBlockedReason } from "@/lib/settings";
 import { STATEMENT_MIN, STATEMENT_MAX } from "@/validations/application";
+import { DOC_MIME, documentPath, uploadUserDocument } from "@/lib/documents";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Payment = Tables<"payments">;
@@ -39,11 +40,15 @@ type Payment = Tables<"payments">;
 const numOrNull = (v: string) => (v.trim() === "" ? null : Number(v));
 const peso = (n: number | null | undefined) => (n == null ? "—" : `₱${Number(n).toLocaleString("en-PH")}`);
 
-// The storage object path behind a stored document URL (the bucket is private, so the stored
-// public URL can't be opened directly).
-function storagePathFromUrl(url: string) {
-  const i = url.indexOf("/documents/");
-  return i === -1 ? null : decodeURIComponent(url.slice(i + "/documents/".length).split("?")[0]);
+const fmtSize = (n: number | null | undefined) => (n == null ? "" : n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
+function DocStatusBadge({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    Verified: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    Rejected: "bg-red-50 text-red-700 border-red-200",
+    Pending:  "bg-amber-50 text-amber-700 border-amber-200",
+  };
+  return <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${map[status] ?? map.Pending}`}>{status === "Pending" ? "Pending review" : status}</span>;
 }
 
 // ── Status badge ──────────────────────────────────────────────────────────────
@@ -441,6 +446,10 @@ export default function StudentDashboardPage() {
   const [appSize, setAppSize]                       = useState("");
   const [withdrawOpen, setWithdrawOpen]             = useState(false);
   const [withdrawing, setWithdrawing]               = useState(false);
+  const [openApplyOnLoad, setOpenApplyOnLoad]         = useState(false);
+  const [uploadingDoc, setUploadingDoc]             = useState<string | null>(null);
+  const [removeDoc, setRemoveDoc]                   = useState<Tables<"documents"> | null>(null);
+  const [removingDoc, setRemovingDoc]               = useState(false);
   const { settings } = useSystemSettings();
   const applyBlocked = applicationsBlockedReason(settings);
 
@@ -460,9 +469,21 @@ export default function StudentDashboardPage() {
   useEffect(() => { loadData(); }, []);
 
   useEffect(() => {
-    const sec = new URLSearchParams(window.location.search).get("section");
+    const params = new URLSearchParams(window.location.search);
+    const sec = params.get("section");
     if (sec && sidebarItems.some((i) => i.key === sec)) setActive(sec);
+    // Coming from registration with a program already chosen: open the apply form once data has loaded.
+    const apply = params.get("apply");
+    if (apply) { setApplyScholarshipId(apply); setActive("application"); setOpenApplyOnLoad(true); }
   }, []);
+
+  useEffect(() => {
+    if (openApplyOnLoad && !loading) {
+      setOpenApplyOnLoad(false);
+      if (!currentApp && !applyBlocked) setApplyDialogOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openApplyOnLoad, loading]);
 
   const loadData = async () => {
     setLoading(true);
@@ -523,6 +544,11 @@ export default function StudentDashboardPage() {
     if (paymentsRes.data) setPayments(paymentsRes.data);
   };
 
+  const refreshDocuments = async (uid: string) => {
+    const { data } = await supabase.from("documents").select("*").eq("user_id", uid);
+    if (data) setDocuments(data);
+  };
+
   const refreshPayments = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) silentRefresh(user.id);
@@ -540,6 +566,7 @@ export default function StudentDashboardPage() {
         (payload) => {
           const n = payload.new as Tables<"notifications">;
           setNotifications((prev) => (prev.some((x) => x.id === n.id) ? prev : [n, ...prev]));
+          if (n.entity_type === "documents") refreshDocuments(userId);
           const notify = toast[n.type as "info" | "success" | "warning" | "error"] ?? toast.message;
           notify(n.title, { description: n.message });
         }
@@ -596,8 +623,11 @@ export default function StudentDashboardPage() {
     .filter((d) => !d.application_id || d.application_id === currentApp?.id)
     .sort((a, b) => a.uploaded_at.localeCompare(b.uploaded_at))
     .forEach((d) => docByType.set(d.document_type, d));
-  const docsUploaded = requiredDocTypes.filter(t => docByType.has(t)).length;
-  const missingDocs = requiredDocTypes.filter(t => !docByType.has(t));
+  // A rejected document has to be replaced, so it doesn't count as uploaded.
+  const docOk = (t: string) => { const d = docByType.get(t); return !!d && d.status !== "Rejected"; };
+  const docsUploaded = requiredDocTypes.filter(docOk).length;
+  const missingDocs = requiredDocTypes.filter(t => !docOk(t));
+  const rejectedDocs = requiredDocTypes.filter(t => docByType.get(t)?.status === "Rejected").length;
 
   // Renewal: an earlier approved application means this one would be a renewal.
   const approvedBefore = applications.filter((a) => a.status === "Approved").length;
@@ -611,7 +641,7 @@ export default function StudentDashboardPage() {
   else if (minGrade > 0 && myGrade != null && myGrade < minGrade) applyIssues.push(`Your average grade (${myGrade}) is below the minimum of ${minGrade}.`);
 
   const openDocument = async (doc: Tables<"documents">) => {
-    const path = storagePathFromUrl(doc.file_url);
+    const path = documentPath(doc);
     if (!path) { toast.error("Could not open document"); return; }
     const win = window.open("", "_blank");
     const { data, error } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
@@ -632,6 +662,54 @@ export default function StudentDashboardPage() {
       </div>
     );
   }
+
+  // ── Document actions ───────────────────────────────────────────────────────
+  // Files go straight to private storage; the database then re-checks type, size, ownership and the
+  // lock against the stored object before it accepts the row, so these client checks are for UX only.
+  const uploadDocument = async (docType: string, file: File) => {
+    if (settings.maintenance_mode) { toast.error(settings.maintenance_message); return; }
+    if (!DOC_MIME.includes(file.type)) { toast.error("Upload a PDF, JPG or PNG file."); return; }
+    if (file.size === 0) { toast.error("That file is empty."); return; }
+    if (file.size > settings.max_upload_mb * 1024 * 1024) { toast.error(`File is too large (max ${settings.max_upload_mb} MB).`); return; }
+
+    setUploadingDoc(docType);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const result = await uploadUserDocument(supabase, { userId: user.id, docType, file, applicationId: currentApp?.id });
+      if ("error" in result) { toast.error("Upload failed", { description: result.error }); return; }
+      const row = result.row;
+
+      // Replace: drop the older copies of this document (the database only allows it once a newer one exists).
+      const older = documents.filter((d) => d.document_type === docType && d.id !== row.id && (!d.application_id || d.application_id === currentApp?.id));
+      for (const d of older) {
+        const { data: gone } = await supabase.from("documents").delete().eq("id", d.id).select("id");
+        const oldPath = documentPath(d);
+        if (gone?.length && oldPath) await supabase.storage.from("documents").remove([oldPath]);
+      }
+      toast.success(`${docType} uploaded`);
+      loadData();
+    } finally {
+      setUploadingDoc(null);
+    }
+  };
+
+  const removeDocument = async () => {
+    if (!removeDoc) return;
+    setRemovingDoc(true);
+    try {
+      const { data: gone, error } = await supabase.from("documents").delete().eq("id", removeDoc.id).select("id");
+      if (error) { toast.error(error.message); return; }
+      if (!gone?.length) { toast.error("This document can't be removed right now. Upload a replacement instead."); return; }
+      const path = documentPath(removeDoc);
+      if (path) await supabase.storage.from("documents").remove([path]);
+      toast.success("Document removed");
+      setRemoveDoc(null);
+      loadData();
+    } finally {
+      setRemovingDoc(false);
+    }
+  };
 
   // ── Application actions ────────────────────────────────────────────────────
   const submitApplication = async () => {
@@ -756,8 +834,8 @@ export default function StudentDashboardPage() {
           icon={Upload}
           label="Documents"
           value={`${docsUploaded} / ${requiredDocTypes.length}`}
-          sub={docsUploaded === requiredDocTypes.length ? "All complete" : `${requiredDocTypes.length - docsUploaded} remaining`}
-          subTone={docsUploaded === requiredDocTypes.length ? "positive" : "warning"}
+          sub={rejectedDocs > 0 ? `${rejectedDocs} need${rejectedDocs === 1 ? "s" : ""} a new copy` : docsUploaded === requiredDocTypes.length ? "All complete" : `${requiredDocTypes.length - docsUploaded} remaining`}
+          subTone={rejectedDocs === 0 && docsUploaded === requiredDocTypes.length ? "positive" : "warning"}
         />
         <StatCard
           icon={Banknote}
@@ -1015,7 +1093,7 @@ export default function StudentDashboardPage() {
                       <button type="button" onClick={() => openDocument(d)}
                         className="w-full flex items-center justify-between rounded-lg border px-3 py-1.5 text-sm hover:bg-muted text-left cursor-pointer">
                         <span className="truncate"><span className="font-medium">{d.document_type}</span> · {d.file_name}</span>
-                        <Eye className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="flex items-center gap-2 shrink-0"><DocStatusBadge status={d.status} /><Eye className="h-3.5 w-3.5 text-muted-foreground" /></span>
                       </button>
                     </li>
                   ))}
@@ -1118,7 +1196,7 @@ export default function StudentDashboardPage() {
               {missingDocs.length > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
                   <p className="font-semibold mb-1">Upload your required documents first</p>
-                  <p className="mb-2">Missing: {missingDocs.join(", ")}.</p>
+                  <p className="mb-2">Missing or rejected: {missingDocs.join(", ")}.</p>
                   <Button size="sm" variant="outline" className="rounded-xl border-amber-300 text-amber-800 hover:bg-amber-100"
                     onClick={() => { setApplyDialogOpen(false); setActive("documents"); }}>
                     <Upload className="mr-1 h-3 w-3" /> Go to Documents
@@ -1177,7 +1255,7 @@ export default function StudentDashboardPage() {
       {locked && (
         <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
           <Lock className="h-4 w-4 text-red-600 shrink-0" />
-          <p className="text-sm text-red-700">Documents are locked after disbursement.</p>
+          <p className="text-sm text-red-700">Documents are locked because your scholarship has been approved.</p>
         </div>
       )}
 
@@ -1195,60 +1273,96 @@ export default function StudentDashboardPage() {
         </div>
         <p className="text-xs text-muted-foreground mt-2">
           {docsUploaded === requiredDocTypes.length ? "All required documents uploaded." : `${requiredDocTypes.length - docsUploaded} document(s) remaining.`}
+          {" "}PDF, JPG or PNG, up to {settings.max_upload_mb} MB each.
         </p>
       </Panel>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {requiredDocTypes.map((docType) => {
           const uploaded = docByType.get(docType);
+          const busy = uploadingDoc === docType;
+          const canRemove = !!uploaded && !locked && (!uploaded.application_id || uploaded.status === "Rejected");
+          const tone = !uploaded ? "" : uploaded.status === "Rejected" ? "border-red-200" : uploaded.status === "Verified" ? "border-emerald-200" : "border-amber-100";
           return (
-            <Panel key={docType} className={`p-4 flex items-center justify-between ${uploaded ? "border-emerald-100" : ""}`}>
-              <div className="flex items-center gap-3 min-w-0">
-                <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${uploaded ? "bg-emerald-100" : "bg-muted"}`}>
-                  <FileText className={`h-5 w-5 ${uploaded ? "text-emerald-600" : "text-muted-foreground"}`} />
+            <Panel key={docType} className={`p-4 ${tone}`}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${
+                    !uploaded ? "bg-muted" : uploaded.status === "Rejected" ? "bg-red-100" : uploaded.status === "Verified" ? "bg-emerald-100" : "bg-amber-100"}`}>
+                    <FileText className={`h-5 w-5 ${
+                      !uploaded ? "text-muted-foreground" : uploaded.status === "Rejected" ? "text-red-600" : uploaded.status === "Verified" ? "text-emerald-600" : "text-amber-600"}`} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate">{docType}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {uploaded ? [uploaded.file_name, fmtSize(uploaded.file_size)].filter(Boolean).join(" · ") : "Not uploaded"}
+                    </p>
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-foreground truncate">{docType}</p>
-                  <p className="text-xs text-muted-foreground truncate">{uploaded ? uploaded.file_name : "Not uploaded"}</p>
+                <div className="flex gap-2 shrink-0 items-center">
+                  {uploaded && (
+                    <Button size="sm" variant="outline" className="h-8 w-8 p-0 rounded-xl border-border hover:bg-muted"
+                      aria-label={`View ${docType}`} onClick={() => openDocument(uploaded)}>
+                      <Eye className="h-3.5 w-3.5 text-muted-foreground" />
+                    </Button>
+                  )}
+                  {canRemove && (
+                    <Button size="sm" variant="outline" className="h-8 w-8 p-0 rounded-xl border-red-200 hover:bg-red-50"
+                      aria-label={`Remove ${docType}`} onClick={() => setRemoveDoc(uploaded)}>
+                      <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                    </Button>
+                  )}
+                  <Label className={busy ? "pointer-events-none" : "cursor-pointer"}>
+                    <Input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" disabled={locked || busy}
+                      onChange={async (e) => {
+                        const input = e.target;
+                        const file = input.files?.[0];
+                        input.value = ""; // so picking the same file again still fires onChange
+                        if (file) await uploadDocument(docType, file);
+                      }} />
+                    <span className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      locked || busy ? "opacity-50 pointer-events-none border-border text-muted-foreground" :
+                      uploaded && uploaded.status !== "Rejected" ? "border-primary/20 text-primary hover:bg-accent" : "border-primary bg-primary text-white hover:bg-primary"
+                    }`}>
+                      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+                      {busy ? "Uploading…" : uploaded ? (uploaded.status === "Rejected" ? "Upload new" : "Replace") : "Upload"}
+                    </span>
+                  </Label>
                 </div>
               </div>
-              <div className="flex gap-2 shrink-0 ml-2">
-                {uploaded && (
-                  <Button size="sm" variant="outline" className="h-8 w-8 p-0 rounded-xl border-border hover:bg-muted"
-                    aria-label={`View ${docType}`} onClick={() => openDocument(uploaded)}>
-                    <Eye className="h-3.5 w-3.5 text-muted-foreground" />
-                  </Button>
-                )}
-                <Label className="cursor-pointer">
-                  <Input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" disabled={locked}
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      if (file.size > settings.max_upload_mb * 1024 * 1024) { toast.error(`File is too large (max ${settings.max_upload_mb} MB).`); return; }
-                      if (settings.maintenance_mode) { toast.error(settings.maintenance_message); return; }
-                      const { data: { user } } = await supabase.auth.getUser();
-                      if (!user) return;
-                      const filePath = `${user.id}/${docType}/${Date.now()}-${file.name}`;
-                      const { error } = await supabase.storage.from("documents").upload(filePath, file);
-                      if (error) { toast.error(error.message); return; }
-                      const { data: urlData } = supabase.storage.from("documents").getPublicUrl(filePath);
-                      const { error: insertError } = await supabase.from("documents").insert({ user_id: user.id, application_id: currentApp?.id ?? null, document_type: docType, file_url: urlData.publicUrl, file_name: file.name });
-                      if (insertError) { toast.error(insertError.message); return; }
-                      toast.success(`${docType} uploaded`);
-                      loadData();
-                    }} />
-                  <span className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    locked ? "opacity-50 pointer-events-none border-border text-muted-foreground" :
-                    uploaded ? "border-primary/20 text-primary hover:bg-accent" : "border-primary bg-primary text-white hover:bg-primary"
-                  }`}>
-                    <Upload className="h-3 w-3" />{uploaded ? "Replace" : "Upload"}
-                  </span>
-                </Label>
-              </div>
+              {uploaded && (
+                <div className="mt-3 flex items-center gap-2 flex-wrap">
+                  <DocStatusBadge status={uploaded.status} />
+                  <span className="text-[11px] text-muted-foreground">Uploaded {new Date(uploaded.uploaded_at).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</span>
+                </div>
+              )}
+              {uploaded?.status === "Rejected" && uploaded.review_note && (
+                <p className="mt-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                  <span className="font-semibold">Reason: </span>{uploaded.review_note}
+                </p>
+              )}
             </Panel>
           );
         })}
       </div>
+
+      <AlertDialog open={!!removeDoc} onOpenChange={(o) => { if (!o) setRemoveDoc(null); }}>
+        <AlertDialogContent className="rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this document?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {removeDoc?.document_type} ({removeDoc?.file_name}) will be deleted. You will need to upload it again before you can apply.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-xl" disabled={removingDoc}>Keep it</AlertDialogCancel>
+            <AlertDialogAction className="rounded-xl bg-red-600 hover:bg-red-700 text-white" disabled={removingDoc}
+              onClick={(e) => { e.preventDefault(); removeDocument(); }}>
+              {removingDoc && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 
@@ -1506,7 +1620,7 @@ export default function StudentDashboardPage() {
     switch (active) {
       case "overview":      return <Overview />;
       case "application":   return Application(); // called, not rendered: inputs inside must keep focus
-      case "documents":     return <Documents />;
+      case "documents":     return Documents();
       case "scholarship":   return <Scholarship />;
       case "disbursement":  return <DisbursementSection payments={payments} disbursementStatus={currentApp?.disbursement_status} onUploaded={refreshPayments} />;
       case "payments":      return <PaymentsSection payments={payments} onUploaded={refreshPayments} />;

@@ -20,6 +20,7 @@ import {
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import { DOC_MIME, uploadUserDocument } from "@/lib/documents";
 import type { RegistrationProfileFields } from "@/lib/registration-profile";
 
 const stepLabels = ["Account", "Personal Info", "School Info", "Documents", "Apply"];
@@ -308,42 +309,31 @@ export default function RegisterPage() {
       return;
     }
 
-    // 3. Upload documents
+    // 3. Upload documents. A file the database refuses (wrong type, too large, not on the current
+    // required list) doesn't block registration: the student can upload it again from the dashboard.
+    const failed: string[] = [];
     for (const [docType, file] of Object.entries(docFiles)) {
       if (!file) continue;
-      const filePath = `${userId}/${docType}/${file.name}`;
-      const { error: uploadError } = await supabase.storage
-        .from("documents")
-        .upload(filePath, file);
-
-      if (!uploadError) {
-        const { data: urlData } = supabase.storage.from("documents").getPublicUrl(filePath);
-        await supabase.from("documents").insert({
-          user_id: userId,
-          document_type: docType,
-          file_url: urlData.publicUrl,
-          file_name: file.name,
-        });
-      }
+      if (!DOC_MIME.includes(file.type)) { failed.push(docType); continue; }
+      const result = await uploadUserDocument(supabase, { userId, docType, file });
+      if ("error" in result) failed.push(docType);
     }
-
-    // 4. Create application if scholarship selected
-    if (selectedScholarship) {
-      const { error: appError } = await supabase.from("applications").insert({
-        user_id: userId,
-        scholarship_id: selectedScholarship,
+    if (failed.length > 0) {
+      toast.warning("Some documents were not uploaded", {
+        description: `Upload ${failed.join(", ")} again from your dashboard (PDF, JPG or PNG).`,
       });
-      if (appError) {
-        toast.error("Application submit failed", { description: appError.message });
-        setLoading(false);
-        return;
-      }
     }
+
+    // 4. The application itself (statement, household details, certification) is completed in the
+    // dashboard; hand over the program picked here so it is already selected.
+    const target = selectedScholarship
+      ? `/student-dashboard?section=application&apply=${encodeURIComponent(selectedScholarship)}`
+      : "/student-dashboard";
 
     toast.success("Registration submitted successfully!", {
-      description: "Please check your email for verification.",
+      description: selectedScholarship ? "Finish your application in your dashboard." : "Please check your email for verification.",
     });
-    router.push("/student-dashboard");
+    router.push(target);
     router.refresh();
     setLoading(false);
   };
@@ -748,7 +738,7 @@ export default function RegisterPage() {
             {step === 4 && (
               <div className="space-y-4">
                 <p className="text-sm text-muted-foreground">
-                  Select from currently available scholarship programs below, or skip and apply later from your dashboard.
+                  Pick a scholarship program below, or skip and apply later from your dashboard. You will finish the application (your statement and certification) in your dashboard right after registering.
                 </p>
 
                 {/* Loading */}

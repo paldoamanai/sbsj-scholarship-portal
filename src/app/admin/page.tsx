@@ -75,6 +75,8 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
 }
 
 // ── Reports / audit helpers ──
+type DocSummary = { id: string; user_id: string; application_id: string | null; document_type: string; status: string; uploaded_at: string };
+type AdminDoc = { id: string; name: string; type: string; url: string; status: string; note: string | null; size: number | null; uploadedAt: string };
 type ReportSection = { name: string; head: string[]; rows: (string | number)[][]; money?: string[] };
 type ReportDef = { title: string; filters: string[]; sections: ReportSection[]; count: number; countLabel: string };
 
@@ -142,7 +144,7 @@ export default function AdminDashboardPage() {
   const [studentSort, setStudentSort] = useState("name");
   const [studentPage, setStudentPage] = useState(1);
   const [viewStudent, setViewStudent] = useState<Tables<"profiles"> | null>(null);
-  const [studentDocs, setStudentDocs] = useState<{ id: string; name: string; type: string; url: string }[]>([]);
+  const [studentDocs, setStudentDocs] = useState<AdminDoc[]>([]);
   const [studentDocsLoading, setStudentDocsLoading] = useState(false);
 
   const [applications, setApplications] = useState<(Tables<"applications"> & { scholarships: { name: string } | null, profiles?: Tables<"profiles"> | null })[]>([]);
@@ -152,7 +154,11 @@ export default function AdminDashboardPage() {
   const [viewApp, setViewApp] = useState<typeof applications[0] | null>(null);
   const [remarks, setRemarks] = useState("");
   const [appPage, setAppPage] = useState(1);
-  const [viewDocs, setViewDocs] = useState<{ id: string; name: string; type: string; url: string }[]>([]);
+  const [viewDocs, setViewDocs] = useState<AdminDoc[]>([]);
+  const [allDocs, setAllDocs] = useState<DocSummary[]>([]);
+  const [rejectDoc, setRejectDoc] = useState<AdminDoc | null>(null);
+  const [rejectNote, setRejectNote] = useState("");
+  const [reviewingDoc, setReviewingDoc] = useState(false);
   const [docsLoading, setDocsLoading] = useState(false);
   const [auditLogs, setAuditLogs] = useState<Tables<"audit_logs">[]>([]);
   const [verifications, setVerifications] = useState<Tables<"scholar_verifications">[]>([]);
@@ -203,7 +209,7 @@ export default function AdminDashboardPage() {
     if (!isAdminRole(role)) { router.push("/student-dashboard"); return; }
     setAdminRole(role as string);
 
-    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes] = await Promise.all([
+    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, docsRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("scholarships").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
@@ -213,9 +219,10 @@ export default function AdminDashboardPage() {
       supabase.from("system_settings").select("*"),
       supabase.from("profiles").select("*").eq("id", user.id).single(),
       supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
+      supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at"),
     ]);
 
-    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes].find((r) => r.error);
+    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, docsRes].find((r) => r.error);
     setLoadError(failed?.error ? failed.error.message : null);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (scholsRes.data) setScholarships(scholsRes.data);
@@ -226,6 +233,7 @@ export default function AdminDashboardPage() {
     if (settingsRes.data) setSystemSettings(settingsRes.data);
     if (adminProfRes.data) setAdminProfile(adminProfRes.data);
     if (notifsRes.data) setNotifications(notifsRes.data);
+    if (docsRes.data) setAllDocs(docsRes.data);
     setLastUpdated(new Date());
     setLoading(false);
     setRefreshing(false);
@@ -234,11 +242,13 @@ export default function AdminDashboardPage() {
   // Re-fetch applications/payments in the background (no loading flicker) —
   // used when a live change comes in over realtime.
   const silentRefreshAdmin = async () => {
-    const [appsRes, paymentsRes, profilesRes] = await Promise.all([
+    const [appsRes, paymentsRes, profilesRes, docsRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("payments").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
+      supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at"),
     ]);
+    if (docsRes.data) setAllDocs(docsRes.data);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (paymentsRes.data) setPayments(paymentsRes.data);
     if (profilesRes.data) setProfiles(await withoutStaff(profilesRes.data));
@@ -298,15 +308,64 @@ export default function AdminDashboardPage() {
   // Documents live in a private bucket, so sign a short-lived URL from the stored object path.
   const loadSignedDocs = async (userId: string) => {
     const { data } = await supabase.from("documents").select("*").eq("user_id", userId).order("uploaded_at", { ascending: false });
-    return Promise.all((data ?? []).map(async (d) => {
+    return Promise.all((data ?? []).map(async (d): Promise<AdminDoc> => {
       const m = d.file_url.match(/\/documents\/(.+)$/);
+      const path = d.storage_path ?? (m ? decodeURIComponent(m[1]) : null);
       let url = d.file_url;
-      if (m) {
-        const { data: signed } = await supabase.storage.from("documents").createSignedUrl(decodeURIComponent(m[1]), 3600);
+      if (path) {
+        const { data: signed } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
         if (signed?.signedUrl) url = signed.signedUrl;
       }
-      return { id: d.id, name: d.file_name, type: d.document_type, url };
+      return { id: d.id, name: d.file_name, type: d.document_type, url, status: d.status, note: d.review_note, size: d.file_size, uploadedAt: d.uploaded_at };
     }));
+  };
+
+  // Verify or reject a document. The database records who reviewed it, audits it and notifies the student.
+  const reviewDocument = async (doc: AdminDoc, status: "Verified" | "Rejected" | "Pending", note?: string) => {
+    setReviewingDoc(true);
+    const { data, error } = await supabase.from("documents")
+      .update({ status, review_note: status === "Rejected" ? note?.trim() || null : null })
+      .eq("id", doc.id).select("status, review_note").single();
+    setReviewingDoc(false);
+    if (error || !data) { toast.error(error?.message ?? "Could not update the document"); return false; }
+    const patch = (list: AdminDoc[]) => list.map((x) => (x.id === doc.id ? { ...x, status: data.status, note: data.review_note } : x));
+    setViewDocs(patch); setStudentDocs(patch);
+    setAllDocs((prev) => prev.map((x) => (x.id === doc.id ? { ...x, status: data.status } : x)));
+    toast.success(status === "Verified" ? `${doc.type} verified` : status === "Rejected" ? `${doc.type} rejected` : `${doc.type} reopened`);
+    return true;
+  };
+
+  const docList = (docs: AdminDoc[], loading: boolean) => {
+    if (loading) return <p className="text-sm text-muted-foreground">Loading…</p>;
+    if (docs.length === 0) return <p className="text-sm text-muted-foreground">No documents uploaded</p>;
+    const tone = (st: string) => st === "Verified" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : st === "Rejected" ? "bg-red-50 text-red-700 border-red-200" : "bg-amber-50 text-amber-700 border-amber-200";
+    return (
+      <ul className="mt-1 space-y-2">
+        {docs.map((d) => (
+          <li key={d.id} className="rounded-md border px-3 py-2 text-sm">
+            <div className="flex items-center justify-between gap-2">
+              <a href={d.url} target="_blank" rel="noopener noreferrer" className="flex min-w-0 items-center gap-2 hover:underline">
+                <span className="truncate"><span className="font-medium">{d.type}</span> · {d.name}</span>
+                <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              </a>
+              <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${tone(d.status)}`}>{d.status}</span>
+            </div>
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <span className="text-xs text-muted-foreground">
+                {d.size != null && `${d.size < 1048576 ? `${Math.max(1, Math.round(d.size / 1024))} KB` : `${(d.size / 1048576).toFixed(1)} MB`} · `}
+                {new Date(d.uploadedAt).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}
+              </span>
+              <span className="flex gap-1.5">
+                {d.status !== "Verified" && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={reviewingDoc} onClick={() => reviewDocument(d, "Verified")}>Verify</Button>}
+                {d.status !== "Rejected" && <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={reviewingDoc} onClick={() => { setRejectNote(""); setRejectDoc(d); }}>Reject</Button>}
+                {d.status !== "Pending" && <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={reviewingDoc} onClick={() => reviewDocument(d, "Pending")}>Reset</Button>}
+              </span>
+            </div>
+            {d.status === "Rejected" && d.note && <p className="mt-1 text-xs text-destructive">Reason: {d.note}</p>}
+          </li>
+        ))}
+      </ul>
+    );
   };
 
   useEffect(() => {
@@ -563,15 +622,25 @@ export default function AdminDashboardPage() {
   };
 
   const verificationFor = (applicationId: string) => verifications.find((v) => v.application_id === applicationId);
-  const canApprove = (applicationId: string) => {
-    const st = verificationFor(applicationId)?.verification_status;
-    return st === "Verified" || st === "Cleared";
+  // Why an application can't be approved yet (null = it can). The database enforces the same rules.
+  const approveBlocker = (a: { id: string; user_id: string }): string | null => {
+    const st = verificationFor(a.id)?.verification_status;
+    if (st !== "Verified" && st !== "Cleared") return "Verify the scholar first";
+    const outstanding = parseSettings(systemSettings).required_documents.flatMap((type) => {
+      // Latest copy wins: this application's own upload, or one still unattached.
+      const latest = allDocs
+        .filter((d) => d.user_id === a.user_id && d.document_type === type && (d.application_id === a.id || d.application_id === null))
+        .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
+      return latest?.status === "Verified" ? [] : [`${type} (${latest ? latest.status.toLowerCase() : "missing"})`];
+    });
+    return outstanding.length ? `Verify all required documents first: ${outstanding.join(", ")}` : null;
   };
   type AppRow = typeof applications[number];
   type AppDecision = "Approved" | "Rejected" | "Waitlisted" | "Pending";
   const decideApplication = async (a: AppRow, status: AppDecision, note?: string) => {
-    if (status === "Approved" && !canApprove(a.id)) {
-      toast.error("Verify the scholar first", { description: "Verification must be Verified or Cleared before approval." });
+    const blocker = status === "Approved" ? approveBlocker(a) : null;
+    if (blocker) {
+      toast.error("Can't approve yet", { description: blocker });
       return false;
     }
     const notes = note !== undefined ? note.trim() || null : a.notes ?? null;
@@ -1044,7 +1113,7 @@ export default function AdminDashboardPage() {
                           <TableCell className="text-right space-x-1">
                             <Button size="icon" variant="ghost" onClick={() => setViewApp(a)} title="View"><Eye className="h-4 w-4" /></Button>
                             {(a.status === "Pending" || a.status === "Waitlisted") && (<>
-                              <Button size="icon" variant="ghost" disabled={!canApprove(a.id)} title={canApprove(a.id) ? "Approve" : "Verify scholar first"} onClick={async () => {
+                              <Button size="icon" variant="ghost" disabled={!!approveBlocker(a)} title={approveBlocker(a) ?? "Approve"} onClick={async () => {
                                 if (await decideApplication(a, "Approved")) { toast.success(`${name} approved!`); loadData(); }
                               }}><CheckCircle className="h-4 w-4 text-success" /></Button>
                               {a.status === "Pending" && (
@@ -1103,18 +1172,7 @@ export default function AdminDashboardPage() {
                       </div>
                       <div>
                         <Label className="text-xs">Documents</Label>
-                        {docsLoading ? <p className="text-sm text-muted-foreground">Loading…</p>
-                          : viewDocs.length === 0 ? <p className="text-sm text-muted-foreground">No documents uploaded</p>
-                          : <ul className="mt-1 space-y-1">
-                              {viewDocs.map((d) => (
-                                <li key={d.id}>
-                                  <a href={d.url} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
-                                    <span className="truncate"><span className="font-medium">{d.type}</span> · {d.name}</span>
-                                    <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                                  </a>
-                                </li>
-                              ))}
-                            </ul>}
+                        {docList(viewDocs, docsLoading)}
                       </div>
                       <div>
                         <Label className="text-xs">Reviewer Remarks</Label>
@@ -1129,9 +1187,12 @@ export default function AdminDashboardPage() {
                           }}>Save remarks</Button>
                         )}
                       </div>
+                      {(viewApp.status === "Pending" || viewApp.status === "Waitlisted") && approveBlocker(viewApp) && (
+                        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Can&apos;t approve yet. {approveBlocker(viewApp)}.</p>
+                      )}
                       {(viewApp.status === "Pending" || viewApp.status === "Waitlisted") && (
                         <div className="flex gap-2 pt-2 flex-wrap">
-                          <Button className="flex-1" disabled={!canApprove(viewApp.id)} title={canApprove(viewApp.id) ? undefined : "Verify scholar first"} onClick={async () => {
+                          <Button className="flex-1" disabled={!!approveBlocker(viewApp)} title={approveBlocker(viewApp) ?? undefined} onClick={async () => {
                             if (await decideApplication(viewApp, "Approved", remarks)) { toast.success("Approved!"); setViewApp(null); loadData(); }
                           }}><CheckCircle className="mr-1 h-4 w-4" /> Approve</Button>
                           {viewApp.status === "Pending" && (
@@ -1369,18 +1430,7 @@ export default function AdminDashboardPage() {
                         </div>
                         <div>
                           <Label className="text-xs">Documents</Label>
-                          {studentDocsLoading ? <p className="text-sm text-muted-foreground">Loading…</p>
-                            : studentDocs.length === 0 ? <p className="text-sm text-muted-foreground">No documents uploaded</p>
-                            : <ul className="mt-1 space-y-1">
-                                {studentDocs.map((d) => (
-                                  <li key={d.id}>
-                                    <a href={d.url} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
-                                      <span className="truncate"><span className="font-medium">{d.type}</span> · {d.name}</span>
-                                      <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                                    </a>
-                                  </li>
-                                ))}
-                              </ul>}
+                          {docList(studentDocs, studentDocsLoading)}
                         </div>
                         <DialogFooter>
                           <Button variant={viewStudent.is_active ? "destructive" : "default"} onClick={() => toggleStudentActive(viewStudent)}>
@@ -2062,6 +2112,22 @@ export default function AdminDashboardPage() {
           )}
         </main>
       </div>
+
+      <Dialog open={!!rejectDoc} onOpenChange={(o) => { if (!o) setRejectDoc(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Reject {rejectDoc?.type}</DialogTitle></DialogHeader>
+          <div>
+            <Label className="text-xs">Reason (shown to the student)</Label>
+            <Textarea value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} placeholder="e.g. The photo is blurry — please upload a clear copy." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRejectDoc(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={reviewingDoc || !rejectNote.trim()} onClick={async () => {
+              if (rejectDoc && await reviewDocument(rejectDoc, "Rejected", rejectNote)) setRejectDoc(null);
+            }}>Reject document</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

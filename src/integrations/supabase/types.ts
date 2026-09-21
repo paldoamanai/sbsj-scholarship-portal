@@ -95,6 +95,13 @@ export type Database = {
           file_url: string
           file_name: string
           uploaded_at: string
+          storage_path: string | null
+          file_size: number | null
+          mime_type: string | null
+          status: string
+          review_note: string | null
+          reviewed_by: string | null
+          reviewed_at: string | null
         }
         Insert: {
           id?: string
@@ -104,6 +111,13 @@ export type Database = {
           file_url: string
           file_name: string
           uploaded_at?: string
+          storage_path?: string | null
+          file_size?: number | null
+          mime_type?: string | null
+          status?: string
+          review_note?: string | null
+          reviewed_by?: string | null
+          reviewed_at?: string | null
         }
         Update: {
           id?: string
@@ -113,6 +127,13 @@ export type Database = {
           file_url?: string
           file_name?: string
           uploaded_at?: string
+          storage_path?: string | null
+          file_size?: number | null
+          mime_type?: string | null
+          status?: string
+          review_note?: string | null
+          reviewed_by?: string | null
+          reviewed_at?: string | null
         }
         Relationships: [
           {
