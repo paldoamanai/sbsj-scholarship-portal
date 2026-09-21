@@ -35,6 +35,27 @@ export async function updateSession(request: NextRequest) {
 
   const protectedRoutes = ["/student-dashboard", "/admin"];
   const authRoutes = ["/login", "/register"];
+  // Endpoints that return or change the signed-in person's data.
+  const protectedApis = ["/api/applications", "/api/profile", "/api/notifications", "/api/payments"];
+
+  // Two-factor: a password-only session for an account with a verified factor may not go past the
+  // login page until the code is entered.
+  let needsSecondStep = false;
+  if (user) {
+    const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    needsSecondStep = !!aal && aal.nextLevel === "aal2" && aal.currentLevel !== "aal2";
+  }
+
+  if (needsSecondStep) {
+    if (protectedRoutes.some((route) => path.startsWith(route))) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
+      return NextResponse.redirect(url);
+    }
+    if (protectedApis.some((route) => path.startsWith(route))) {
+      return NextResponse.json({ error: "Two-factor verification required" }, { status: 401 });
+    }
+  }
 
   if (!user && protectedRoutes.some((route) => path.startsWith(route))) {
     const url = request.nextUrl.clone();
@@ -42,7 +63,7 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && authRoutes.some((route) => path.startsWith(route))) {
+  if (user && !needsSecondStep && authRoutes.some((route) => path.startsWith(route))) {
     const url = request.nextUrl.clone();
     const { data: roleData } = await supabase
       .from("user_roles")

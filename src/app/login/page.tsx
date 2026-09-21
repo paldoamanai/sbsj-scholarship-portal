@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Layout from "@/components/Layout";
@@ -20,20 +20,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  // Second step for accounts with two-factor authentication on.
+  const [factorId, setFactorId] = useState<string | null>(null);
+  const [code, setCode] = useState("");
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-
+  const goToDashboard = async () => {
     const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-
-    if (error) {
-      toast.error("Login failed", { description: error.message });
-      setLoading(false);
-      return;
-    }
-
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       toast.error("Login failed");
@@ -60,6 +52,63 @@ export default function LoginPage() {
     router.refresh();
   };
 
+  // Password accepted: if the account needs a second step, ask for it before going anywhere.
+  const needsSecondStep = async () => {
+    const supabase = createClient();
+    const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (!aal || aal.nextLevel !== "aal2" || aal.currentLevel === "aal2") return false;
+    const { data: list } = await supabase.auth.mfa.listFactors();
+    const factor = list?.totp?.find((f) => f.status === "verified");
+    if (!factor) return false;
+    setFactorId(factor.id);
+    return true;
+  };
+
+  // Sent back here by the middleware with a password-only session: go straight to the code step.
+  useEffect(() => {
+    needsSecondStep().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleVerifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!factorId || !/^\d{6}$/.test(code)) { toast.error("Enter the 6-digit code from your authenticator app"); return; }
+    setLoading(true);
+    const { error } = await createClient().auth.mfa.challengeAndVerify({ factorId, code });
+    if (error) {
+      toast.error("That code didn't work", { description: error.message });
+      setCode("");
+      setLoading(false);
+      return;
+    }
+    await goToDashboard();
+  };
+
+  const cancelSecondStep = async () => {
+    await createClient().auth.signOut();
+    setFactorId(null); setCode(""); setPassword("");
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+
+    const supabase = createClient();
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      toast.error("Login failed", { description: error.message });
+      setLoading(false);
+      return;
+    }
+
+    if (await needsSecondStep()) {
+      setLoading(false);
+      return;
+    }
+    await goToDashboard();
+  };
+
   return (
     <Layout>
       <div className="container flex items-center justify-center min-h-[70vh] py-12">
@@ -77,6 +126,21 @@ export default function LoginPage() {
             <CardDescription>Enter your credentials to access the system.</CardDescription>
           </CardHeader>
           <CardContent>
+            {factorId ? (
+              <form onSubmit={handleVerifyCode} className="space-y-4">
+                <p className="text-sm text-muted-foreground">Open your authenticator app and enter the 6-digit code for this account.</p>
+                <div>
+                  <Label>Authentication code</Label>
+                  <Input inputMode="numeric" autoComplete="one-time-code" autoFocus maxLength={6} placeholder="123456"
+                    value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
+                </div>
+                <Button type="submit" className="w-full bg-gradient-primary shadow-primary" disabled={loading || code.length !== 6}>
+                  {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
+                  Verify
+                </Button>
+                <button type="button" onClick={cancelSecondStep} className="w-full text-sm text-muted-foreground hover:underline">Cancel and sign out</button>
+              </form>
+            ) : (
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
                 <Label>Email</Label>
@@ -120,6 +184,7 @@ export default function LoginPage() {
                 Sign In
               </Button>
             </form>
+            )}
             <div className="mt-4 text-center space-y-2">
               <button
                 onClick={() => setIsAdmin(!isAdmin)}

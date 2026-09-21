@@ -235,7 +235,7 @@ export default function AdminDashboardPage() {
       supabase.from("scholar_verifications").select("*").order("created_at", { ascending: false }),
       supabase.from("system_settings").select("*"),
       supabase.from("profiles").select("*").eq("id", user.id).single(),
-      supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
+      supabase.from("notifications").select("*").eq("user_id", user.id).eq("muted", false).order("created_at", { ascending: false }),
       supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at"),
       supabase.from("payment_issues").select("*").order("created_at", { ascending: false }),
       supabase.from("grade_updates").select("*").order("created_at", { ascending: false }),
@@ -308,6 +308,7 @@ export default function AdminDashboardPage() {
         { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${adminUserId}` },
         (payload) => {
           const n = payload.new as Tables<"notifications">;
+          if (n.muted) return;
           setNotifications((prev) => (prev.some((x) => x.id === n.id) ? prev : [n, ...prev]));
           const notify = toast[n.type as "info" | "success" | "warning" | "error"] ?? toast.message;
           notify(n.title, { description: n.message });

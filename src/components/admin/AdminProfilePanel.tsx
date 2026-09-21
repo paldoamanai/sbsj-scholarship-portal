@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Camera, Loader2, User, ShieldCheck, LogOut, Mail, KeyRound, Smartphone, History } from "lucide-react";
+import { Camera, Loader2, User, ShieldCheck, Mail, KeyRound, History } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import NotificationPreferences from "@/components/notifications/NotificationPref
 import { createClient } from "@/lib/supabase/client";
 import { uploadAvatar } from "@/lib/avatar";
 import ProfileImage from "@/components/ProfileImage";
+import SecuritySettings from "@/components/account/SecuritySettings";
 import { adminProfileSchema, passwordSchema } from "@/validations/profile";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
@@ -141,60 +142,6 @@ export default function AdminProfilePanel({ profile, email, userId, role, auditL
     setPw({ current: "", next: "", confirm: "" });
   };
 
-  // ── sessions ──
-  const [sessionBusy, setSessionBusy] = useState(false);
-  const signOutOthers = async () => {
-    setSessionBusy(true);
-    const { error } = await supabase.auth.signOut({ scope: "others" });
-    setSessionBusy(false);
-    if (error) { toast.error(error.message); return; }
-    await logAudit("sign_out_other_sessions", "auth", userId);
-    toast.success("Signed out of all other devices");
-  };
-
-  // ── two-factor (TOTP) ──
-  type Factor = { id: string; status: string; friendly_name?: string | null };
-  const [factors, setFactors] = useState<Factor[]>([]);
-  const [enroll, setEnroll] = useState<{ id: string; qr: string; secret: string } | null>(null);
-  const [mfaCode, setMfaCode] = useState("");
-  const [mfaBusy, setMfaBusy] = useState(false);
-  const loadFactors = async () => {
-    const { data } = await supabase.auth.mfa.listFactors();
-    setFactors((data?.totp ?? []) as Factor[]);
-  };
-  useEffect(() => { loadFactors(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
-  const verified = factors.find((f) => f.status === "verified");
-
-  const startEnroll = async () => {
-    setMfaBusy(true);
-    // Clear abandoned, unverified enrolments first.
-    for (const f of factors.filter((x) => x.status !== "verified")) await supabase.auth.mfa.unenroll({ factorId: f.id });
-    const { data, error } = await supabase.auth.mfa.enroll({ factorType: "totp", friendlyName: `Admin ${Date.now()}` });
-    setMfaBusy(false);
-    if (error || !data) { toast.error("Could not start setup", { description: error?.message ?? "Two-factor may not be enabled for this project." }); return; }
-    setEnroll({ id: data.id, qr: data.totp.qr_code, secret: data.totp.secret });
-  };
-  const confirmEnroll = async () => {
-    if (!enroll || !/^\d{6}$/.test(mfaCode)) { toast.error("Enter the 6-digit code from your app"); return; }
-    setMfaBusy(true);
-    const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: enroll.id, code: mfaCode });
-    setMfaBusy(false);
-    if (error) { toast.error("Invalid code", { description: error.message }); return; }
-    await logAudit("enable_2fa", "auth", userId);
-    toast.success("Two-factor authentication enabled");
-    setEnroll(null); setMfaCode(""); loadFactors();
-  };
-  const disable2fa = async () => {
-    if (!verified) return;
-    setMfaBusy(true);
-    const { error } = await supabase.auth.mfa.unenroll({ factorId: verified.id });
-    setMfaBusy(false);
-    if (error) { toast.error(error.message); return; }
-    await logAudit("disable_2fa", "auth", userId);
-    toast.success("Two-factor authentication disabled");
-    loadFactors();
-  };
-
   // ── my activity ──
   const myActivity = useMemo(() => auditLogs.filter((l) => l.user_id === userId).slice(0, 10), [auditLogs, userId]);
 
@@ -313,42 +260,8 @@ export default function AdminProfilePanel({ profile, email, userId, role, auditL
       {/* Security: 2FA + sessions */}
       <Card>
         <CardHeader><CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Security</CardTitle></CardHeader>
-        <CardContent className="space-y-5">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium flex items-center gap-2"><Smartphone className="h-4 w-4" />Two-factor authentication</p>
-                <p className="text-xs text-muted-foreground">Require a code from an authenticator app when signing in.</p>
-              </div>
-              {verified ? (
-                <Button variant="outline" size="sm" onClick={disable2fa} disabled={mfaBusy}>Disable</Button>
-              ) : !enroll ? (
-                <Button size="sm" onClick={startEnroll} disabled={mfaBusy}>{mfaBusy && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Enable</Button>
-              ) : null}
-            </div>
-            {verified && <Badge variant="secondary">Enabled</Badge>}
-            {enroll && (
-              <div className="rounded-lg border p-4 space-y-3">
-                <p className="text-sm">Scan this QR code with Google Authenticator, Authy or similar, then enter the 6-digit code.</p>
-                <img src={enroll.qr} alt="2FA QR code" className="h-40 w-40 bg-white p-2 rounded" />
-                <p className="text-xs text-muted-foreground break-all">Can&apos;t scan? Key: <code>{enroll.secret}</code></p>
-                <div className="flex gap-2">
-                  <Input inputMode="numeric" maxLength={6} placeholder="123456" value={mfaCode} onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ""))} className="w-32" />
-                  <Button onClick={confirmEnroll} disabled={mfaBusy}>Verify</Button>
-                  <Button variant="ghost" onClick={async () => { await supabase.auth.mfa.unenroll({ factorId: enroll.id }); setEnroll(null); setMfaCode(""); }}>Cancel</Button>
-                </div>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center justify-between gap-3 border-t pt-4">
-            <div>
-              <p className="text-sm font-medium flex items-center gap-2"><LogOut className="h-4 w-4" />Other sessions</p>
-              <p className="text-xs text-muted-foreground">Sign out of every device except this one.</p>
-            </div>
-            <Button variant="outline" size="sm" onClick={signOutOthers} disabled={sessionBusy}>
-              {sessionBusy && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Sign out others
-            </Button>
-          </div>
+        <CardContent>
+          <SecuritySettings userId={userId} logAudit={logAudit} />
         </CardContent>
       </Card>
 
@@ -356,7 +269,7 @@ export default function AdminProfilePanel({ profile, email, userId, role, auditL
       <Card>
         <CardHeader><CardTitle className="text-base">Notification Preferences</CardTitle><CardDescription>Choose what reaches you in the dashboard and by email.</CardDescription></CardHeader>
         <CardContent>
-          <NotificationPreferences userId={userId} categories={[
+          <NotificationPreferences userId={userId} email={email} categories={[
             { key: "application", label: "Applications", hint: "New applications submitted" },
             { key: "verification", label: "Verification", hint: "Duplicate ID flags" },
             { key: "payment", label: "Payments", hint: "Receipts, method choices and unpaid approvals" },

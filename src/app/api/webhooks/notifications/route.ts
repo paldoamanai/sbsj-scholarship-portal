@@ -66,6 +66,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ skipped: "user turned off email for this category" });
   }
 
+  // Master email switch. Account and system notices are always sent, like the per-category rule above.
+  if (["application", "verification", "payment", "program"].includes(record.category)) {
+    const { data: master } = await supabase.from("user_settings").select("email_enabled").eq("user_id", record.user_id).maybeSingle();
+    if (master && master.email_enabled === false) {
+      return NextResponse.json({ skipped: "user turned off email notifications" });
+    }
+  }
+
   const { data: userData, error: userError } = await supabase.auth.admin.getUserById(record.user_id);
   const to = userData?.user?.email;
   if (userError || !to) {

@@ -180,6 +180,7 @@ export type Database = {
           entity_type: string | null
           entity_id: string | null
           dedupe_key: string | null
+          muted: boolean
         }
         Insert: {
           id?: string
@@ -194,6 +195,7 @@ export type Database = {
           entity_type?: string | null
           entity_id?: string | null
           dedupe_key?: string | null
+          muted?: boolean
         }
         Update: {
           id?: string
@@ -208,6 +210,7 @@ export type Database = {
           entity_type?: string | null
           entity_id?: string | null
           dedupe_key?: string | null
+          muted?: boolean
         }
         Relationships: []
       }
@@ -399,6 +402,27 @@ export type Database = {
           created_at?: string
           handled_at?: string | null
           handled_by?: string | null
+        }
+        Relationships: []
+      }
+      user_settings: {
+        Row: {
+          user_id: string
+          email_enabled: boolean
+          in_app_enabled: boolean
+          updated_at: string
+        }
+        Insert: {
+          user_id: string
+          email_enabled?: boolean
+          in_app_enabled?: boolean
+          updated_at?: string
+        }
+        Update: {
+          user_id?: string
+          email_enabled?: boolean
+          in_app_enabled?: boolean
+          updated_at?: string
         }
         Relationships: []
       }
@@ -776,6 +800,10 @@ export type Database = {
           _status: string
           _response: string
         }
+        Returns: undefined
+      }
+      send_test_notification: {
+        Args: Record<string, never>
         Returns: undefined
       }
       submit_student_receipt: {

@@ -27,6 +27,7 @@ import ApplicationProgressBar from "@/components/student/ApplicationProgressBar"
 import { createClient } from "@/lib/supabase/client";
 import ProfileSection from "@/components/student/ProfileSection";
 import ProfileImage from "@/components/ProfileImage";
+import SecuritySettings from "@/components/account/SecuritySettings";
 import { Panel, SectionTitle } from "@/components/student/ui";
 import { profileCompleteness } from "@/lib/profile";
 import NotificationInbox from "@/components/notifications/NotificationInbox";
@@ -569,7 +570,7 @@ export default function StudentDashboardPage() {
       supabase.from("applications").select("*, scholarships(name)").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("documents").select("*").eq("user_id", user.id),
       supabase.from("payments").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
-      supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
+      supabase.from("notifications").select("*").eq("user_id", user.id).eq("muted", false).order("created_at", { ascending: false }),
       supabase.rpc("scholarships_public"),
       supabase.from("payment_issues").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("grade_updates").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
@@ -647,10 +648,12 @@ export default function StudentDashboardPage() {
         { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
         (payload) => {
           const n = payload.new as Tables<"notifications">;
-          setNotifications((prev) => (prev.some((x) => x.id === n.id) ? prev : [n, ...prev]));
+          // A muted notification is only kept so its email can go out; still refresh what it's about.
+          if (!n.muted) setNotifications((prev) => (prev.some((x) => x.id === n.id) ? prev : [n, ...prev]));
           if (n.entity_type === "documents") refreshDocuments(userId);
           if (n.entity_type === "payments" || n.entity_type === "payment_issues") silentRefresh(userId);
           if (n.entity_type === "grade_updates" || n.entity_type === "data_requests") refreshProfile(userId);
+          if (n.muted) return;
           const notify = toast[n.type as "info" | "success" | "warning" | "error"] ?? toast.message;
           notify(n.title, { description: n.message });
         }
@@ -1541,19 +1544,39 @@ export default function StudentDashboardPage() {
 
   // ── Section: Settings ──────────────────────────────────────────────────────
   const SettingsView = () => (
-    <Panel>
-      <div className="px-6 py-4 border-b border-muted">
-        <SectionTitle>Notification Preferences</SectionTitle>
+    <div className="space-y-5">
+      <div>
+        <h2 className="font-display text-lg font-bold text-foreground">Settings</h2>
+        <p className="text-sm text-muted-foreground">Choose how we contact you and keep your account secure.</p>
       </div>
-      <div className="p-6">
-        <NotificationPreferences userId={userId} categories={[
-          { key: "application", label: "Application updates", hint: "Submitted, approved, rejected, waitlisted" },
-          { key: "verification", label: "Verification", hint: "Identity verification results" },
-          { key: "payment", label: "Payment notifications", hint: "Scheduled, disbursed, receipt reminders" },
-          { key: "program", label: "Announcements & deadlines", hint: "New programs and closing dates" },
-        ]} />
-      </div>
-    </Panel>
+
+      <Panel>
+        <div className="px-6 py-4 border-b border-muted"><SectionTitle>Notifications</SectionTitle></div>
+        <div className="p-6">
+          <NotificationPreferences userId={userId} email={userEmail} categories={[
+            { key: "application", label: "Application updates", hint: "Submitted, decisions, and reviews of your documents" },
+            { key: "verification", label: "Verification", hint: "Identity checks and grade verification" },
+            { key: "payment", label: "Payments", hint: "Scheduled, disbursed, receipt reviews and replies to your reports" },
+            { key: "program", label: "Announcements & deadlines", hint: "New programs and closing dates" },
+          ]} />
+        </div>
+      </Panel>
+
+      <Panel>
+        <div className="px-6 py-4 border-b border-muted"><SectionTitle>Security</SectionTitle></div>
+        <div className="p-6"><SecuritySettings userId={userId} /></div>
+      </Panel>
+
+      <Panel>
+        <div className="px-6 py-4 border-b border-muted"><SectionTitle>Account</SectionTitle></div>
+        <div className="p-6 space-y-3">
+          <p className="text-sm text-muted-foreground">Your details, email, password, and your data and privacy options are on your Profile.</p>
+          <Button variant="outline" className="rounded-xl" onClick={() => setActive("profile")}>
+            <User className="mr-2 h-4 w-4" />Go to Profile
+          </Button>
+        </div>
+      </Panel>
+    </div>
   );
 
   // Notification deep links look like /student-dashboard?section=payments
@@ -1580,7 +1603,7 @@ export default function StudentDashboardPage() {
         <ProfileSection profile={profile} userId={userId} userEmail={userEmail} applications={applications} locked={locked}
           gradeUpdates={gradeUpdates} dataRequests={dataRequests} onChanged={() => refreshProfile(userId)} />
       );
-      case "settings":      return <SettingsView />;
+      case "settings":      return SettingsView(); // called, not rendered: its children keep their state
       default:              return <Overview />;
     }
   };
