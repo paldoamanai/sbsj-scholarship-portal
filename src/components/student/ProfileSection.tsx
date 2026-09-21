@@ -248,7 +248,7 @@ export default function ProfileSection({ profile, userId, userEmail, application
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Avatar + completeness */}
-        <Panel className="p-6 text-center flex flex-col items-center">
+        <Panel className="p-4 sm:p-6 text-center flex flex-col items-center">
           <div className="relative mb-4">
             <ProfileImage value={profile?.profile_picture_url} alt="Profile" className="h-24 w-24 rounded-2xl object-cover"
               fallback={<div className="h-24 w-24 rounded-2xl bg-accent flex items-center justify-center"><User className="h-10 w-10 text-primary" /></div>} />
@@ -280,11 +280,11 @@ export default function ProfileSection({ profile, userId, userEmail, application
         <div className="lg:col-span-2 space-y-5">
           {/* Personal */}
           <Panel>
-            <div className="px-6 py-4 border-b border-muted"><SectionTitle>Personal Information</SectionTitle></div>
-            <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label="First name *" error={errors.first_name}><Input className={inputCls} value={form.first_name} disabled={locked} onChange={(e) => set("first_name", e.target.value)} /></Field>
+            <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Personal Information</SectionTitle></div>
+            <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="First name *" error={errors.first_name}><Input className={inputCls} autoComplete="given-name" value={form.first_name} disabled={locked} onChange={(e) => set("first_name", e.target.value)} /></Field>
               <Field label="Middle name" error={errors.middle_name}><Input className={inputCls} value={form.middle_name} disabled={locked} onChange={(e) => set("middle_name", e.target.value)} /></Field>
-              <Field label="Last name *" error={errors.last_name}><Input className={inputCls} value={form.last_name} disabled={locked} onChange={(e) => set("last_name", e.target.value)} /></Field>
+              <Field label="Last name *" error={errors.last_name}><Input className={inputCls} autoComplete="family-name" value={form.last_name} disabled={locked} onChange={(e) => set("last_name", e.target.value)} /></Field>
               <Field label="Date of birth" error={errors.dob}><Input type="date" className={inputCls} value={form.dob} disabled={locked} max={new Date().toISOString().slice(0, 10)} onChange={(e) => set("dob", e.target.value)} /></Field>
               <Field label="Sex" error={errors.sex}>
                 <Select value={form.sex} onValueChange={(v) => set("sex", v as StudentProfileForm["sex"])} disabled={locked}>
@@ -304,33 +304,33 @@ export default function ProfileSection({ profile, userId, userEmail, application
 
           {/* Contact & address */}
           <Panel>
-            <div className="px-6 py-4 border-b border-muted"><SectionTitle>Contact &amp; Address</SectionTitle></div>
-            <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label="Mobile number" error={errors.phone} hint="09XXXXXXXXX or +639XXXXXXXXX"><Input className={inputCls} inputMode="tel" value={form.phone} onChange={(e) => set("phone", e.target.value)} /></Field>
+            <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Contact &amp; Address</SectionTitle></div>
+            <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="Mobile number" error={errors.phone} hint="09XXXXXXXXX or +639XXXXXXXXX"><Input className={inputCls} type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={(e) => set("phone", e.target.value)} /></Field>
               <Field label="Email"><Input className={`${inputCls} bg-muted`} value={userEmail} disabled /></Field>
-              <Field label="Street / house no." error={errors.street_address} className="sm:col-span-2"><Input className={inputCls} value={form.street_address} onChange={(e) => set("street_address", e.target.value)} /></Field>
+              <Field label="Street / house no." error={errors.street_address} className="sm:col-span-2"><Input className={inputCls} autoComplete="street-address" value={form.street_address} onChange={(e) => set("street_address", e.target.value)} /></Field>
               <Field label="Barangay" error={errors.barangay}><Input className={inputCls} value={form.barangay} onChange={(e) => set("barangay", e.target.value)} /></Field>
               <Field label="Municipality" error={errors.municipality}><Input className={inputCls} value={form.municipality} onChange={(e) => set("municipality", e.target.value)} /></Field>
               <Field label="Province" error={errors.province}><Input className={inputCls} value={form.province} onChange={(e) => set("province", e.target.value)} /></Field>
-              <Field label="ZIP code" error={errors.zip_code}><Input className={inputCls} inputMode="numeric" maxLength={4} value={form.zip_code} onChange={(e) => set("zip_code", e.target.value)} /></Field>
+              <Field label="ZIP code" error={errors.zip_code}><Input className={inputCls} inputMode="numeric" autoComplete="postal-code" maxLength={4} value={form.zip_code} onChange={(e) => set("zip_code", e.target.value)} /></Field>
             </div>
           </Panel>
 
           {/* Guardian */}
           <Panel>
-            <div className="px-6 py-4 border-b border-muted"><SectionTitle>Parent / Guardian</SectionTitle></div>
-            <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Parent / Guardian</SectionTitle></div>
+            <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label={`Full name${guardianRequired ? " *" : ""}`} error={errors.guardian_name}><Input className={inputCls} value={form.guardian_name} onChange={(e) => set("guardian_name", e.target.value)} /></Field>
               <Field label="Relationship" error={errors.guardian_relationship}><Input className={inputCls} value={form.guardian_relationship} placeholder="e.g. Mother" onChange={(e) => set("guardian_relationship", e.target.value)} /></Field>
-              <Field label={`Mobile number${guardianRequired ? " *" : ""}`} error={errors.guardian_phone}><Input className={inputCls} inputMode="tel" value={form.guardian_phone} onChange={(e) => set("guardian_phone", e.target.value)} /></Field>
+              <Field label={`Mobile number${guardianRequired ? " *" : ""}`} error={errors.guardian_phone}><Input className={inputCls} type="tel" inputMode="tel" autoComplete="off" value={form.guardian_phone} onChange={(e) => set("guardian_phone", e.target.value)} /></Field>
               {guardianRequired && <p className="text-xs text-muted-foreground self-end pb-2">Required for Grade 11–12 students.</p>}
             </div>
           </Panel>
 
           {/* School */}
           <Panel>
-            <div className="px-6 py-4 border-b border-muted"><SectionTitle>School &amp; IDs</SectionTitle></div>
-            <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>School &amp; IDs</SectionTitle></div>
+            <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Year level" error={errors.year_level}>
                 <Select value={form.year_level} onValueChange={changeYearLevel} disabled={locked}>
                   <SelectTrigger className="rounded-xl border-border"><SelectValue placeholder="Select year level" /></SelectTrigger>
@@ -370,8 +370,8 @@ export default function ProfileSection({ profile, userId, userEmail, application
 
       {/* Academic standing */}
       <Panel>
-        <div className="px-6 py-4 border-b border-muted"><SectionTitle>Academic Standing</SectionTitle></div>
-        <div className="p-6 space-y-5">
+        <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Academic Standing</SectionTitle></div>
+        <div className="p-4 sm:p-6 space-y-5">
           <div className="flex items-center gap-4 flex-wrap">
             <div className="rounded-xl bg-muted border border-muted px-5 py-3">
               <p className="text-xs text-muted-foreground">Average grade</p>
@@ -400,7 +400,7 @@ export default function ProfileSection({ profile, userId, userEmail, application
                 Your grade can only be changed by submitting your latest grade report. The office verifies it, then it replaces your current grade. This is what programs and renewals check.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="New average grade"><Input className={inputCls} type="number" min={0} max={100} step="0.01" value={grade} onChange={(e) => { setGrade(e.target.value); setGradeErr(""); }} placeholder="e.g. 91.5" /></Field>
+                <Field label="New average grade"><Input className={inputCls} type="number" inputMode="decimal" min={0} max={100} step="0.01" value={grade} onChange={(e) => { setGrade(e.target.value); setGradeErr(""); }} placeholder="e.g. 91.5" /></Field>
                 <Field label="Term"><Input className={inputCls} value={term} maxLength={60} onChange={(e) => { setTerm(e.target.value); setGradeErr(""); }} /></Field>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
@@ -442,8 +442,8 @@ export default function ProfileSection({ profile, userId, userEmail, application
       {/* Account */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <Panel>
-          <div className="px-6 py-4 border-b border-muted"><SectionTitle>Change Email</SectionTitle></div>
-          <div className="p-6 space-y-3 max-w-md">
+          <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Change Email</SectionTitle></div>
+          <div className="p-4 sm:p-6 space-y-3 max-w-md">
             <Field label="New email address" error={emailErr}>
               <Input type="email" className={inputCls} value={newEmail} onChange={(e) => { setNewEmail(e.target.value); setEmailErr(""); }} placeholder="you@example.com" />
             </Field>
@@ -455,8 +455,8 @@ export default function ProfileSection({ profile, userId, userEmail, application
         </Panel>
 
         <Panel>
-          <div className="px-6 py-4 border-b border-muted"><SectionTitle>Change Password</SectionTitle></div>
-          <div className="p-6 space-y-3 max-w-md">
+          <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Change Password</SectionTitle></div>
+          <div className="p-4 sm:p-6 space-y-3 max-w-md">
             <Field label="Current password" error={pwErrors.current}><Input type="password" autoComplete="current-password" className={inputCls} value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} /></Field>
             <Field label="New password" error={pwErrors.next} hint="At least 8 characters with an uppercase letter, a lowercase letter and a number."><Input type="password" autoComplete="new-password" className={inputCls} value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} /></Field>
             <Field label="Confirm new password" error={pwErrors.confirm}><Input type="password" autoComplete="new-password" className={inputCls} value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} /></Field>
@@ -469,8 +469,8 @@ export default function ProfileSection({ profile, userId, userEmail, application
 
       {/* Privacy */}
       <Panel>
-        <div className="px-6 py-4 border-b border-muted"><SectionTitle>Your Data &amp; Privacy</SectionTitle></div>
-        <div className="p-6 space-y-4">
+        <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Your Data &amp; Privacy</SectionTitle></div>
+        <div className="p-4 sm:p-6 space-y-4">
           <p className="text-sm text-muted-foreground">You can download a copy of the information we hold about you, or ask the office to delete your account and data.</p>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" className="rounded-xl" disabled={exporting} onClick={exportData}>

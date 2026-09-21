@@ -244,9 +244,18 @@ export default function RegisterPage() {
 
   return (
     <Layout>
-      <div className="container max-w-2xl py-12">
-        {/* Step indicator */}
-        <div className="flex items-center justify-center gap-2 mb-8">
+      <div className="container max-w-2xl py-6 sm:py-12">
+        {/* Step indicator: a progress bar on phones, numbered steps from sm up */}
+        <div className="sm:hidden mb-5" role="status" aria-live="polite">
+          <div className="flex items-baseline justify-between mb-2">
+            <p className="text-sm font-semibold text-foreground">{stepLabels[step]}</p>
+            <p className="text-xs text-muted-foreground">Step {step + 1} of {stepLabels.length}</p>
+          </div>
+          <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+            <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${((step + 1) / stepLabels.length) * 100}%` }} />
+          </div>
+        </div>
+        <div className="hidden sm:flex items-center justify-center gap-2 mb-8">
           {stepLabels.map((s, i) => (
             <div key={i} className="flex items-center gap-2">
               <div className={cn(
@@ -263,8 +272,8 @@ export default function RegisterPage() {
 
         <Card className="overflow-hidden">
           <div className="h-1.5 bg-gradient-primary" />
-          <CardHeader>
-            <CardTitle className="font-display flex items-center gap-2">
+          <CardHeader className="px-4 pt-5 pb-3 sm:p-6">
+            <CardTitle className="font-display flex items-center gap-2 text-lg sm:text-2xl">
               {step === 0 && <><Lock className="h-5 w-5 text-primary" /> Account Setup</>}
               {step === 1 && <><User className="h-5 w-5 text-primary" /> Personal Information</>}
               {step === 2 && <><School className="h-5 w-5 text-primary" /> School Information</>}
@@ -273,16 +282,17 @@ export default function RegisterPage() {
             </CardTitle>
             <CardDescription>Fill in all required fields to proceed.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-4 px-4 pb-0 sm:px-6 sm:pb-6">
             {/* STEP 0: Account */}
             {step === 0 && (
               <>
-                <div><Label>Email *</Label><Input type="email" value={email} onChange={(e) => { setEmail(e.target.value); setErrors(p => ({ ...p, email: "" })); }} /><FieldError field="email" /></div>
+                <div><Label>Email *</Label><Input type="email" inputMode="email" autoComplete="email" autoCapitalize="none" value={email} onChange={(e) => { setEmail(e.target.value); setErrors(p => ({ ...p, email: "" })); }} /><FieldError field="email" /></div>
                 <div>
                   <Label>Password *</Label>
                   <div className="relative">
                     <Input
                       type={showPassword ? "text" : "password"}
+                      autoComplete="new-password"
                       value={password}
                       onChange={(e) => { setPassword(e.target.value); setErrors(p => ({ ...p, password: "" })); }}
                       className="pr-10"
@@ -290,8 +300,8 @@ export default function RegisterPage() {
                     <button
                       type="button"
                       onClick={() => setShowPassword((v) => !v)}
-                      className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground"
-                      tabIndex={-1}
+                      className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted-foreground hover:text-foreground"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
                     >
                       {showPassword ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                     </button>
@@ -303,6 +313,7 @@ export default function RegisterPage() {
                   <div className="relative">
                     <Input
                       type={showConfirmPassword ? "text" : "password"}
+                      autoComplete="new-password"
                       value={confirmPassword}
                       onChange={(e) => { setConfirmPassword(e.target.value); setErrors(p => ({ ...p, confirmPassword: "" })); }}
                       className="pr-10"
@@ -310,8 +321,8 @@ export default function RegisterPage() {
                     <button
                       type="button"
                       onClick={() => setShowConfirmPassword((v) => !v)}
-                      className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground"
-                      tabIndex={-1}
+                      className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted-foreground hover:text-foreground"
+                      aria-label={showConfirmPassword ? "Hide password" : "Show password"}
                     >
                       {showConfirmPassword ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                     </button>
@@ -325,9 +336,9 @@ export default function RegisterPage() {
             {step === 1 && (
               <>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div><Label>Last Name *</Label><Input value={form.lastName} onChange={(e) => update("lastName", e.target.value)} /><FieldError field="lastName" /></div>
-                  <div><Label>First Name *</Label><Input value={form.firstName} onChange={(e) => update("firstName", e.target.value)} /><FieldError field="firstName" /></div>
-                  <div><Label>Middle Name</Label><Input value={form.middleName} onChange={(e) => update("middleName", e.target.value)} /></div>
+                  <div><Label>Last Name *</Label><Input autoComplete="family-name" value={form.lastName} onChange={(e) => update("lastName", e.target.value)} /><FieldError field="lastName" /></div>
+                  <div><Label>First Name *</Label><Input autoComplete="given-name" value={form.firstName} onChange={(e) => update("firstName", e.target.value)} /><FieldError field="firstName" /></div>
+                  <div><Label>Middle Name</Label><Input autoComplete="additional-name" value={form.middleName} onChange={(e) => update("middleName", e.target.value)} /></div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div>
@@ -350,6 +361,20 @@ export default function RegisterPage() {
                 </div>
                 <div>
                   <Label>Date of Birth *</Label>
+                  {/* Phones get the native date picker (large targets, no tiny dropdowns). */}
+                  <Input
+                    type="date"
+                    className="sm:hidden"
+                    autoComplete="bday"
+                    min="1925-01-01"
+                    max={format(new Date(), "yyyy-MM-dd")}
+                    value={dob ? format(dob, "yyyy-MM-dd") : ""}
+                    onChange={(e) => {
+                      setDob(e.target.value ? new Date(`${e.target.value}T00:00:00`) : undefined);
+                      setErrors((p) => ({ ...p, dob: "" }));
+                    }}
+                  />
+                  <div className="hidden sm:block">
                   <Popover
                     open={dobOpen}
                     onOpenChange={(open) => { setDobOpen(open); if (open) setPendingDob(dob); }}
@@ -398,13 +423,14 @@ export default function RegisterPage() {
                       </div>
                     </PopoverContent>
                   </Popover>
+                  </div>
                   <FieldError field="dob" />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div><Label>Phone Number *</Label><Input value={form.phone} onChange={(e) => update("phone", e.target.value)} placeholder="09XXXXXXXXX" /><FieldError field="phone" /></div>
-                  <div><Label>Barangay *</Label><Input value={form.barangay} onChange={(e) => update("barangay", e.target.value)} /><FieldError field="barangay" /></div>
+                  <div><Label>Phone Number *</Label><Input type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={(e) => update("phone", e.target.value)} placeholder="09XXXXXXXXX" /><FieldError field="phone" /></div>
+                  <div><Label>Barangay *</Label><Input autoComplete="address-level3" value={form.barangay} onChange={(e) => update("barangay", e.target.value)} /><FieldError field="barangay" /></div>
                 </div>
-                <div><Label>Municipality *</Label><Input value={form.municipality} onChange={(e) => update("municipality", e.target.value)} /><FieldError field="municipality" /></div>
+                <div><Label>Municipality *</Label><Input autoComplete="address-level2" value={form.municipality} onChange={(e) => update("municipality", e.target.value)} /><FieldError field="municipality" /></div>
               </>
             )}
 
@@ -440,6 +466,8 @@ export default function RegisterPage() {
                     <Label>Average Grade *</Label>
                     <Input
                       type="number"
+                      inputMode="decimal"
+                      step="0.01"
                       value={academic.averageGrade}
                       onChange={(e) => updateAcademic("averageGrade", e.target.value)}
                       placeholder="85% above"
@@ -515,20 +543,20 @@ export default function RegisterPage() {
                   {PREREQUISITE_DOCS.map((doc) => (
                     <div
                       key={doc}
-                      className={`flex items-center justify-between rounded-lg border p-4 transition-colors ${
+                      className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-lg border p-3 sm:p-4 transition-colors ${
                         docFiles[doc]
                           ? "border-success/40 bg-success/5"
                           : "border-primary/30 bg-primary/5"
                       }`}
                     >
-                      <div className="flex items-center gap-3">
-                        <Upload className={`h-5 w-5 ${docFiles[doc] ? "text-success" : "text-primary"}`} />
-                        <div>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Upload className={`h-5 w-5 shrink-0 ${docFiles[doc] ? "text-success" : "text-primary"}`} />
+                        <div className="min-w-0">
                           <p className="text-sm font-semibold">
                             {doc}
                             <span className="ml-1.5 text-primary text-xs">*</span>
                           </p>
-                          <p className="text-xs text-muted-foreground">
+                          <p className="text-xs text-muted-foreground truncate">
                             {docFiles[doc] ? docFiles[doc]!.name : "Required — not uploaded"}
                           </p>
                         </div>
@@ -544,7 +572,7 @@ export default function RegisterPage() {
                             setErrors((p) => ({ ...p, docs: "" }));
                           }}
                         />
-                        <span className="inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted cursor-pointer">
+                        <span className="inline-flex w-full sm:w-auto items-center justify-center gap-1 rounded-md border px-3 py-2.5 sm:py-1.5 text-sm font-medium hover:bg-muted cursor-pointer">
                           <Upload className="h-3 w-3" />
                           {docFiles[doc] ? "Replace" : "Upload"}
                         </span>
@@ -557,12 +585,12 @@ export default function RegisterPage() {
                 <div className="space-y-2">
                   <p className="text-xs font-bold text-muted-foreground tracking-widest uppercase">Optional — Upload Later</p>
                   {requiredDocuments.filter((d) => !(PREREQUISITE_DOCS as readonly string[]).includes(d)).map((doc) => (
-                    <div key={doc} className={`flex items-center justify-between rounded-lg border p-4 transition-colors ${docFiles[doc] ? "border-success/40 bg-success/5" : ""}`}>
-                      <div className="flex items-center gap-3">
-                        <Upload className={`h-5 w-5 ${docFiles[doc] ? "text-success" : "text-muted-foreground"}`} />
-                        <div>
+                    <div key={doc} className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-lg border p-3 sm:p-4 transition-colors ${docFiles[doc] ? "border-success/40 bg-success/5" : ""}`}>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Upload className={`h-5 w-5 shrink-0 ${docFiles[doc] ? "text-success" : "text-muted-foreground"}`} />
+                        <div className="min-w-0">
                           <p className="text-sm font-medium">{doc}</p>
-                          <p className="text-xs text-muted-foreground">
+                          <p className="text-xs text-muted-foreground truncate">
                             {docFiles[doc] ? docFiles[doc]!.name : "Not uploaded"}
                           </p>
                         </div>
@@ -577,7 +605,7 @@ export default function RegisterPage() {
                             setDocFiles((prev) => ({ ...prev, [doc]: file }));
                           }}
                         />
-                        <span className="inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted cursor-pointer">
+                        <span className="inline-flex w-full sm:w-auto items-center justify-center gap-1 rounded-md border px-3 py-2.5 sm:py-1.5 text-sm font-medium hover:bg-muted cursor-pointer">
                           <Upload className="h-3 w-3" />
                           {docFiles[doc] ? "Replace" : "Upload"}
                         </span>
@@ -684,7 +712,7 @@ export default function RegisterPage() {
                 {/* Review summary */}
                 <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
                   <h4 className="font-semibold text-sm">Review Your Information</h4>
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-sm text-muted-foreground [&>p]:break-words">
                     <p>Name: <span className="text-foreground">{form.firstName} {form.lastName}</span></p>
                     <p>Email: <span className="text-foreground">{email}</span></p>
                     <p>School: <span className="text-foreground">{academic.schoolName}</span></p>
@@ -702,20 +730,20 @@ export default function RegisterPage() {
             )}
 
             {/* Navigation */}
-            <div className="flex justify-between pt-4">
+            <div className="sticky bottom-0 z-10 -mx-4 flex justify-between gap-3 border-t bg-card/95 px-4 pt-3 pb-safe backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:pt-4 sm:pb-0 sm:backdrop-blur-none">
               {step > 0 ? (
-                <Button variant="outline" onClick={back}>
+                <Button variant="outline" onClick={back} className="flex-1 sm:flex-none">
                   <ChevronLeft className="mr-1 h-4 w-4" /> Back
                 </Button>
               ) : (
                 <div />
               )}
               {step < 4 ? (
-                <Button onClick={next} className="bg-gradient-primary shadow-primary">
+                <Button onClick={next} className="flex-1 sm:flex-none bg-gradient-primary shadow-primary">
                   Next <ChevronRight className="ml-1 h-4 w-4" />
                 </Button>
               ) : (
-                <Button onClick={handleSubmit} className="bg-gradient-primary shadow-primary" disabled={loading}>
+                <Button onClick={handleSubmit} className="flex-1 sm:flex-none bg-gradient-primary shadow-primary" disabled={loading}>
                   {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Submit Registration
                 </Button>

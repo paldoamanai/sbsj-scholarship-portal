@@ -111,7 +111,7 @@ export default function LoginPage() {
 
   return (
     <Layout>
-      <div className="container flex items-center justify-center min-h-[70vh] py-12">
+      <div className="container flex items-center justify-center min-h-[70dvh] py-8 sm:py-12">
         <Card className="w-full max-w-md animate-scale-in overflow-hidden">
           <div className="h-1.5 bg-gradient-primary" />
           <CardHeader className="text-center pt-6">
@@ -146,6 +146,9 @@ export default function LoginPage() {
                 <Label>Email</Label>
                 <Input
                   type="email"
+                  inputMode="email"
+                  autoComplete="username"
+                  autoCapitalize="none"
                   required
                   placeholder="Enter your email"
                   value={email}
@@ -157,6 +160,7 @@ export default function LoginPage() {
                 <div className="relative">
                   <Input
                     type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
                     required
                     placeholder="Enter password"
                     value={password}
@@ -166,8 +170,8 @@ export default function LoginPage() {
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
-                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground"
-                    tabIndex={-1}
+                    className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted-foreground hover:text-foreground"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
                   >
                     {showPassword ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                   </button>

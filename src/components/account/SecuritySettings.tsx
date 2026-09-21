@@ -95,7 +95,7 @@ export default function SecuritySettings({ userId, logAudit }: {
       </div>
 
       <div className="space-y-2 border-t border-border pt-4">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <p className="text-sm font-medium flex items-center gap-2"><Smartphone className="h-4 w-4" />Two-factor authentication {verified && <Badge variant="secondary">On</Badge>}</p>
             <p className="text-xs text-muted-foreground">Ask for a code from an authenticator app (Google Authenticator, Authy…) each time you sign in.</p>
@@ -121,7 +121,7 @@ export default function SecuritySettings({ userId, logAudit }: {
         )}
       </div>
 
-      <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-border pt-4">
         <div>
           <p className="text-sm font-medium flex items-center gap-2"><LogOut className="h-4 w-4" />Other devices</p>
           <p className="text-xs text-muted-foreground">Sign out everywhere except this device, for example if you used a shared computer.</p>

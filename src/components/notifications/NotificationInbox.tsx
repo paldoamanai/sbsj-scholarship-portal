@@ -229,10 +229,10 @@ export default function NotificationInbox({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="relative">
+        <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+          <div className="relative w-full sm:w-auto">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input value={query} onChange={(e) => { setQuery(e.target.value); setVisible(NOTIFICATION_PAGE); }} placeholder="Search notifications" className="h-8 w-52 pl-8 text-xs" aria-label="Search notifications" />
+            <Input value={query} onChange={(e) => { setQuery(e.target.value); setVisible(NOTIFICATION_PAGE); }} placeholder="Search notifications" className="h-10 sm:h-8 w-full sm:w-52 pl-8 text-base sm:text-xs" aria-label="Search notifications" />
           </div>
           <div className="inline-flex rounded-lg border border-border overflow-hidden">
             {[{ label: "All", v: false }, { label: `Unread${unreadTotal ? ` (${unreadTotal})` : ""}`, v: true }].map((t) => (
@@ -301,13 +301,13 @@ export default function NotificationInbox({
                         {n.link && !selecting && <p className="text-xs text-primary mt-1">Open →</p>}
                       </button>
                       <div className="flex flex-col items-end gap-1 shrink-0">
-                        <span className="text-xs text-muted-foreground" title={new Date(n.created_at).toLocaleString()}>{timeAgo(n.created_at)}</span>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap" title={new Date(n.created_at).toLocaleString()}>{timeAgo(n.created_at)}</span>
                         {!selecting && (
                           <div className="flex gap-0.5 opacity-60 group-hover:opacity-100">
-                            <Button size="icon" variant="ghost" className="h-7 w-7" title={n.read ? "Mark as unread" : "Mark as read"} onClick={() => setRead(n, !n.read)}>
+                            <Button size="icon" variant="ghost" className="h-9 w-9 sm:h-7 sm:w-7" title={n.read ? "Mark as unread" : "Mark as read"} onClick={() => setRead(n, !n.read)}>
                               {n.read ? <Circle className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
                             </Button>
-                            <Button size="icon" variant="ghost" className="h-7 w-7" title="Delete" onClick={() => removeMany([n])}>
+                            <Button size="icon" variant="ghost" className="h-9 w-9 sm:h-7 sm:w-7" title="Delete" onClick={() => removeMany([n])}>
                               <Trash2 className="h-3.5 w-3.5 text-destructive" />
                             </Button>
                           </div>

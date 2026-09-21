@@ -156,20 +156,20 @@ export default function Overview(p: OverviewProps) {
   return (
     <div className="space-y-6">
       {/* Hero */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-hero p-6 sm:p-7">
+      <div className="relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-hero p-5 sm:p-7">
         <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: "repeating-linear-gradient(135deg, #fff 0, #fff 1px, transparent 1px, transparent 14px)" }} />
         <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-display font-bold text-white">Dashboard</h1>
+            <h1 className="text-xl sm:text-3xl font-display font-bold text-white">Dashboard</h1>
             <p className="text-sm text-white/80 mt-1">Welcome back, {firstName}! {actions.some((a) => a.tone !== "green" && a.tone !== "blue") ? "There are a few things that need your attention." : "Here's where things stand."}</p>
           </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <button onClick={() => p.onNavigate("notifications")} className="relative h-10 w-10 rounded-xl bg-white/15 hover:bg-white/25 flex items-center justify-center transition-colors cursor-pointer" aria-label="Notifications">
+          <div className="flex items-center gap-3 sm:shrink-0">
+            <button onClick={() => p.onNavigate("notifications")} className="relative h-11 w-11 sm:h-10 sm:w-10 shrink-0 rounded-xl bg-white/15 hover:bg-white/25 flex items-center justify-center transition-colors cursor-pointer" aria-label="Notifications">
               <Bell className="h-4.5 w-4.5 text-white" />
               {unread > 0 && <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-white text-primary text-[9px] font-bold flex items-center justify-center">{unread > 9 ? "9+" : unread}</span>}
             </button>
             <button onClick={() => p.onNavigate("application")}
-              className="inline-flex items-center gap-2 rounded-xl bg-white text-primary text-sm font-semibold px-4 py-2.5 hover:bg-white/90 transition-colors cursor-pointer shadow-sm">
+              className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl bg-white text-primary text-sm font-semibold px-4 py-3 sm:py-2.5 hover:bg-white/90 transition-colors cursor-pointer shadow-sm">
               {currentApp ? <Eye className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
               {currentApp ? "View Application" : applyBlocked ? "Applications unavailable" : "Apply for Scholarship"}
             </button>
@@ -222,12 +222,12 @@ export default function Overview(p: OverviewProps) {
         ) : (
           <ul className="space-y-2">
             {actions.map((a) => (
-              <li key={a.id} className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${toneCls[a.tone]}`}>
+              <li key={a.id} className={`flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 rounded-xl border px-4 py-3 ${toneCls[a.tone]}`}>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold">{a.title}</p>
                   {a.detail && <p className="text-xs mt-0.5 opacity-90">{a.detail}</p>}
                 </div>
-                <Button size="sm" variant="outline" className="rounded-lg shrink-0 bg-white/70" onClick={() => p.onNavigate(a.tab)}>{a.cta}<ArrowRight className="ml-1 h-3 w-3" /></Button>
+                <Button size="sm" variant="outline" className="rounded-lg sm:shrink-0 bg-white/70 w-full sm:w-auto" onClick={() => p.onNavigate(a.tab)}>{a.cta}<ArrowRight className="ml-1 h-3 w-3" /></Button>
               </li>
             ))}
           </ul>
@@ -332,9 +332,9 @@ export default function Overview(p: OverviewProps) {
                 const av = availabilityInfo(s);
                 return (
                   <div key={s.id} className="p-5 hover:bg-muted/40 transition-colors">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-foreground truncate">{s.name}</p>
+                    <div className="flex items-start justify-between gap-3 flex-wrap sm:flex-nowrap">
+                      <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
+                        <p className="text-sm font-semibold text-foreground break-words">{s.name}</p>
                         {s.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{s.description}</p>}
                       </div>
                       <button onClick={() => setProgram(s)}
@@ -380,7 +380,7 @@ export default function Overview(p: OverviewProps) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-semibold text-foreground truncate">{n.title}</p>
+                      <p className="text-sm font-semibold text-foreground break-words">{n.title}</p>
                       {!n.read && <span className="h-2 w-2 rounded-full bg-primary shrink-0" aria-label="Unread" />}
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed line-clamp-2">{n.message}</p>

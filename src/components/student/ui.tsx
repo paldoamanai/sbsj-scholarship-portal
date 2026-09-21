@@ -60,19 +60,19 @@ export function StatCard({ icon: Icon, label, value, sub, subTone = "neutral", a
   const body = (
     <>
       <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-2.5">
-          <div className={`flex-shrink-0 h-9 w-9 rounded-xl flex items-center justify-center ${accent ? "bg-white/20" : "bg-accent"}`}>
+        <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+          <div className={`flex-shrink-0 h-8 w-8 sm:h-9 sm:w-9 rounded-xl flex items-center justify-center ${accent ? "bg-white/20" : "bg-accent"}`}>
             <Icon className={`h-4.5 w-4.5 ${accent ? "text-primary-foreground" : "text-accent-foreground"}`} />
           </div>
-          <p className={`text-xs font-medium ${accent ? "text-primary-foreground/90" : "text-muted-foreground"}`}>{label}</p>
+          <p className={`text-xs font-medium truncate ${accent ? "text-primary-foreground/90" : "text-muted-foreground"}`}>{label}</p>
         </div>
         {onClick && <ChevronRight className={`h-4 w-4 shrink-0 ${accent ? "text-primary-foreground/70" : "text-muted-foreground"}`} />}
       </div>
-      <p className={`text-2xl font-bold font-display ${accent ? "text-primary-foreground" : "text-foreground"}`}>{value}</p>
+      <p className={`text-xl sm:text-2xl font-bold font-display break-words ${accent ? "text-primary-foreground" : "text-foreground"}`}>{value}</p>
       {sub && <p className={`text-xs mt-1 font-medium ${subClass}`}>{sub}</p>}
     </>
   );
-  const cls = `rounded-2xl p-5 border text-left w-full ${accent ? "bg-primary border-primary text-primary-foreground shadow-primary" : "bg-card border-border shadow-sm"}`;
+  const cls = `rounded-2xl p-4 sm:p-5 border text-left w-full min-w-0 ${accent ? "bg-primary border-primary text-primary-foreground shadow-primary" : "bg-card border-border shadow-sm"}`;
   return onClick
     ? <button type="button" onClick={onClick} className={`${cls} cursor-pointer transition-shadow hover:shadow-md`}>{body}</button>
     : <div className={cls}>{body}</div>;

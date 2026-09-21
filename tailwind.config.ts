@@ -7,7 +7,8 @@ export default {
   theme: {
     container: {
       center: true,
-      padding: "2rem",
+      // Tighter on phones: 2rem each side left too little room for forms.
+      padding: { DEFAULT: "1rem", sm: "1.5rem", lg: "2rem" },
       screens: {
         "2xl": "1400px",
       },

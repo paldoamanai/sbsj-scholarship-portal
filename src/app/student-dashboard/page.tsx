@@ -453,6 +453,15 @@ export default function StudentDashboardPage() {
   const goToLinkRef = useRef<(link: string) => void>(() => {});
   const [unreadTotal, setUnreadTotal] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // While the mobile menu is open: Escape closes it and the page behind doesn't scroll.
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSidebarOpen(false); };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [sidebarOpen]);
   const [loading, setLoading] = useState(true);
 
   const [profile, setProfile]           = useState<Tables<"profiles"> | null>(null);
@@ -741,7 +750,7 @@ export default function StudentDashboardPage() {
   // ── Loading ────────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="min-h-dvh flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">
           <div className="h-12 w-12 rounded-2xl bg-primary flex items-center justify-center">
             <Loader2 className="h-6 w-6 animate-spin text-white" />
@@ -882,7 +891,7 @@ export default function StudentDashboardPage() {
       {currentApp ? (
         <>
         <Panel>
-          <div className="px-6 py-5 border-b border-muted flex items-center justify-between flex-wrap gap-3">
+          <div className="px-4 py-4 sm:px-6 sm:py-5 border-b border-muted flex items-center justify-between flex-wrap gap-3">
             <div>
               <SectionTitle>My Application</SectionTitle>
               <p className="text-sm text-muted-foreground -mt-3">{currentApp.scholarships?.name}</p>
@@ -894,7 +903,7 @@ export default function StudentDashboardPage() {
               <StatusBadge status={currentApp.status} />
             </div>
           </div>
-          <div className="p-6">
+          <div className="p-4 sm:p-6">
             <div className="grid grid-cols-2 gap-4 text-sm mb-5">
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Submitted</p>
@@ -1010,14 +1019,14 @@ export default function StudentDashboardPage() {
               <Textarea rows={6} value={appStatement} maxLength={STATEMENT_MAX} onChange={(e) => setAppStatement(e.target.value)} className="rounded-xl" />
               <p className={`text-xs mt-1 ${appStatement.trim().length < STATEMENT_MIN ? "text-warning" : "text-muted-foreground"}`}>{appStatement.trim().length} / {STATEMENT_MAX} (minimum {STATEMENT_MIN})</p>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label className="text-sm font-medium mb-1.5 block">Monthly household income (₱)</Label>
-                <Input type="number" min={0} value={appIncome} onChange={(e) => setAppIncome(e.target.value)} className="rounded-xl" />
+                <Input type="number" inputMode="decimal" min={0} value={appIncome} onChange={(e) => setAppIncome(e.target.value)} className="rounded-xl" />
               </div>
               <div>
                 <Label className="text-sm font-medium mb-1.5 block">Household size</Label>
-                <Input type="number" min={1} max={30} step={1} value={appSize} onChange={(e) => setAppSize(e.target.value)} className="rounded-xl" />
+                <Input type="number" inputMode="numeric" min={1} max={30} step={1} value={appSize} onChange={(e) => setAppSize(e.target.value)} className="rounded-xl" />
               </div>
             </div>
             <DialogFooter>
@@ -1118,14 +1127,14 @@ export default function StudentDashboardPage() {
                   onChange={(e) => setApplyStatement(e.target.value)} />
                 <p className={`text-xs mt-1 ${applyStatement.trim().length < STATEMENT_MIN ? "text-warning" : "text-muted-foreground"}`}>{applyStatement.trim().length} / {STATEMENT_MAX} (minimum {STATEMENT_MIN})</p>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-sm font-medium text-foreground mb-1.5 block">Monthly household income (₱)</Label>
-                  <Input type="number" min={0} value={applyIncome} onChange={(e) => setApplyIncome(e.target.value)} className="rounded-xl" placeholder="Optional" />
+                  <Input type="number" inputMode="decimal" min={0} value={applyIncome} onChange={(e) => setApplyIncome(e.target.value)} className="rounded-xl" placeholder="Optional" />
                 </div>
                 <div>
                   <Label className="text-sm font-medium text-foreground mb-1.5 block">Household size</Label>
-                  <Input type="number" min={1} max={30} step={1} value={applySize} onChange={(e) => setApplySize(e.target.value)} className="rounded-xl" placeholder="Optional" />
+                  <Input type="number" inputMode="numeric" min={1} max={30} step={1} value={applySize} onChange={(e) => setApplySize(e.target.value)} className="rounded-xl" placeholder="Optional" />
                 </div>
               </div>
               <label className="flex items-start gap-3 text-sm text-foreground cursor-pointer">
@@ -1184,7 +1193,7 @@ export default function StudentDashboardPage() {
           const tone = !uploaded ? "" : uploaded.status === "Rejected" ? "border-red-200" : uploaded.status === "Verified" ? "border-emerald-200" : "border-amber-100";
           return (
             <Panel key={docType} className={`p-4 ${tone}`}>
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${
                     !uploaded ? "bg-muted" : uploaded.status === "Rejected" ? "bg-red-100" : uploaded.status === "Verified" ? "bg-emerald-100" : "bg-amber-100"}`}>
@@ -1198,20 +1207,20 @@ export default function StudentDashboardPage() {
                     </p>
                   </div>
                 </div>
-                <div className="flex gap-2 shrink-0 items-center">
+                <div className="flex gap-2 items-center sm:shrink-0">
                   {uploaded && (
-                    <Button size="sm" variant="outline" className="h-8 w-8 p-0 rounded-xl border-border hover:bg-muted"
+                    <Button size="sm" variant="outline" className="h-10 w-10 sm:h-8 sm:w-8 p-0 rounded-xl border-border hover:bg-muted"
                       aria-label={`View ${docType}`} onClick={() => openDocument(uploaded)}>
                       <Eye className="h-3.5 w-3.5 text-muted-foreground" />
                     </Button>
                   )}
                   {canRemove && (
-                    <Button size="sm" variant="outline" className="h-8 w-8 p-0 rounded-xl border-red-200 hover:bg-red-50"
+                    <Button size="sm" variant="outline" className="h-10 w-10 sm:h-8 sm:w-8 p-0 rounded-xl border-red-200 hover:bg-red-50"
                       aria-label={`Remove ${docType}`} onClick={() => setRemoveDoc(uploaded)}>
                       <Trash2 className="h-3.5 w-3.5 text-red-600" />
                     </Button>
                   )}
-                  <Label className={busy ? "pointer-events-none" : "cursor-pointer"}>
+                  <Label className={`flex-1 sm:flex-none ${busy ? "pointer-events-none" : "cursor-pointer"}`}>
                     <Input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" disabled={locked || busy}
                       onChange={async (e) => {
                         const input = e.target;
@@ -1219,7 +1228,7 @@ export default function StudentDashboardPage() {
                         input.value = ""; // so picking the same file again still fires onChange
                         if (file) await uploadDocument(docType, file);
                       }} />
-                    <span className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    <span className={`inline-flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 sm:py-1.5 text-xs font-semibold transition-colors ${
                       locked || busy ? "opacity-50 pointer-events-none border-border text-muted-foreground" :
                       uploaded && uploaded.status !== "Rejected" ? "border-primary/20 text-primary hover:bg-accent" : "border-primary bg-primary text-white hover:bg-primary"
                     }`}>
@@ -1273,14 +1282,14 @@ export default function StudentDashboardPage() {
     const award = currentApp?.amount_approved ?? program?.amount;
     return (
       <Panel>
-        <div className="px-6 py-5 border-b border-muted">
+        <div className="px-4 py-4 sm:px-6 sm:py-5 border-b border-muted">
           <SectionTitle>{currentApp?.scholarships?.name || "No Active Scholarship"}</SectionTitle>
           <p className="text-sm text-muted-foreground -mt-3">Program details and conditions</p>
         </div>
         {!currentApp ? (
-          <div className="p-6 text-sm text-muted-foreground">You haven&apos;t applied to a scholarship yet. Apply from the Application tab to see your program&apos;s details here.</div>
+          <div className="p-4 sm:p-6 text-sm text-muted-foreground">You haven&apos;t applied to a scholarship yet. Apply from the Application tab to see your program&apos;s details here.</div>
         ) : (
-          <div className="p-6 space-y-6">
+          <div className="p-4 sm:p-6 space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="rounded-xl bg-muted border border-muted p-4">
                 <p className="text-xs text-muted-foreground mb-1">{currentApp.status === "Approved" ? "Approved award" : "Award per scholar"}</p>
@@ -1343,8 +1352,8 @@ export default function StudentDashboardPage() {
       </div>
 
       <Panel>
-        <div className="px-6 py-4 border-b border-muted"><SectionTitle>Notifications</SectionTitle></div>
-        <div className="p-6">
+        <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Notifications</SectionTitle></div>
+        <div className="p-4 sm:p-6">
           <NotificationPreferences userId={userId} email={userEmail} categories={[
             { key: "application", label: "Application updates", hint: "Submitted, decisions, and reviews of your documents" },
             { key: "verification", label: "Verification", hint: "Identity checks and grade verification" },
@@ -1355,13 +1364,13 @@ export default function StudentDashboardPage() {
       </Panel>
 
       <Panel>
-        <div className="px-6 py-4 border-b border-muted"><SectionTitle>Security</SectionTitle></div>
-        <div className="p-6"><SecuritySettings userId={userId} /></div>
+        <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Security</SectionTitle></div>
+        <div className="p-4 sm:p-6"><SecuritySettings userId={userId} /></div>
       </Panel>
 
       <Panel>
-        <div className="px-6 py-4 border-b border-muted"><SectionTitle>Account</SectionTitle></div>
-        <div className="p-6 space-y-3">
+        <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Account</SectionTitle></div>
+        <div className="p-4 sm:p-6 space-y-3">
           <p className="text-sm text-muted-foreground">Your details, email, password, and your data and privacy options are on your Profile.</p>
           <Button variant="outline" className="rounded-xl" onClick={() => setActive("profile")}>
             <User className="mr-2 h-4 w-4" />Go to Profile
@@ -1441,10 +1450,10 @@ export default function StudentDashboardPage() {
 
   // ══════════════════════════════════════════════════════════════════════════
   return (
-    <div className="min-h-screen flex w-full bg-background">
+    <div className="min-h-dvh flex w-full bg-background">
 
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
-      <aside className={`${sidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 fixed lg:sticky top-0 left-0 z-40 h-screen w-64 bg-sidebar border-r border-sidebar-border flex flex-col transition-transform duration-300`}>
+      <aside className={`${sidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 fixed lg:sticky top-0 left-0 z-40 h-dvh w-64 max-w-[85vw] bg-sidebar border-r border-sidebar-border flex flex-col transition-transform duration-300`}>
 
         {/* Logo */}
         <div className="flex items-center gap-3 px-5 py-5 border-b border-sidebar-border">
@@ -1455,8 +1464,8 @@ export default function StudentDashboardPage() {
             <p className="text-sm font-display font-bold text-sidebar-foreground truncate">SB San Jose</p>
             <p className="text-xs text-muted-foreground">Scholarship Portal</p>
           </div>
-          <button className="lg:hidden ml-auto text-muted-foreground hover:text-sidebar-foreground" onClick={() => setSidebarOpen(false)}>
-            <X className="h-4 w-4" />
+          <button className="lg:hidden ml-auto -mr-2 h-10 w-10 flex items-center justify-center rounded-xl text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent" onClick={() => setSidebarOpen(false)} aria-label="Close menu">
+            <X className="h-5 w-5" />
           </button>
         </div>
 
@@ -1470,7 +1479,7 @@ export default function StudentDashboardPage() {
             return (
               <button key={item.key}
                 onClick={() => { setActive(item.key); setSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all relative cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-3 py-3 lg:py-2.5 rounded-xl text-sm font-medium transition-all relative cursor-pointer ${
                   isActive
                     ? "bg-primary text-primary-foreground shadow-primary"
                     : "text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent"
@@ -1488,7 +1497,7 @@ export default function StudentDashboardPage() {
         </nav>
 
         {/* User + Logout */}
-        <div className="p-3 border-t border-sidebar-border">
+        <div className="p-3 pb-safe border-t border-sidebar-border">
           <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-sidebar-accent mb-2">
             <div className="h-8 w-8 rounded-xl overflow-hidden shrink-0">
               <ProfileImage value={profile?.profile_picture_url} className="h-full w-full object-cover"
@@ -1500,7 +1509,7 @@ export default function StudentDashboardPage() {
             </div>
           </div>
           <button onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors cursor-pointer">
+            className="w-full flex items-center gap-3 px-3 py-3 lg:py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors cursor-pointer">
             <LogOut className="h-4 w-4" /> Sign out
           </button>
         </div>
@@ -1513,22 +1522,22 @@ export default function StudentDashboardPage() {
       <div className="flex-1 flex flex-col min-w-0">
 
         {/* Top header */}
-        <header className="sticky top-0 z-20 bg-card/80 backdrop-blur-sm border-b border-border h-16 flex items-center justify-between px-5">
-          <div className="flex items-center gap-3">
-            <button className="lg:hidden p-2 rounded-xl hover:bg-muted transition-colors cursor-pointer" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
+        <header className="sticky top-0 z-20 bg-card/80 backdrop-blur-sm border-b border-border h-16 flex items-center justify-between gap-2 px-3 sm:px-5">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <button className="lg:hidden h-11 w-11 shrink-0 flex items-center justify-center rounded-xl hover:bg-muted transition-colors cursor-pointer" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
               <Menu className="h-5 w-5 text-muted-foreground" />
             </button>
-            <div>
-              <h1 className="font-display font-bold text-foreground text-base leading-tight">{activeItem?.label ?? "Dashboard"}</h1>
+            <div className="min-w-0">
+              <h1 className="font-display font-bold text-foreground text-base leading-tight truncate">{activeItem?.label ?? "Dashboard"}</h1>
               <p className="text-xs text-muted-foreground hidden sm:block">
                 Welcome back, {displayName.split(" ")[0] || "Student"}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1 sm:gap-3 shrink-0">
             <button
               onClick={() => setActive("notifications")}
-              className="relative p-2 rounded-xl hover:bg-muted transition-colors cursor-pointer"
+              className="relative h-11 w-11 flex items-center justify-center rounded-xl hover:bg-muted transition-colors cursor-pointer"
               aria-label="Notifications"
             >
               <Bell className="h-5 w-5 text-muted-foreground" />
@@ -1538,7 +1547,7 @@ export default function StudentDashboardPage() {
                 </span>
               )}
             </button>
-            <button onClick={() => setActive("profile")} className="h-9 w-9 rounded-xl overflow-hidden border-2 border-accent hover:border-primary transition-colors cursor-pointer" aria-label="Profile">
+            <button onClick={() => setActive("profile")} className="h-10 w-10 rounded-xl overflow-hidden border-2 border-accent hover:border-primary transition-colors cursor-pointer" aria-label="Profile">
               <ProfileImage value={profile?.profile_picture_url} className="h-full w-full object-cover"
                 fallback={<div className="h-full w-full bg-accent flex items-center justify-center"><User className="h-4 w-4 text-accent-foreground" /></div>} />
             </button>
@@ -1546,7 +1555,7 @@ export default function StudentDashboardPage() {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 p-5 md:p-7 overflow-auto">
+        <main className="flex-1 p-3 sm:p-5 md:p-7 pb-safe overflow-x-hidden overflow-y-auto">
           {loadError && (
             <div className="mb-5 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
               <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
