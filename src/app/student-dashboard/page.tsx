@@ -100,39 +100,154 @@ function Panel({ children, className = "" }: { children: React.ReactNode; classN
 }
 
 // ── Disbursement section ───────────────────────────────────────────────────────
-function DisbursementSection({ payments, disbursementStatus }: {
-  payments: Payment[];
-  disbursementStatus: string | null | undefined;
-}) {
+// Shared receipt-upload logic for the Disbursement and Payments sections.
+const RECEIPT_TYPES = ["application/pdf", "image/jpeg", "image/png"];
+const RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
+
+function useReceiptUpload(onUploaded: () => void) {
   const supabase = createClient();
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [receiptFiles, setReceiptFiles] = useState<Record<string, File | null>>({});
-  const [uploadedIds, setUploadedIds] = useState<string[]>([]);
+  const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
 
-  const handleReceiptUpload = async (paymentId: string) => {
+  const pickFile = (paymentId: string, file: File | null) => {
+    if (file && !RECEIPT_TYPES.includes(file.type)) { toast.error("Upload a PDF, JPG or PNG file."); return; }
+    if (file && file.size > RECEIPT_MAX_BYTES) { toast.error("File is too large (max 5 MB)."); return; }
+    setReceiptFiles((prev) => ({ ...prev, [paymentId]: file }));
+  };
+
+  // With a file: upload it and attach it. Without one (Cash only): record the confirmation.
+  const upload = async (paymentId: string) => {
     const file = receiptFiles[paymentId];
-    if (!file) return;
+    if (!file && !confirmed[paymentId]) return;
     setUploadingFor(paymentId);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const path = `${user.id}/receipts/${paymentId}/${file.name}`;
-      await supabase.storage.from("documents").upload(path, file, { upsert: true });
-      const { data: urlData } = supabase.storage.from("documents").getPublicUrl(path);
-      await supabase.from("documents").insert({
-        user_id: user.id,
-        document_type: "Payment Receipt",
-        file_url: urlData.publicUrl,
-        file_name: file.name,
-      });
-      toast.success("Receipt uploaded successfully.");
-      setUploadedIds((prev) => [...prev, paymentId]);
+      if (!user) { toast.error("Please log in again."); return; }
+      let path: string | null = null;
+      if (file) {
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+        path = `${user.id}/receipts/${paymentId}/${Date.now()}-${safeName}`;
+        const { error: uploadError } = await supabase.storage.from("documents").upload(path, file);
+        if (uploadError) { toast.error("Upload failed", { description: uploadError.message }); return; }
+      }
+      const { error } = await supabase.rpc("submit_student_receipt", { _payment_id: paymentId, _path: path });
+      if (error) {
+        if (path) await supabase.storage.from("documents").remove([path]);
+        toast.error("Could not submit", { description: error.message });
+        return;
+      }
+      toast.success(file ? "Receipt submitted." : "Cash receipt confirmed.");
+      setReceiptFiles((prev) => ({ ...prev, [paymentId]: null }));
+      setConfirmed((prev) => ({ ...prev, [paymentId]: false }));
+      onUploaded();
     } catch {
-      toast.error("Failed to upload receipt.");
+      toast.error("Failed to submit.");
     } finally {
       setUploadingFor(null);
     }
   };
+
+  const view = async (path: string | null) => {
+    if (!path) return;
+    const win = window.open("", "_blank");
+    const { data, error } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
+    if (error || !data?.signedUrl) { win?.close(); toast.error("Could not open receipt"); return; }
+    if (win) win.location.href = data.signedUrl; else window.location.href = data.signedUrl;
+  };
+
+  return { receiptFiles, uploadingFor, confirmed, setConfirmed, pickFile, upload, view };
+}
+
+// Lets the student say whether they'd like Cash or Cheque for a payment that isn't disbursed yet.
+function MethodPreference({ payment, onChanged, compact = false }: { payment: Payment; onChanged: () => void; compact?: boolean }) {
+  const supabase = createClient();
+  const [saving, setSaving] = useState(false);
+  if (payment.status !== "Pending" && payment.status !== "Processing") return null;
+
+  const choose = async (method: "Cash" | "Cheque") => {
+    if (payment.preferred_method === method) return;
+    setSaving(true);
+    const { error } = await supabase.rpc("set_payment_preference", { _payment_id: payment.id, _method: method });
+    setSaving(false);
+    if (error) { toast.error("Could not save preference", { description: error.message }); return; }
+    toast.success(`You prefer ${method}. The office will honor it when possible.`);
+    onChanged();
+  };
+
+  return (
+    <div className={compact ? "space-y-1" : "flex items-center gap-2 pt-2 border-t border-muted flex-wrap"}>
+      <span className="text-xs text-muted-foreground">{payment.preferred_method ? "I prefer:" : "How would you like to be paid?"}</span>
+      <div className="inline-flex rounded-lg border border-border overflow-hidden">
+        {(["Cash", "Cheque"] as const).map((m) => (
+          <button key={m} type="button" disabled={saving} onClick={() => choose(m)}
+            className={`px-3 py-1 text-xs font-medium cursor-pointer transition-colors ${
+              payment.preferred_method === m ? "bg-primary text-white" : "bg-card text-muted-foreground hover:bg-muted"
+            }`}>{m}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+type ReceiptCtl = ReturnType<typeof useReceiptUpload>;
+
+// Everything a student sees to acknowledge a disbursed payment. Cash: file OR a confirmation; Cheque: file.
+function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl }) {
+  const { receiptFiles, uploadingFor, confirmed, setConfirmed, pickFile, upload, view } = ctl;
+  const isCash = p.method === "Cash";
+
+  if (p.student_receipt_at) {
+    return p.student_receipt_path ? (
+      <button type="button" onClick={() => view(p.student_receipt_path)} className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium hover:underline cursor-pointer">
+        <CheckCircle className="h-3.5 w-3.5" /> Submitted · View
+      </button>
+    ) : (
+      <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
+        <CheckCircle className="h-3.5 w-3.5" /> Cash receipt confirmed
+      </span>
+    );
+  }
+
+  const file = receiptFiles[p.id];
+  const checked = !!confirmed[p.id];
+  const canSubmit = !!file || (isCash && checked);
+  return (
+    <div className="space-y-2 min-w-[230px]">
+      <p className="text-xs text-muted-foreground">
+        {isCash
+          ? "Upload a photo of the voucher you signed when you received the cash, or confirm below."
+          : "Upload a photo of the signed cheque voucher or acknowledgment."}
+      </p>
+      <div className="flex items-center gap-1.5">
+        <label className="cursor-pointer flex items-center gap-1 text-xs text-muted-foreground border border-border rounded-lg px-2 py-1 hover:bg-muted transition-colors min-w-0">
+          <Upload className="h-3 w-3 shrink-0" />
+          <span className="truncate">{file ? file.name : "Choose file"}</span>
+          <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png"
+            onChange={(e) => pickFile(p.id, e.target.files?.[0] ?? null)} />
+        </label>
+        <Button size="sm" className="h-7 px-2 text-xs bg-primary hover:bg-primary text-white rounded-lg shrink-0"
+          disabled={!canSubmit || uploadingFor === p.id} onClick={() => upload(p.id)}>
+          {uploadingFor === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : file ? "Submit receipt" : "Confirm received"}
+        </Button>
+      </div>
+      {isCash && (
+        <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
+          <input type="checkbox" className="mt-0.5" checked={checked}
+            onChange={(e) => setConfirmed((prev) => ({ ...prev, [p.id]: e.target.checked }))} />
+          <span>I confirm I received ₱{p.amount.toLocaleString("en-PH", { minimumFractionDigits: 2 })} in cash.</span>
+        </label>
+      )}
+    </div>
+  );
+}
+
+function DisbursementSection({ payments, disbursementStatus, onUploaded }: {
+  payments: Payment[];
+  disbursementStatus: string | null | undefined;
+  onUploaded: () => void;
+}) {
+  const ctl = useReceiptUpload(onUploaded);
 
   const totalDisbursed = payments.filter(p => p.status === "Disbursed").reduce((s, p) => s + p.amount, 0);
 
@@ -170,7 +285,6 @@ function DisbursementSection({ payments, disbursementStatus }: {
               )}
               {payments.map((p) => {
                 const isDisbursedPay = p.status === "Disbursed";
-                const alreadyUploaded = uploadedIds.includes(p.id);
                 return (
                   <TableRow key={p.id} className="hover:bg-accent/30">
                     <TableCell className="font-mono text-xs text-muted-foreground">{p.reference || "—"}</TableCell>
@@ -185,32 +299,12 @@ function DisbursementSection({ payments, disbursementStatus }: {
                       ) : "—"}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{p.scheduled_date || "—"}</TableCell>
-                    <TableCell><StatusBadge status={p.status} /></TableCell>
                     <TableCell>
-                      {!isDisbursedPay ? (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      ) : alreadyUploaded ? (
-                        <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
-                          <CheckCircle className="h-3.5 w-3.5" /> Submitted
-                        </span>
-                      ) : (
-                        <div className="flex items-center gap-1.5">
-                          <label className="cursor-pointer flex items-center gap-1 text-xs text-muted-foreground border border-border rounded-lg px-2 py-1 hover:bg-muted transition-colors">
-                            <Upload className="h-3 w-3" />
-                            {receiptFiles[p.id] ? receiptFiles[p.id]!.name.slice(0, 12) + "…" : "Choose file"}
-                            <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0] ?? null;
-                                setReceiptFiles((prev) => ({ ...prev, [p.id]: file }));
-                              }} />
-                          </label>
-                          <Button size="sm" className="h-7 px-2 text-xs bg-primary hover:bg-primary text-white rounded-lg"
-                            disabled={!receiptFiles[p.id] || uploadingFor === p.id}
-                            onClick={() => handleReceiptUpload(p.id)}>
-                            {uploadingFor === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Upload"}
-                          </Button>
-                        </div>
-                      )}
+                      <StatusBadge status={p.status} />
+                      <div className="mt-2"><MethodPreference payment={p} onChanged={onUploaded} compact /></div>
+                    </TableCell>
+                    <TableCell>
+                      {isDisbursedPay ? <ReceiptSubmit payment={p} ctl={ctl} /> : <span className="text-xs text-muted-foreground">—</span>}
                     </TableCell>
                   </TableRow>
                 );
@@ -224,36 +318,8 @@ function DisbursementSection({ payments, disbursementStatus }: {
 }
 
 // ── Payments section ───────────────────────────────────────────────────────────
-function PaymentsSection({ payments }: { payments: Payment[] }) {
-  const supabase = createClient();
-  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
-  const [receiptFiles, setReceiptFiles] = useState<Record<string, File | null>>({});
-  const [uploadedIds, setUploadedIds] = useState<string[]>([]);
-
-  const handleReceiptUpload = async (paymentId: string) => {
-    const file = receiptFiles[paymentId];
-    if (!file) return;
-    setUploadingFor(paymentId);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const path = `${user.id}/receipts/${paymentId}/${file.name}`;
-      await supabase.storage.from("documents").upload(path, file, { upsert: true });
-      const { data: urlData } = supabase.storage.from("documents").getPublicUrl(path);
-      await supabase.from("documents").insert({
-        user_id: user.id,
-        document_type: "Payment Receipt",
-        file_url: urlData.publicUrl,
-        file_name: file.name,
-      });
-      toast.success("Receipt uploaded successfully.");
-      setUploadedIds((prev) => [...prev, paymentId]);
-    } catch {
-      toast.error("Failed to upload receipt.");
-    } finally {
-      setUploadingFor(null);
-    }
-  };
+function PaymentsSection({ payments, onUploaded }: { payments: Payment[]; onUploaded: () => void }) {
+  const ctl = useReceiptUpload(onUploaded);
 
   return (
     <div className="space-y-4">
@@ -261,7 +327,7 @@ function PaymentsSection({ payments }: { payments: Payment[] }) {
         <div className="flex items-start gap-3 bg-accent border border-primary/20 rounded-xl px-4 py-3">
           <Upload className="h-4 w-4 text-primary mt-0.5 shrink-0" />
           <p className="text-sm text-primary">
-            Please upload your <strong>signed receipt</strong> for each disbursed payment below to complete your record.
+            For each disbursed payment, <strong>upload your signed receipt</strong>. For cash, you can also simply <strong>confirm you received it</strong>.
           </p>
         </div>
       )}
@@ -281,7 +347,6 @@ function PaymentsSection({ payments }: { payments: Payment[] }) {
           )}
           {payments.map((p) => {
             const isDisbursedPay = p.status === "Disbursed";
-            const alreadyUploaded = uploadedIds.includes(p.id);
             return (
               <div key={p.id} className={`rounded-xl border p-4 space-y-3 ${isDisbursedPay ? "border-emerald-100 bg-emerald-50/40" : "border-muted"}`}>
                 <div className="flex items-center justify-between flex-wrap gap-2">
@@ -296,28 +361,9 @@ function PaymentsSection({ payments }: { payments: Payment[] }) {
                   </div>
                   <StatusBadge status={p.status} />
                 </div>
-                {isDisbursedPay && !alreadyUploaded && (
-                  <div className="flex items-center gap-2 pt-2 border-t border-muted">
-                    <label className="flex-1 flex items-center gap-2 cursor-pointer rounded-lg border border-dashed border-muted-foreground/70 px-3 py-2 hover:bg-muted transition-colors text-sm text-muted-foreground">
-                      <Upload className="h-4 w-4 shrink-0" />
-                      <span className="truncate">{receiptFiles[p.id] ? receiptFiles[p.id]!.name : "Upload your signed receipt"}</span>
-                      <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0] ?? null;
-                          setReceiptFiles((prev) => ({ ...prev, [p.id]: file }));
-                        }} />
-                    </label>
-                    <Button size="sm" disabled={!receiptFiles[p.id] || uploadingFor === p.id}
-                      onClick={() => handleReceiptUpload(p.id)}
-                      className="bg-primary hover:bg-primary text-white rounded-lg shrink-0">
-                      {uploadingFor === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Submit"}
-                    </Button>
-                  </div>
-                )}
-                {isDisbursedPay && alreadyUploaded && (
-                  <div className="flex items-center gap-2 pt-2 border-t border-muted text-xs text-emerald-600">
-                    <CheckCircle className="h-3.5 w-3.5" /> Receipt submitted
-                  </div>
+                <MethodPreference payment={p} onChanged={onUploaded} />
+                {isDisbursedPay && (
+                  <div className="pt-2 border-t border-muted"><ReceiptSubmit payment={p} ctl={ctl} /></div>
                 )}
               </div>
             );
@@ -435,6 +481,11 @@ export default function StudentDashboardPage() {
     ]);
     if (appsRes.data) setApplications(appsRes.data);
     if (paymentsRes.data) setPayments(paymentsRes.data);
+  };
+
+  const refreshPayments = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) silentRefresh(user.id);
   };
 
   // ── Live updates: notifications, application status, disbursement ──────────
@@ -656,7 +707,6 @@ export default function StudentDashboardPage() {
                     </button>
                   </div>
                   <div className="flex flex-wrap items-center gap-4 mt-3 text-xs text-muted-foreground">
-                    <span className="inline-flex items-center gap-1"><Banknote className="h-3.5 w-3.5" /> ₱{s.amount.toLocaleString("en-PH")}</span>
                     {s.deadline && <span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {new Date(s.deadline).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</span>}
                     <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" /> {s.slots} slots</span>
                   </div>
@@ -921,12 +971,6 @@ export default function StudentDashboardPage() {
       </div>
       <div className="p-6 space-y-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="rounded-xl bg-accent border border-accent p-4">
-            <p className="text-xs text-muted-foreground mb-1">Approved Amount</p>
-            <p className="text-xl font-bold text-primary">
-              {currentApp?.amount_approved ? `₱${currentApp.amount_approved.toLocaleString("en-PH", { minimumFractionDigits: 2 })}` : "—"}
-            </p>
-          </div>
           <div className="rounded-xl bg-muted border border-muted p-4">
             <p className="text-xs text-muted-foreground mb-1">Required Grade</p>
             <p className="text-xl font-bold text-sidebar-accent">85% and above</p>
@@ -1205,8 +1249,8 @@ export default function StudentDashboardPage() {
       case "application":   return <Application />;
       case "documents":     return <Documents />;
       case "scholarship":   return <Scholarship />;
-      case "disbursement":  return <DisbursementSection payments={payments} disbursementStatus={currentApp?.disbursement_status} />;
-      case "payments":      return <PaymentsSection payments={payments} />;
+      case "disbursement":  return <DisbursementSection payments={payments} disbursementStatus={currentApp?.disbursement_status} onUploaded={refreshPayments} />;
+      case "payments":      return <PaymentsSection payments={payments} onUploaded={refreshPayments} />;
       case "notifications": return <Notifications />;
       case "profile":       return <Profile />;
       case "settings":      return <SettingsView />;

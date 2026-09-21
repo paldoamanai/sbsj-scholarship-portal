@@ -22,7 +22,7 @@ import {
   Menu, X, Search, BookOpen, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock, Download,
   FileDown, Receipt, Loader2, User, Upload, Camera, ArrowRight,
-  CalendarClock, ChevronRight,
+  CalendarClock, ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw,
 } from "lucide-react";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -37,7 +37,6 @@ const sidebarItems = [
   { icon: ShieldCheck, label: "Verification", key: "verification" },
   { icon: GraduationCap, label: "Scholarships", key: "scholarships" },
   { icon: Users, label: "Students", key: "students" },
-  { icon: Users, label: "User Mgmt", key: "user-management" },
   { icon: Wallet, label: "Funds", key: "funds" },
   { icon: Banknote, label: "Disbursement", key: "disbursement" },
   { icon: BarChart3, label: "Reports", key: "reports" },
@@ -62,6 +61,7 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
     Disbursed:  { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
     Processing: { icon: Clock,        cls: "bg-accent text-primary border-primary/20" },
     Waitlisted: { icon: Clock,        cls: "bg-muted text-muted-foreground border-border" },
+    Cancelled:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
   };
   const m = map[status];
   if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{status}</span>;
@@ -81,20 +81,45 @@ export default function AdminDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("all");
   const [appSearch, setAppSearch] = useState("");
+  const [schSearch, setSchSearch] = useState("");
+  const [schFilter, setSchFilter] = useState("all");
+  const [schDialog, setSchDialog] = useState<"new" | Tables<"scholarships"> | null>(null);
+  const [schActive, setSchActive] = useState(true);
+  const [deleteSch, setDeleteSch] = useState<Tables<"scholarships"> | null>(null);
+  const [fundPeriod, setFundPeriod] = useState("all");
+  const [paySearch, setPaySearch] = useState("");
+  const [payFilter, setPayFilter] = useState("all");
+  const [payPage, setPayPage] = useState(1);
+  const [payDialog, setPayDialog] = useState<"new" | Tables<"payments"> | null>(null);
+  const [payAppId, setPayAppId] = useState("");
+  const [payMethod, setPayMethod] = useState<"Cash" | "Cheque">("Cash");
+  const [cancelPay, setCancelPay] = useState<Tables<"payments"> | null>(null);
   const [studentSearch, setStudentSearch] = useState("");
+  const [studentFilter, setStudentFilter] = useState("all");
+  const [studentSort, setStudentSort] = useState("name");
+  const [studentPage, setStudentPage] = useState(1);
+  const [viewStudent, setViewStudent] = useState<Tables<"profiles"> | null>(null);
+  const [studentDocs, setStudentDocs] = useState<{ id: string; name: string; type: string; url: string }[]>([]);
+  const [studentDocsLoading, setStudentDocsLoading] = useState(false);
 
   const [applications, setApplications] = useState<(Tables<"applications"> & { scholarships: { name: string } | null, profiles?: Tables<"profiles"> | null })[]>([]);
   const [scholarships, setScholarships] = useState<Tables<"scholarships">[]>([]);
   const [profiles, setProfiles] = useState<Tables<"profiles">[]>([]);
   const [payments, setPayments] = useState<Tables<"payments">[]>([]);
   const [viewApp, setViewApp] = useState<typeof applications[0] | null>(null);
+  const [remarks, setRemarks] = useState("");
+  const [appPage, setAppPage] = useState(1);
+  const [viewDocs, setViewDocs] = useState<{ id: string; name: string; type: string; url: string }[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
   const [auditLogs, setAuditLogs] = useState<Tables<"audit_logs">[]>([]);
   const [verifications, setVerifications] = useState<Tables<"scholar_verifications">[]>([]);
-  const [allUserRoles, setAllUserRoles] = useState<(Tables<"user_roles"> & { profiles: { first_name: string | null; last_name: string | null; email: string | null } | null })[]>([]);
   const [systemSettings, setSystemSettings] = useState<Tables<"system_settings">[]>([]);
   const [adminProfile, setAdminProfile] = useState<Tables<"profiles"> | null>(null);
   const [adminEmail, setAdminEmail] = useState("");
   const [adminUserId, setAdminUserId] = useState("");
+  const [verifFilter, setVerifFilter] = useState("all");
+  const [verifAction, setVerifAction] = useState<{ v: Tables<"scholar_verifications">; status: "Verified" | "Flagged" | "Cleared" } | null>(null);
+  const [verifNotes, setVerifNotes] = useState("");
   const [notifications, setNotifications] = useState<Tables<"notifications">[]>([]);
 
   // Disburse dialog state
@@ -107,6 +132,13 @@ export default function AdminDashboardPage() {
 
   useEffect(() => { loadData(); }, []);
 
+  // Profiles of students only — staff accounts (anyone with a non-student role) are excluded.
+  const withoutStaff = async (rows: Tables<"profiles">[]) => {
+    const { data } = await supabase.from("user_roles").select("user_id").neq("role", "student");
+    const staff = new Set((data ?? []).map((r: { user_id: string }) => r.user_id));
+    return rows.filter((p) => !staff.has(p.id));
+  };
+
   const loadData = async () => {
     setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
@@ -116,16 +148,15 @@ export default function AdminDashboardPage() {
     setAdminUserId(user.id);
     const { data: roleData } = await supabase.from("user_roles").select("role").eq("user_id", user.id).single();
     const role = (roleData as { role?: string } | null)?.role;
-    if (!role || !["admin", "super_admin", "finance_admin", "reviewer"].includes(role)) { router.push("/student-dashboard"); return; }
+    if (role !== "admin") { router.push("/student-dashboard"); return; }
 
-    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, rolesRes, settingsRes, adminProfRes, notifsRes] = await Promise.all([
+    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("scholarships").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
       supabase.from("payments").select("*").order("created_at", { ascending: false }),
       supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(100),
       supabase.from("scholar_verifications").select("*").order("created_at", { ascending: false }),
-      supabase.from("user_roles").select("*, profiles:user_id(first_name, last_name, email)"),
       supabase.from("system_settings").select("*"),
       supabase.from("profiles").select("*").eq("id", user.id).single(),
       supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
@@ -139,11 +170,10 @@ export default function AdminDashboardPage() {
       setApplications(appsWithProfiles);
     }
     if (scholsRes.data) setScholarships(scholsRes.data);
-    if (profilesRes.data) setProfiles(profilesRes.data);
+    if (profilesRes.data) setProfiles(await withoutStaff(profilesRes.data));
     if (paymentsRes.data) setPayments(paymentsRes.data);
     if (logsRes.data) setAuditLogs(logsRes.data);
     if (verifRes.data) setVerifications(verifRes.data);
-    if (rolesRes.data) setAllUserRoles(rolesRes.data);
     if (settingsRes.data) setSystemSettings(settingsRes.data);
     if (adminProfRes.data) setAdminProfile(adminProfRes.data);
     if (notifsRes.data) setNotifications(notifsRes.data);
@@ -166,7 +196,7 @@ export default function AdminDashboardPage() {
       setApplications(appsWithProfiles);
     }
     if (paymentsRes.data) setPayments(paymentsRes.data);
-    if (profilesRes.data) setProfiles(profilesRes.data);
+    if (profilesRes.data) setProfiles(await withoutStaff(profilesRes.data));
   };
 
   // ── Live updates: new applications, status/disbursement changes, registrations ──
@@ -219,6 +249,294 @@ export default function AdminDashboardPage() {
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push("/"); router.refresh(); };
 
+  // Documents live in a private bucket, so sign a short-lived URL from the stored object path.
+  const loadSignedDocs = async (userId: string) => {
+    const { data } = await supabase.from("documents").select("*").eq("user_id", userId).order("uploaded_at", { ascending: false });
+    return Promise.all((data ?? []).map(async (d) => {
+      const m = d.file_url.match(/\/documents\/(.+)$/);
+      let url = d.file_url;
+      if (m) {
+        const { data: signed } = await supabase.storage.from("documents").createSignedUrl(decodeURIComponent(m[1]), 3600);
+        if (signed?.signedUrl) url = signed.signedUrl;
+      }
+      return { id: d.id, name: d.file_name, type: d.document_type, url };
+    }));
+  };
+
+  useEffect(() => {
+    if (!viewApp) { setViewDocs([]); return; }
+    setRemarks(viewApp.notes || "");
+    let cancelled = false;
+    setDocsLoading(true);
+    loadSignedDocs(viewApp.user_id).then((docs) => { if (!cancelled) { setViewDocs(docs); setDocsLoading(false); } });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewApp?.id]);
+
+  useEffect(() => {
+    if (!viewStudent) { setStudentDocs([]); return; }
+    let cancelled = false;
+    setStudentDocsLoading(true);
+    loadSignedDocs(viewStudent.id).then((docs) => { if (!cancelled) { setStudentDocs(docs); setStudentDocsLoading(false); } });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewStudent?.id]);
+
+  const isClosed = (sch: Tables<"scholarships">) => !!sch.deadline && sch.deadline < new Date().toISOString().slice(0, 10);
+  const approvedCount = (schId: string) => applications.filter((a) => a.scholarship_id === schId && a.status === "Approved").length;
+  const applicantCount = (schId: string) => applications.filter((a) => a.scholarship_id === schId).length;
+  const filteredScholarships = scholarships.filter((sch) => {
+    const q = schSearch.trim().toLowerCase();
+    if (q && !`${sch.name} ${sch.eligibility || ""}`.toLowerCase().includes(q)) return false;
+    if (schFilter === "active") return sch.is_active && !isClosed(sch);
+    if (schFilter === "inactive") return !sch.is_active;
+    if (schFilter === "closed") return isClosed(sch);
+    return true;
+  });
+
+  const saveScholarship = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const name = String(fd.get("name") || "").trim();
+    const slots = Number(fd.get("slots") || 0);
+    if (!name) { toast.error("Name is required"); return; }
+    if (!Number.isInteger(slots) || slots < 0) { toast.error("Slots must be a whole number, 0 or more"); return; }
+    const payload = {
+      name,
+      description: String(fd.get("description") || "").trim() || null,
+      eligibility: String(fd.get("eligibility") || "").trim() || null,
+      slots,
+      deadline: String(fd.get("deadline") || "") || null,
+      is_active: schActive,
+    };
+    if (schDialog && schDialog !== "new") {
+      const { error } = await supabase.from("scholarships").update(payload).eq("id", schDialog.id);
+      if (error) { toast.error(error.message); return; }
+      await logAudit("update_scholarship", "scholarships", schDialog.id, { name: schDialog.name, slots: schDialog.slots, deadline: schDialog.deadline, is_active: schDialog.is_active }, payload);
+      toast.success("Scholarship updated");
+    } else {
+      const { data, error } = await supabase.from("scholarships").insert(payload).select().single();
+      if (error) { toast.error(error.message); return; }
+      await logAudit("create_scholarship", "scholarships", data.id, null, payload);
+      toast.success("Scholarship added");
+    }
+    setSchDialog(null); loadData();
+  };
+
+  const toggleScholarship = async (sch: Tables<"scholarships">) => {
+    const { error } = await supabase.from("scholarships").update({ is_active: !sch.is_active }).eq("id", sch.id);
+    if (error) { toast.error(error.message); return; }
+    await logAudit(sch.is_active ? "disable_scholarship" : "enable_scholarship", "scholarships", sch.id, { is_active: sch.is_active }, { is_active: !sch.is_active });
+    toast.success(`${sch.name} ${sch.is_active ? "disabled" : "enabled"}`); loadData();
+  };
+
+  const confirmDeleteScholarship = async () => {
+    if (!deleteSch) return;
+    const { error } = await supabase.from("scholarships").delete().eq("id", deleteSch.id);
+    if (error) {
+      toast.error("Could not delete", { description: "This program likely has applications. Disable it instead." });
+      return;
+    }
+    await logAudit("delete_scholarship", "scholarships", deleteSch.id, { name: deleteSch.name }, null);
+    toast.success("Scholarship deleted");
+    setDeleteSch(null); loadData();
+  };
+
+  // ── Disbursement management ──
+  const PAY_PAGE_SIZE = 10;
+  const payStudent = (p: Tables<"payments">) => {
+    const prof = profiles.find((x) => x.id === p.user_id);
+    return prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() || prof.email || "Unknown" : "Unknown";
+  };
+  const payProgram = (p: Tables<"payments">) => applications.find((a) => a.id === p.application_id)?.scholarships?.name || "—";
+  const filteredPayments = payments.filter((p) => {
+    if (payFilter !== "all" && p.status !== payFilter) return false;
+    const q = paySearch.trim().toLowerCase();
+    return !q || `${payStudent(p)} ${payProgram(p)} ${p.reference || ""}`.toLowerCase().includes(q);
+  });
+  const payPages = Math.max(1, Math.ceil(filteredPayments.length / PAY_PAGE_SIZE));
+  const currentPayPage = Math.min(payPage, payPages);
+  const pagedPayments = filteredPayments.slice((currentPayPage - 1) * PAY_PAGE_SIZE, currentPayPage * PAY_PAGE_SIZE);
+
+  const openNewPayment = (applicationId = "") => {
+    setPayAppId(applicationId); setPayMethod("Cash"); setPayDialog("new");
+  };
+
+  const savePayment = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const amount = Number(fd.get("amount") || 0);
+    if (!Number.isFinite(amount) || amount <= 0) { toast.error("Enter an amount greater than 0"); return; }
+    const fields = {
+      amount,
+      method: payMethod,
+      reference: String(fd.get("reference") || "").trim() || null,
+      scheduled_date: String(fd.get("scheduled_date") || "") || null,
+      notes: String(fd.get("notes") || "").trim() || null,
+    };
+    if (payDialog && payDialog !== "new") {
+      const { error } = await supabase.from("payments").update(fields).eq("id", payDialog.id);
+      if (error) { toast.error(error.message); return; }
+      await logAudit("update_payment", "payments", payDialog.id, { amount: payDialog.amount, method: payDialog.method, reference: payDialog.reference, scheduled_date: payDialog.scheduled_date }, fields);
+      toast.success("Payment updated");
+    } else {
+      const app = applications.find((a) => a.id === payAppId);
+      if (!app) { toast.error("Select an approved applicant"); return; }
+      const { data, error } = await supabase.from("payments").insert({ ...fields, application_id: app.id, user_id: app.user_id, status: "Pending" }).select().single();
+      if (error) { toast.error(error.message); return; }
+      await logAudit("create_payment", "payments", data.id, null, fields);
+      await notifyUser(app.user_id, "Payment Scheduled", `A payment of ${formatPHP(amount)} for ${app.scholarships?.name || "your scholarship"} has been scheduled${fields.scheduled_date ? ` for ${fields.scheduled_date}` : ""}.`, "info");
+      toast.success("Payment scheduled");
+    }
+    setPayDialog(null); loadData();
+  };
+
+  const setPaymentStatus = async (p: Tables<"payments">, status: "Processing" | "Cancelled") => {
+    const { error } = await supabase.from("payments").update({ status }).eq("id", p.id);
+    if (error) { toast.error(error.message); return false; }
+    await logAudit(status === "Cancelled" ? "cancel_payment" : "process_payment", "payments", p.id, { status: p.status }, { status });
+    if (status === "Cancelled") await notifyUser(p.user_id, "Payment Cancelled", `Your scheduled payment of ${formatPHP(p.amount)} has been cancelled.`, "warning");
+    toast.success(status === "Cancelled" ? "Payment cancelled" : "Marked as processing");
+    loadData();
+    return true;
+  };
+
+  const openStoredFile = async (path: string | null, missingMsg: string) => {
+    if (!path) { toast.error(missingMsg); return; }
+    const win = window.open("", "_blank");
+    const { data, error } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
+    if (error || !data?.signedUrl) { win?.close(); toast.error("Could not open receipt", { description: error?.message }); return; }
+    if (win) win.location.href = data.signedUrl; else window.location.href = data.signedUrl;
+  };
+  const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment");
+  const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The student hasn't submitted a receipt");
+
+  const disbPay = payments.find((pm) => pm.id === disbPaymentId);
+  const disbLocked = !!disbPay?.preferred_method; // student chose the method; it is final
+
+  const confirmDisbursement = async () => {
+    if (!disbReceipt) return;
+    const payment = payments.find((pm) => pm.id === disbPaymentId);
+    if (!payment) return;
+    setDisbLoading(true);
+    try {
+      const safeName = disbReceipt.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const path = `receipts/${payment.id}/${Date.now()}-${safeName}`;
+      const { error: uploadError } = await supabase.storage.from("documents").upload(path, disbReceipt);
+      if (uploadError) { toast.error("Receipt upload failed", { description: uploadError.message }); return; }
+      const update = { status: "Disbursed", method: disbMethod, reference: disbRef.trim() || null, receipt_path: path, disbursed_at: new Date().toISOString() };
+      const { error } = await supabase.from("payments").update(update).eq("id", payment.id);
+      if (error) {
+        await supabase.storage.from("documents").remove([path]);
+        toast.error(error.message);
+        return;
+      }
+      await logAudit("disburse_payment", "payments", payment.id, { status: payment.status }, { status: "Disbursed", method: disbMethod, reference: update.reference });
+      await notifyUser(payment.user_id, "Payment Disbursed", `Your scholarship payment of ${formatPHP(payment.amount)} has been disbursed by ${disbMethod}.`, "success");
+      toast.success("Payment marked as disbursed");
+      setDisbDialog(false);
+      loadData();
+    } catch {
+      toast.error("Failed to process disbursement");
+    } finally {
+      setDisbLoading(false);
+    }
+  };
+
+  const STUDENT_PAGE_SIZE = 10;
+  const verificationForUser = (userId: string) => verifications.find((v) => v.user_id === userId);
+  const filteredStudents = useMemo(() => {
+    const q = studentSearch.trim().toLowerCase();
+    const list = profiles.filter((p) => {
+      if (studentFilter === "active" && !p.is_active) return false;
+      if (studentFilter === "inactive" && p.is_active) return false;
+      if (!q) return true;
+      return [`${p.first_name} ${p.last_name}`, p.email, p.school_name, p.course, p.student_id_number]
+        .some((f) => (f || "").toLowerCase().includes(q));
+    });
+    return list.sort((x, y) => studentSort === "grade"
+      ? (y.average_grade ?? -1) - (x.average_grade ?? -1)
+      : `${x.last_name} ${x.first_name}`.localeCompare(`${y.last_name} ${y.first_name}`));
+  }, [profiles, studentSearch, studentFilter, studentSort]);
+  const studentPages = Math.max(1, Math.ceil(filteredStudents.length / STUDENT_PAGE_SIZE));
+  const pagedStudents = filteredStudents.slice((studentPage - 1) * STUDENT_PAGE_SIZE, studentPage * STUDENT_PAGE_SIZE);
+
+  const toggleStudentActive = async (p: Tables<"profiles">) => {
+    const next = !p.is_active;
+    const { error } = await supabase.rpc("set_student_active", { _user_id: p.id, _active: next });
+    if (error) { toast.error(error.message); return; }
+    await logAudit(next ? "activate_student" : "deactivate_student", "profiles", p.id, { is_active: p.is_active }, { is_active: next });
+    toast.success(`${p.first_name || "Student"} ${next ? "activated" : "deactivated"}`);
+    setViewStudent((cur) => (cur && cur.id === p.id ? { ...cur, is_active: next } : cur));
+    loadData();
+  };
+
+  const exportStudents = async () => {
+    const XLSX = await import("xlsx");
+    const rows = filteredStudents.map((p) => ({
+      Name: `${p.first_name || ""} ${p.last_name || ""}`.trim(),
+      Email: p.email || "—",
+      "Student ID": p.student_id_number || "—",
+      "Government ID": p.government_id || "—",
+      School: p.school_name || "—",
+      Course: p.course || "—",
+      "Year Level": p.year_level || "—",
+      Grade: p.average_grade ?? "—",
+      Applications: applications.filter((a) => a.user_id === p.id).length,
+      Verification: verificationForUser(p.id)?.verification_status || "—",
+      Status: p.is_active ? "Active" : "Inactive",
+    }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Students");
+    XLSX.writeFile(wb, "students.xlsx");
+    toast.success("Excel downloaded");
+  };
+
+  const verificationFor = (applicationId: string) => verifications.find((v) => v.application_id === applicationId);
+  const canApprove = (applicationId: string) => {
+    const st = verificationFor(applicationId)?.verification_status;
+    return st === "Verified" || st === "Cleared";
+  };
+  type AppRow = typeof applications[number];
+  type AppDecision = "Approved" | "Rejected" | "Waitlisted" | "Pending";
+  const decideApplication = async (a: AppRow, status: AppDecision, note?: string) => {
+    if (status === "Approved" && !canApprove(a.id)) {
+      toast.error("Verify the scholar first", { description: "Verification must be Verified or Cleared before approval." });
+      return false;
+    }
+    const notes = note !== undefined ? note.trim() || null : a.notes ?? null;
+    const update = { status, notes };
+    const { error } = await supabase.from("applications").update(update).eq("id", a.id);
+    if (error) { toast.error(error.message); return false; }
+    const auditAction = { Approved: "approve_application", Rejected: "reject_application", Waitlisted: "waitlist_application", Pending: "reopen_application" }[status];
+    await logAudit(auditAction, "applications", a.id, { status: a.status }, update);
+    const scholarship = a.scholarships?.name || "the scholarship";
+    const remarksText = notes ? ` Remarks: ${notes}` : "";
+    const msg = {
+      Approved: [`Your application for ${scholarship} has been approved.${remarksText}`, "success"],
+      Rejected: [`Your application for ${scholarship} was not approved this time.${remarksText}`, "error"],
+      Waitlisted: [`Your application for ${scholarship} has been placed on the waitlist. We'll notify you if a slot opens.${remarksText}`, "warning"],
+      Pending: [`Your application for ${scholarship} has been reopened for review.${remarksText}`, "info"],
+    }[status] as [string, "success" | "error" | "warning" | "info"];
+    await notifyUser(a.user_id, `Application ${status === "Pending" ? "Reopened" : status}`, msg[0], msg[1]);
+    return true;
+  };
+  const submitVerification = async () => {
+    if (!verifAction) return;
+    const { v, status } = verifAction;
+    const note = verifNotes.trim();
+    const { error } = await supabase.from("scholar_verifications").update({
+      verification_status: status,
+      verified_by: adminUserId || null,
+      verified_at: new Date().toISOString(),
+      notes: note ? (v.notes ? `${v.notes}\n${note}` : note) : v.notes,
+    }).eq("id", v.id);
+    if (error) { toast.error(error.message); return; }
+    await logAudit(`${status === "Verified" ? "verify" : status === "Flagged" ? "flag" : "clear"}_scholar`, "scholar_verifications", v.id, { status: v.verification_status }, { status, notes: note || null });
+    toast.success(`Marked ${status}`);
+    setVerifAction(null); setVerifNotes(""); loadData();
+  };
+
   const logAudit = async (action: string, entityType: string, entityId?: string, prev?: Json, next?: Json) => {
     const { data: { user } } = await supabase.auth.getUser();
     await supabase.from("audit_logs").insert({
@@ -252,8 +570,13 @@ export default function AdminDashboardPage() {
     } else if (key === "funds") {
       autoTable(doc, {
         startY: 28,
-        head: [["Scholarship", "Budget", "Slots", "Amount/Slot", "Active"]],
-        body: scholarships.map(s => [s.name, formatPHP(s.total_budget), s.slots, formatPHP(s.amount), s.is_active ? "Yes" : "No"]),
+        head: [["Status", "Payments", "Amount"]],
+        body: fundData.pipeline.map((r) => [r.status, r.count, formatPHP(r.amount)]),
+      });
+      autoTable(doc, {
+        startY: (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8,
+        head: [["Scholarship", "Scholars Paid", "Disbursed", "Queued"]],
+        body: fundData.byProgram.map((r) => [r.name, r.scholars, formatPHP(r.disbursed), formatPHP(r.queued)]),
       });
     } else if (key === "disbursements") {
       autoTable(doc, {
@@ -284,7 +607,7 @@ export default function AdminDashboardPage() {
         "Year Level": a.profiles?.year_level || "—", Scholarship: a.scholarships?.name || "—", Status: a.status,
       }));
     } else if (key === "funds") {
-      data = scholarships.map(s => ({ Name: s.name, Budget: s.total_budget, Slots: s.slots, "Amount/Slot": s.amount, Active: s.is_active ? "Yes" : "No" }));
+      data = fundData.byProgram.map((r) => ({ Scholarship: r.name, "Scholars Paid": r.scholars, Disbursed: r.disbursed, Queued: r.queued }));
     } else if (key === "disbursements") {
       data = payments.map(p => ({ Reference: p.reference || "—", Amount: p.amount, Method: p.method, Status: p.status, Date: p.scheduled_date || "—" }));
     } else if (key === "statistics") {
@@ -304,9 +627,8 @@ export default function AdminDashboardPage() {
     const rejected = applications.filter(a => a.status === "Rejected").length;
     const pending = applications.filter(a => a.status === "Pending").length;
     const totalDisbursed = payments.filter(p => p.status === "Disbursed").reduce((s, p) => s + p.amount, 0);
-    const totalBudget = scholarships.reduce((s, sc) => s + sc.total_budget, 0);
-    return { total: applications.length, approved, rejected, pending, totalDisbursed, totalBudget, remaining: totalBudget - totalDisbursed };
-  }, [applications, payments, scholarships]);
+    return { total: applications.length, approved, rejected, pending, totalDisbursed };
+  }, [applications, payments]);
 
   const statusBadge = (status: string) => <StatusBadge status={status} />;
 
@@ -322,6 +644,7 @@ export default function AdminDashboardPage() {
     await supabase.from("notifications").insert({ user_id: userId, title, message, type });
   };
 
+  const APP_PAGE_SIZE = 10;
   const filteredApps = applications.filter((a) => {
     const matchesStatus = statusFilter === "all" || a.status.toLowerCase() === statusFilter;
     const q = appSearch.toLowerCase();
@@ -329,12 +652,76 @@ export default function AdminDashboardPage() {
     const matchesSearch = !q || name.includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q);
     return matchesStatus && matchesSearch;
   });
+  const appPages = Math.max(1, Math.ceil(filteredApps.length / APP_PAGE_SIZE));
+  const currentAppPage = Math.min(appPage, appPages);
+  const pagedApps = filteredApps.slice((currentAppPage - 1) * APP_PAGE_SIZE, currentAppPage * APP_PAGE_SIZE);
 
   const statusPieData = [
     { name: "Approved", value: totals.approved },
     { name: "Rejected", value: totals.rejected },
     { name: "Pending", value: totals.pending },
   ].filter(d => d.value > 0);
+
+  // ── Fund management (derived from payments + applications) ──
+  const fundData = useMemo(() => {
+    const payDate = (p: Tables<"payments">) => p.disbursed_at || p.scheduled_date || p.created_at;
+    const now = new Date();
+    const since = fundPeriod === "year" ? new Date(now.getFullYear(), 0, 1)
+      : fundPeriod === "6m" ? new Date(now.getFullYear(), now.getMonth() - 5, 1)
+      : fundPeriod === "30d" ? new Date(now.getTime() - 30 * 86400000)
+      : null;
+    const inRange = payments.filter((p) => !since || new Date(payDate(p)) >= since);
+
+    const sum = (list: Tables<"payments">[]) => list.reduce((t, p) => t + Number(p.amount || 0), 0);
+    const pipeline = (["Pending", "Processing", "Disbursed"] as const).map((st) => {
+      const list = inRange.filter((p) => p.status === st);
+      return { status: st, count: list.length, amount: sum(list) };
+    });
+
+    const programOf = (p: Tables<"payments">) => applications.find((a) => a.id === p.application_id)?.scholarship_id ?? null;
+    const byProgram = scholarships.map((sch) => {
+      const list = inRange.filter((p) => programOf(p) === sch.id);
+      const paid = list.filter((p) => p.status === "Disbursed");
+      return {
+        id: sch.id, name: sch.name,
+        scholars: new Set(paid.map((p) => p.user_id)).size,
+        disbursed: sum(paid),
+        queued: sum(list.filter((p) => p.status === "Pending" || p.status === "Processing")),
+      };
+    });
+    const unassigned = inRange.filter((p) => !programOf(p));
+    if (unassigned.length) {
+      const paid = unassigned.filter((p) => p.status === "Disbursed");
+      byProgram.push({ id: "none", name: "Unassigned", scholars: new Set(paid.map((p) => p.user_id)).size, disbursed: sum(paid), queued: sum(unassigned.filter((p) => p.status === "Pending" || p.status === "Processing")) });
+    }
+
+    const methods = new Map<string, { count: number; amount: number }>();
+    inRange.filter((p) => p.status === "Disbursed").forEach((p) => {
+      const m = methods.get(p.method || "Other") ?? { count: 0, amount: 0 };
+      m.count += 1; m.amount += Number(p.amount || 0);
+      methods.set(p.method || "Other", m);
+    });
+    const disbursedTotal = pipeline[2].amount;
+    const byMethod = [...methods.entries()].map(([method, v]) => ({ method, ...v, share: disbursedTotal ? Math.round((v.amount / disbursedTotal) * 100) : 0 }))
+      .sort((x, y) => y.amount - x.amount);
+
+    const monthMap = new Map<string, number>();
+    inRange.filter((p) => p.status === "Disbursed").forEach((p) => {
+      const d = new Date(payDate(p));
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      monthMap.set(key, (monthMap.get(key) ?? 0) + Number(p.amount || 0));
+    });
+    const monthly = [...monthMap.entries()].sort(([x], [y]) => x.localeCompare(y))
+      .map(([key, amount]) => ({ month: new Date(`${key}-01`).toLocaleDateString("en-PH", { month: "short", year: "2-digit" }), Disbursed: amount }));
+
+    const recent = [...inRange].sort((x, y) => new Date(payDate(y)).getTime() - new Date(payDate(x)).getTime()).slice(0, 8);
+
+    // Approved applications that have no payment yet.
+    const paidAppIds = new Set(payments.filter((p) => p.status !== "Cancelled").map((p) => p.application_id).filter(Boolean));
+    const awaiting = applications.filter((a) => a.status === "Approved" && !paidAppIds.has(a.id));
+
+    return { pipeline, byProgram, byMethod, monthly, recent, awaiting, disbursedTotal };
+  }, [payments, applications, scholarships, fundPeriod]);
 
   const applicationsPerMonth = useMemo(() => {
     const months: Record<string, number> = {};
@@ -351,7 +738,6 @@ export default function AdminDashboardPage() {
 
   const approvalRate = totals.total > 0 ? Math.round((totals.approved / totals.total) * 100) : 0;
   const rejectionRate = totals.total > 0 ? Math.round((totals.rejected / totals.total) * 100) : 0;
-  const budgetUtilization = totals.totalBudget > 0 ? Math.round((totals.totalDisbursed / totals.totalBudget) * 100) : 0;
 
   const scholarshipDistribution = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -399,7 +785,25 @@ export default function AdminDashboardPage() {
           })}
         </nav>
         <div className="p-3 border-t">
-          <Button variant="destructive" size="sm" className="w-full" onClick={handleLogout}><LogOut className="mr-1 h-4 w-4" /> Logout</Button>
+          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-muted mb-2">
+            <div className="h-8 w-8 rounded-xl overflow-hidden shrink-0">
+              {adminProfile?.profile_picture_url ? (
+                <img src={adminProfile.profile_picture_url} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <div className="h-full w-full bg-primary flex items-center justify-center">
+                  <User className="h-4 w-4 text-primary-foreground" />
+                </div>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold truncate">{adminProfile?.first_name ? `${adminProfile.first_name} ${adminProfile.last_name || ""}`.trim() : "Admin"}</p>
+              <p className="text-xs text-muted-foreground truncate">{adminEmail}</p>
+            </div>
+          </div>
+          <button onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer">
+            <LogOut className="h-4 w-4" /> Sign out
+          </button>
         </div>
       </aside>
 
@@ -496,7 +900,7 @@ export default function AdminDashboardPage() {
                             <div className="min-w-0">
                               <p className="font-medium truncate">{s.name}</p>
                               <p className="text-xs text-muted-foreground mt-0.5">
-                                Amount: {formatPHP(s.amount)} &nbsp;·&nbsp; Deadline: {s.deadline || "—"}
+                                Deadline: {s.deadline || "—"}
                               </p>
                               <p className="text-xs text-muted-foreground mt-1 flex items-center gap-3">
                                 <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {applicantCount} applicants</span>
@@ -541,13 +945,10 @@ export default function AdminDashboardPage() {
                 </Card>
               </div>
 
-              {/* Budget + Rates Row */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Total Budget</p><p className="text-xl font-bold font-display text-primary">{formatPHP(totals.totalBudget)}</p></CardContent></Card>
+              {/* Disbursed + Rates Row */}
+              <div className="grid grid-cols-2 md:grid-cols-2 gap-4">
                 <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Disbursed</p><p className="text-xl font-bold font-display text-success">{formatPHP(totals.totalDisbursed)}</p></CardContent></Card>
-                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Remaining</p><p className="text-xl font-bold font-display text-warning">{formatPHP(totals.remaining)}</p></CardContent></Card>
                 <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Approval Rate</p><p className="text-xl font-bold font-display text-success">{approvalRate}%</p><Progress value={approvalRate} className="mt-2 h-1.5" /></CardContent></Card>
-                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Budget Utilization</p><p className="text-xl font-bold font-display text-primary">{budgetUtilization}%</p><Progress value={budgetUtilization} className="mt-2 h-1.5" /></CardContent></Card>
               </div>
 
               {/* Charts Row 1: Applications per Month + Status Distribution */}
@@ -629,14 +1030,15 @@ export default function AdminDashboardPage() {
                 <div className="flex gap-2 flex-wrap">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Search name, scholarship..." value={appSearch} onChange={(e) => setAppSearch(e.target.value)} className="pl-9 w-60" />
+                    <Input placeholder="Search name, scholarship..." value={appSearch} onChange={(e) => { setAppSearch(e.target.value); setAppPage(1); }} className="pl-9 w-60" />
                   </div>
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setAppPage(1); }}>
                     <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Status</SelectItem>
                       <SelectItem value="pending">Pending</SelectItem>
                       <SelectItem value="approved">Approved</SelectItem>
+                      <SelectItem value="waitlisted">Waitlisted</SelectItem>
                       <SelectItem value="rejected">Rejected</SelectItem>
                     </SelectContent>
                   </Select>
@@ -649,7 +1051,7 @@ export default function AdminDashboardPage() {
                   </TableRow></TableHeader>
                   <TableBody>
                     {filteredApps.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No applications found</TableCell></TableRow>}
-                    {filteredApps.map((a) => {
+                    {pagedApps.map((a) => {
                       const name = a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "—";
                       return (
                         <TableRow key={a.id}>
@@ -660,20 +1062,24 @@ export default function AdminDashboardPage() {
                           <TableCell>{statusBadge(a.status)}</TableCell>
                           <TableCell className="text-right space-x-1">
                             <Button size="icon" variant="ghost" onClick={() => setViewApp(a)} title="View"><Eye className="h-4 w-4" /></Button>
-                            {a.status === "Pending" && (<>
-                              <Button size="icon" variant="ghost" onClick={async () => {
-                                await supabase.from("applications").update({ status: "Approved" }).eq("id", a.id);
-                                await notifyUser(a.user_id, "Application Approved", `Your application for ${a.scholarships?.name || "the scholarship"} has been approved.`, "success");
-                                toast.success(`${name} approved!`);
-                                loadData();
+                            {(a.status === "Pending" || a.status === "Waitlisted") && (<>
+                              <Button size="icon" variant="ghost" disabled={!canApprove(a.id)} title={canApprove(a.id) ? "Approve" : "Verify scholar first"} onClick={async () => {
+                                if (await decideApplication(a, "Approved")) { toast.success(`${name} approved!`); loadData(); }
                               }}><CheckCircle className="h-4 w-4 text-success" /></Button>
-                              <Button size="icon" variant="ghost" onClick={async () => {
-                                await supabase.from("applications").update({ status: "Rejected" }).eq("id", a.id);
-                                await notifyUser(a.user_id, "Application Rejected", `Your application for ${a.scholarships?.name || "the scholarship"} was not approved this time.`, "error");
-                                toast.error(`${name} rejected`);
-                                loadData();
+                              {a.status === "Pending" && (
+                                <Button size="icon" variant="ghost" title="Waitlist" onClick={async () => {
+                                  if (await decideApplication(a, "Waitlisted")) { toast.info(`${name} waitlisted`); loadData(); }
+                                }}><Hourglass className="h-4 w-4 text-warning" /></Button>
+                              )}
+                              <Button size="icon" variant="ghost" title="Reject" onClick={async () => {
+                                if (await decideApplication(a, "Rejected")) { toast.error(`${name} rejected`); loadData(); }
                               }}><XCircle className="h-4 w-4 text-destructive" /></Button>
                             </>)}
+                            {a.status === "Rejected" && (
+                              <Button size="icon" variant="ghost" title="Reopen" onClick={async () => {
+                                if (await decideApplication(a, "Pending")) { toast.success(`${name} reopened`); loadData(); }
+                              }}><RotateCcw className="h-4 w-4" /></Button>
+                            )}
                           </TableCell>
                         </TableRow>
                       );
@@ -681,6 +1087,14 @@ export default function AdminDashboardPage() {
                   </TableBody>
                 </Table>
               </Card>
+              <div className="flex items-center justify-between text-sm text-muted-foreground">
+                <span>{filteredApps.length === 0 ? "0 applications" : `Showing ${(currentAppPage - 1) * APP_PAGE_SIZE + 1}–${Math.min(currentAppPage * APP_PAGE_SIZE, filteredApps.length)} of ${filteredApps.length}`}</span>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" disabled={currentAppPage <= 1} onClick={() => setAppPage(currentAppPage - 1)}><ChevronLeft className="h-4 w-4" /></Button>
+                  <span>Page {currentAppPage} of {appPages}</span>
+                  <Button size="sm" variant="outline" disabled={currentAppPage >= appPages} onClick={() => setAppPage(currentAppPage + 1)}><ChevronRight className="h-4 w-4" /></Button>
+                </div>
+              </div>
 
               <Dialog open={!!viewApp} onOpenChange={(open) => !open && setViewApp(null)}>
                 <DialogContent className="max-w-lg">
@@ -697,20 +1111,53 @@ export default function AdminDashboardPage() {
                         <div><Label className="text-muted-foreground text-xs">Scholarship</Label><p className="font-medium">{viewApp.scholarships?.name || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Status</Label><div>{statusBadge(viewApp.status)}</div></div>
                       </div>
-                      <div><Label className="text-xs">Reviewer Remarks</Label><Textarea placeholder="Add notes..." /></div>
-                      {viewApp.status === "Pending" && (
-                        <div className="flex gap-2 pt-2">
-                          <Button className="flex-1" onClick={async () => {
-                            await supabase.from("applications").update({ status: "Approved" }).eq("id", viewApp.id);
-                            await notifyUser(viewApp.user_id, "Application Approved", `Your application for ${viewApp.scholarships?.name || "the scholarship"} has been approved.`, "success");
-                            toast.success("Approved!"); setViewApp(null); loadData();
+                      <div>
+                        <Label className="text-xs">Documents</Label>
+                        {docsLoading ? <p className="text-sm text-muted-foreground">Loading…</p>
+                          : viewDocs.length === 0 ? <p className="text-sm text-muted-foreground">No documents uploaded</p>
+                          : <ul className="mt-1 space-y-1">
+                              {viewDocs.map((d) => (
+                                <li key={d.id}>
+                                  <a href={d.url} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+                                    <span className="truncate"><span className="font-medium">{d.type}</span> · {d.name}</span>
+                                    <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                  </a>
+                                </li>
+                              ))}
+                            </ul>}
+                      </div>
+                      <div>
+                        <Label className="text-xs">Reviewer Remarks</Label>
+                        <Textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Add notes..." />
+                        {!["Pending", "Waitlisted"].includes(viewApp.status) && (
+                          <Button size="sm" variant="outline" className="mt-2" onClick={async () => {
+                            const notes = remarks.trim() || null;
+                            const { error } = await supabase.from("applications").update({ notes }).eq("id", viewApp.id);
+                            if (error) { toast.error(error.message); return; }
+                            await logAudit("update_application_remarks", "applications", viewApp.id, { notes: viewApp.notes }, { notes });
+                            toast.success("Remarks saved"); loadData();
+                          }}>Save remarks</Button>
+                        )}
+                      </div>
+                      {(viewApp.status === "Pending" || viewApp.status === "Waitlisted") && (
+                        <div className="flex gap-2 pt-2 flex-wrap">
+                          <Button className="flex-1" disabled={!canApprove(viewApp.id)} title={canApprove(viewApp.id) ? undefined : "Verify scholar first"} onClick={async () => {
+                            if (await decideApplication(viewApp, "Approved", remarks)) { toast.success("Approved!"); setViewApp(null); loadData(); }
                           }}><CheckCircle className="mr-1 h-4 w-4" /> Approve</Button>
+                          {viewApp.status === "Pending" && (
+                            <Button variant="outline" className="flex-1" onClick={async () => {
+                              if (await decideApplication(viewApp, "Waitlisted", remarks)) { toast.info("Waitlisted"); setViewApp(null); loadData(); }
+                            }}><Hourglass className="mr-1 h-4 w-4" /> Waitlist</Button>
+                          )}
                           <Button variant="destructive" className="flex-1" onClick={async () => {
-                            await supabase.from("applications").update({ status: "Rejected" }).eq("id", viewApp.id);
-                            await notifyUser(viewApp.user_id, "Application Rejected", `Your application for ${viewApp.scholarships?.name || "the scholarship"} was not approved this time.`, "error");
-                            toast.error("Rejected"); setViewApp(null); loadData();
+                            if (await decideApplication(viewApp, "Rejected", remarks)) { toast.error("Rejected"); setViewApp(null); loadData(); }
                           }}><XCircle className="mr-1 h-4 w-4" /> Reject</Button>
                         </div>
+                      )}
+                      {viewApp.status === "Rejected" && (
+                        <Button variant="outline" className="w-full" onClick={async () => {
+                          if (await decideApplication(viewApp, "Pending", remarks)) { toast.success("Reopened"); setViewApp(null); loadData(); }
+                        }}><RotateCcw className="mr-1 h-4 w-4" /> Reopen for review</Button>
                       )}
                     </div>
                   )}
@@ -722,61 +1169,100 @@ export default function AdminDashboardPage() {
           {/* SCHOLARSHIPS */}
           {activeSection === "scholarships" && (
             <div className="space-y-4 animate-fade-in">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-3">
                 <h2 className="text-xl font-display font-bold">Scholarship Programs</h2>
-                <Dialog>
-                  <DialogTrigger asChild><Button className="bg-gradient-primary shadow-primary"><Plus className="mr-1 h-4 w-4" /> Add Scholarship</Button></DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader><DialogTitle className="font-display">Add New Scholarship</DialogTitle></DialogHeader>
-                    <form onSubmit={async (e) => {
-                      e.preventDefault();
-                      const fd = new FormData(e.currentTarget);
-                      await supabase.from("scholarships").insert({
-                        name: fd.get("name") as string,
-                        description: fd.get("description") as string,
-                        slots: parseInt(fd.get("slots") as string) || 0,
-                        total_budget: parseInt(fd.get("budget") as string) || 0,
-                        deadline: fd.get("deadline") as string || null,
-                      });
-                      toast.success("Scholarship added!"); loadData();
-                    }} className="space-y-4">
-                      <div><Label>Name</Label><Input name="name" required placeholder="Scholarship name" /></div>
-                      <div><Label>Description</Label><Textarea name="description" placeholder="Description" /></div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div><Label>Slots</Label><Input name="slots" type="number" placeholder="50" /></div>
-                        <div><Label>Deadline</Label><Input name="deadline" type="date" /></div>
-                      </div>
-                      <div><Label>Budget</Label><Input name="budget" type="number" placeholder="500000" /></div>
-                      <Button type="submit" className="w-full bg-gradient-primary">Save Scholarship</Button>
-                    </form>
-                  </DialogContent>
-                </Dialog>
+                <div className="flex gap-2 flex-wrap">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input placeholder="Search programs..." value={schSearch} onChange={(e) => setSchSearch(e.target.value)} className="pl-9 w-52" />
+                  </div>
+                  <Select value={schFilter} onValueChange={setSchFilter}>
+                    <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All programs</SelectItem>
+                      <SelectItem value="active">Open</SelectItem>
+                      <SelectItem value="closed">Past deadline</SelectItem>
+                      <SelectItem value="inactive">Disabled</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button className="bg-gradient-primary shadow-primary" onClick={() => { setSchActive(true); setSchDialog("new"); }}>
+                    <Plus className="mr-1 h-4 w-4" /> Add Scholarship
+                  </Button>
+                </div>
               </div>
+
+              <Dialog open={schDialog !== null} onOpenChange={(o) => !o && setSchDialog(null)}>
+                <DialogContent className="max-h-[90vh] overflow-y-auto">
+                  <DialogHeader><DialogTitle className="font-display">{schDialog && schDialog !== "new" ? "Edit Scholarship" : "Add New Scholarship"}</DialogTitle></DialogHeader>
+                  {schDialog && (() => {
+                    const cur = schDialog === "new" ? null : schDialog;
+                    return (
+                      <form key={cur?.id ?? "new"} onSubmit={saveScholarship} className="space-y-4">
+                        <div><Label>Name</Label><Input name="name" required defaultValue={cur?.name ?? ""} placeholder="Scholarship name" /></div>
+                        <div><Label>Description</Label><Textarea name="description" defaultValue={cur?.description ?? ""} placeholder="Description" /></div>
+                        <div><Label>Eligibility</Label><Textarea name="eligibility" defaultValue={cur?.eligibility ?? ""} placeholder="Who can apply?" /></div>
+                        <div>
+                          <div><Label>Slots (0 = unlimited)</Label><Input name="slots" type="number" min={0} step={1} defaultValue={cur?.slots ?? ""} placeholder="50" /></div>
+                        </div>
+                        <div><Label>Deadline</Label><Input name="deadline" type="date" defaultValue={cur?.deadline ?? ""} /></div>
+                        <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                          <Label>Accepting applications</Label>
+                          <Switch checked={schActive} onCheckedChange={setSchActive} />
+                        </div>
+                        <Button type="submit" className="w-full bg-gradient-primary">{cur ? "Save Changes" : "Save Scholarship"}</Button>
+                      </form>
+                    );
+                  })()}
+                </DialogContent>
+              </Dialog>
+
+              <Dialog open={!!deleteSch} onOpenChange={(o) => !o && setDeleteSch(null)}>
+                <DialogContent>
+                  <DialogHeader><DialogTitle>Delete {deleteSch?.name}?</DialogTitle></DialogHeader>
+                  <p className="text-sm text-muted-foreground">
+                    This permanently removes the program.
+                    {deleteSch && applicantCount(deleteSch.id) > 0 && ` It has ${applicantCount(deleteSch.id)} application(s), so deletion will be blocked — disable it instead.`}
+                  </p>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setDeleteSch(null)}>Cancel</Button>
+                    <Button variant="destructive" onClick={confirmDeleteScholarship}>Delete</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Name</TableHead><TableHead>Slots</TableHead><TableHead>Deadline</TableHead><TableHead>Budget</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Program</TableHead><TableHead>Slots</TableHead><TableHead>Applicants</TableHead><TableHead>Deadline</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {scholarships.map((s) => (
-                      <TableRow key={s.id}>
-                        <TableCell className="font-medium">{s.name}</TableCell>
-                        <TableCell>{s.slots}</TableCell>
-                        <TableCell>{s.deadline || "—"}</TableCell>
-                        <TableCell>{formatPHP(s.total_budget)}</TableCell>
-                        <TableCell><Badge variant={s.is_active ? "default" : "secondary"}>{s.is_active ? "Active" : "Inactive"}</Badge></TableCell>
-                        <TableCell className="text-right space-x-1">
-                          <Button size="icon" variant="ghost" onClick={async () => {
-                            await supabase.from("scholarships").update({ is_active: !s.is_active }).eq("id", s.id);
-                            toast.success(`${s.name} ${s.is_active ? "disabled" : "enabled"}`); loadData();
-                          }}>{s.is_active ? <XCircle className="h-4 w-4" /> : <CheckCircle className="h-4 w-4 text-success" />}</Button>
-                          <Button size="icon" variant="ghost" onClick={async () => {
-                            await supabase.from("scholarships").delete().eq("id", s.id);
-                            toast.error("Scholarship deleted"); loadData();
-                          }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {filteredScholarships.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No scholarship programs found</TableCell></TableRow>}
+                    {filteredScholarships.map((sch) => {
+                      const approved = approvedCount(sch.id);
+                      const full = sch.slots > 0 && approved >= sch.slots;
+                      return (
+                        <TableRow key={sch.id}>
+                          <TableCell className="max-w-[260px]">
+                            <p className="font-medium">{sch.name}</p>
+                            {sch.eligibility && <p className="text-xs text-muted-foreground line-clamp-2" title={sch.eligibility}>{sch.eligibility}</p>}
+                          </TableCell>
+                          <TableCell>
+                            {sch.slots > 0 ? `${Math.max(sch.slots - approved, 0)} left of ${sch.slots}` : "Unlimited"}
+                            {full && <Badge variant="secondary" className="ml-2">Full</Badge>}
+                          </TableCell>
+                          <TableCell>{applicantCount(sch.id)}</TableCell>
+                          <TableCell>{sch.deadline || "—"}{isClosed(sch) && <Badge variant="secondary" className="ml-2">Closed</Badge>}</TableCell>
+                          <TableCell><Badge variant={sch.is_active ? "default" : "secondary"}>{sch.is_active ? "Active" : "Disabled"}</Badge></TableCell>
+                          <TableCell className="text-right space-x-1">
+                            <Button size="icon" variant="ghost" title="Edit" onClick={() => { setSchActive(sch.is_active); setSchDialog(sch); }}><Pencil className="h-4 w-4" /></Button>
+                            <Button size="icon" variant="ghost" title={sch.is_active ? "Disable" : "Enable"} onClick={() => toggleScholarship(sch)}>
+                              {sch.is_active ? <XCircle className="h-4 w-4" /> : <CheckCircle className="h-4 w-4 text-success" />}
+                            </Button>
+                            <Button size="icon" variant="ghost" title="Delete" onClick={() => setDeleteSch(sch)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </Card>
@@ -786,83 +1272,297 @@ export default function AdminDashboardPage() {
           {/* STUDENTS */}
           {activeSection === "students" && (
             <div className="space-y-4 animate-fade-in">
-              <h2 className="text-xl font-display font-bold">Student Management</h2>
-              <div className="relative max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input placeholder="Search by name or email..." value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} className="pl-9" />
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <h2 className="text-xl font-display font-bold">Student Management</h2>
+                <div className="flex gap-2 flex-wrap">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input placeholder="Name, email, school, course, ID..." value={studentSearch} onChange={(e) => { setStudentSearch(e.target.value); setStudentPage(1); }} className="pl-9 w-64" />
+                  </div>
+                  <Select value={studentFilter} onValueChange={(v) => { setStudentFilter(v); setStudentPage(1); }}>
+                    <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All students</SelectItem>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={studentSort} onValueChange={setStudentSort}>
+                    <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="name">Sort: Name</SelectItem>
+                      <SelectItem value="grade">Sort: Grade</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="outline" onClick={exportStudents}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
+                </div>
               </div>
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead>School</TableHead><TableHead>Course</TableHead><TableHead>Grade</TableHead><TableHead>Status</TableHead>
+                    <TableHead>Name</TableHead><TableHead>Student ID</TableHead><TableHead>School / Course</TableHead><TableHead>Year</TableHead><TableHead>Grade</TableHead><TableHead>Apps</TableHead><TableHead>Verification</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {profiles.filter((p) => {
-                      const q = studentSearch.toLowerCase();
-                      return !q || `${p.first_name} ${p.last_name}`.toLowerCase().includes(q) || (p.email || "").toLowerCase().includes(q);
-                    }).map((p) => (
-                      <TableRow key={p.id}>
-                        <TableCell className="font-medium">{p.first_name} {p.last_name}</TableCell>
-                        <TableCell>{p.email}</TableCell>
-                        <TableCell>{p.school_name || "—"}</TableCell>
-                        <TableCell>{p.course || "—"}</TableCell>
-                        <TableCell>{p.average_grade || "—"}</TableCell>
-                        <TableCell><Badge variant={p.is_active ? "default" : "secondary"}>{p.is_active ? "Active" : "Inactive"}</Badge></TableCell>
-                      </TableRow>
-                    ))}
+                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No students found</TableCell></TableRow>}
+                    {pagedStudents.map((p) => {
+                      const ver = verificationForUser(p.id);
+                      return (
+                        <TableRow key={p.id}>
+                          <TableCell><p className="font-medium">{p.first_name} {p.last_name}</p><p className="text-xs text-muted-foreground">{p.email}</p></TableCell>
+                          <TableCell className="font-mono text-xs">{p.student_id_number || "—"}</TableCell>
+                          <TableCell className="text-xs"><p>{p.school_name || "—"}</p><p className="text-muted-foreground">{p.course || "—"}</p></TableCell>
+                          <TableCell>{p.year_level || "—"}</TableCell>
+                          <TableCell>{p.average_grade ?? "—"}</TableCell>
+                          <TableCell>{applications.filter((a) => a.user_id === p.id).length}</TableCell>
+                          <TableCell>{ver ? <Badge variant={ver.verification_status === "Verified" ? "default" : ver.verification_status === "Flagged" ? "destructive" : "secondary"}>{ver.verification_status}</Badge> : "—"}</TableCell>
+                          <TableCell><Badge variant={p.is_active ? "default" : "secondary"}>{p.is_active ? "Active" : "Inactive"}</Badge></TableCell>
+                          <TableCell className="text-right space-x-1">
+                            <Button size="icon" variant="ghost" title="View" onClick={() => setViewStudent(p)}><Eye className="h-4 w-4" /></Button>
+                            <Button size="icon" variant="ghost" title={p.is_active ? "Deactivate" : "Activate"} onClick={() => toggleStudentActive(p)}>
+                              <Power className={`h-4 w-4 ${p.is_active ? "text-destructive" : "text-success"}`} />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </Card>
+              <div className="flex items-center justify-between text-sm text-muted-foreground">
+                <span>
+                  {filteredStudents.length === 0 ? "0 students" : `Showing ${(studentPage - 1) * STUDENT_PAGE_SIZE + 1}–${Math.min(studentPage * STUDENT_PAGE_SIZE, filteredStudents.length)} of ${filteredStudents.length}`}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" disabled={studentPage <= 1} onClick={() => setStudentPage((n) => n - 1)}><ChevronLeft className="h-4 w-4" /></Button>
+                  <span>Page {Math.min(studentPage, studentPages)} of {studentPages}</span>
+                  <Button size="sm" variant="outline" disabled={studentPage >= studentPages} onClick={() => setStudentPage((n) => n + 1)}><ChevronRight className="h-4 w-4" /></Button>
+                </div>
+              </div>
+
+              <Dialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)}>
+                <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+                  <DialogHeader><DialogTitle>Student Details</DialogTitle></DialogHeader>
+                  {viewStudent && (() => {
+                    const stuApps = applications.filter((a) => a.user_id === viewStudent.id);
+                    const ver = verificationForUser(viewStudent.id);
+                    const field = (label: string, value: React.ReactNode) => (
+                      <div><Label className="text-muted-foreground text-xs">{label}</Label><div className="font-medium">{value || "—"}</div></div>
+                    );
+                    return (
+                      <div className="space-y-5">
+                        <div className="grid grid-cols-2 gap-3">
+                          {field("Name", `${viewStudent.first_name || ""} ${viewStudent.middle_name || ""} ${viewStudent.last_name || ""}`.replace(/\s+/g, " ").trim())}
+                          {field("Email", viewStudent.email)}
+                          {field("Phone", viewStudent.phone)}
+                          {field("Address", [viewStudent.barangay, viewStudent.municipality].filter(Boolean).join(", "))}
+                          {field("Student ID", viewStudent.student_id_number)}
+                          {field("Government ID", viewStudent.government_id)}
+                          {field("School", viewStudent.school_name)}
+                          {field("Course", viewStudent.course)}
+                          {field("Year Level", viewStudent.year_level)}
+                          {field("Average Grade", viewStudent.average_grade)}
+                          {field("Account", <Badge variant={viewStudent.is_active ? "default" : "secondary"}>{viewStudent.is_active ? "Active" : "Inactive"}</Badge>)}
+                          {field("Verification", ver ? <Badge variant={ver.verification_status === "Verified" ? "default" : ver.verification_status === "Flagged" ? "destructive" : "secondary"}>{ver.verification_status}</Badge> : null)}
+                        </div>
+                        <div>
+                          <Label className="text-xs">Applications ({stuApps.length})</Label>
+                          {stuApps.length === 0 ? <p className="text-sm text-muted-foreground">No applications</p> : (
+                            <ul className="mt-1 space-y-1">
+                              {stuApps.map((a) => (
+                                <li key={a.id} className="flex items-center justify-between rounded-md border px-3 py-1.5 text-sm">
+                                  <span>{a.scholarships?.name || "—"} <span className="text-xs text-muted-foreground">· {new Date(a.created_at).toLocaleDateString()}</span></span>
+                                  {statusBadge(a.status)}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                        <div>
+                          <Label className="text-xs">Documents</Label>
+                          {studentDocsLoading ? <p className="text-sm text-muted-foreground">Loading…</p>
+                            : studentDocs.length === 0 ? <p className="text-sm text-muted-foreground">No documents uploaded</p>
+                            : <ul className="mt-1 space-y-1">
+                                {studentDocs.map((d) => (
+                                  <li key={d.id}>
+                                    <a href={d.url} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+                                      <span className="truncate"><span className="font-medium">{d.type}</span> · {d.name}</span>
+                                      <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                    </a>
+                                  </li>
+                                ))}
+                              </ul>}
+                        </div>
+                        <DialogFooter>
+                          <Button variant={viewStudent.is_active ? "destructive" : "default"} onClick={() => toggleStudentActive(viewStudent)}>
+                            <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
+                          </Button>
+                        </DialogFooter>
+                      </div>
+                    );
+                  })()}
+                </DialogContent>
+              </Dialog>
             </div>
           )}
 
           {/* FUNDS */}
           {activeSection === "funds" && (
             <div className="space-y-4 animate-fade-in">
-              <h2 className="text-xl font-display font-bold">Fund Management</h2>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Total Allocated</p><p className="text-2xl font-bold font-display">{formatPHP(totals.totalBudget)}</p></CardContent></Card>
-                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Total Disbursed</p><p className="text-2xl font-bold font-display text-success">{formatPHP(totals.totalDisbursed)}</p></CardContent></Card>
-                <Card><CardContent className="py-5"><p className="text-xs text-muted-foreground">Remaining</p><p className="text-2xl font-bold font-display text-warning">{formatPHP(totals.remaining)}</p></CardContent></Card>
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <h2 className="text-xl font-display font-bold">Fund Management</h2>
+                <div className="flex gap-2 flex-wrap">
+                  <Select value={fundPeriod} onValueChange={setFundPeriod}>
+                    <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All time</SelectItem>
+                      <SelectItem value="year">This year</SelectItem>
+                      <SelectItem value="6m">Last 6 months</SelectItem>
+                      <SelectItem value="30d">Last 30 days</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="outline" onClick={() => exportPDF("funds")}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
+                  <Button variant="outline" onClick={() => exportExcel("funds")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
+                </div>
               </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {fundData.pipeline.map((r) => (
+                  <Card key={r.status}><CardContent className="py-5">
+                    <p className="text-xs text-muted-foreground">{r.status === "Disbursed" ? "Total Disbursed" : r.status}</p>
+                    <p className={`text-2xl font-bold font-display ${r.status === "Disbursed" ? "text-success" : r.status === "Processing" ? "text-primary" : "text-warning"}`}>{formatPHP(r.amount)}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{r.count} payment{r.count === 1 ? "" : "s"}</p>
+                  </CardContent></Card>
+                ))}
+              </div>
+
               <Card>
-                <CardHeader><CardTitle className="text-base">Budget per Program</CardTitle></CardHeader>
+                <CardHeader><CardTitle className="text-base">Disbursed per Month</CardTitle></CardHeader>
                 <CardContent>
-                  <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={scholarships.map((s) => ({ name: s.name, Budget: s.total_budget }))}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                      <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                      <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
-                      <Bar dataKey="Budget" fill="hsl(var(--primary))" />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  {fundData.monthly.length === 0 ? <p className="text-sm text-muted-foreground py-8 text-center">No disbursements in this period</p> : (
+                    <ResponsiveContainer width="100%" height={240}>
+                      <BarChart data={fundData.monthly}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                        <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                        <Tooltip formatter={(v: number) => formatPHP(v)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
+                        <Bar dataKey="Disbursed" fill="hsl(var(--primary))" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
                 </CardContent>
               </Card>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <Card>
+                  <CardHeader><CardTitle className="text-base">By Scholarship Program</CardTitle></CardHeader>
+                  <Table>
+                    <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60"><TableHead>Program</TableHead><TableHead>Scholars</TableHead><TableHead>Disbursed</TableHead><TableHead>Queued</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {fundData.byProgram.length === 0 && <TableRow><TableCell colSpan={4} className="text-center py-6 text-muted-foreground">No programs</TableCell></TableRow>}
+                      {fundData.byProgram.map((r) => (
+                        <TableRow key={r.id}><TableCell className="font-medium">{r.name}</TableCell><TableCell>{r.scholars}</TableCell><TableCell>{formatPHP(r.disbursed)}</TableCell><TableCell className="text-muted-foreground">{formatPHP(r.queued)}</TableCell></TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Card>
+                <Card>
+                  <CardHeader><CardTitle className="text-base">By Payment Method</CardTitle></CardHeader>
+                  <Table>
+                    <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60"><TableHead>Method</TableHead><TableHead>Payments</TableHead><TableHead>Amount</TableHead><TableHead>Share</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {fundData.byMethod.length === 0 && <TableRow><TableCell colSpan={4} className="text-center py-6 text-muted-foreground">No disbursements</TableCell></TableRow>}
+                      {fundData.byMethod.map((r) => (
+                        <TableRow key={r.method}><TableCell className="font-medium">{r.method}</TableCell><TableCell>{r.count}</TableCell><TableCell>{formatPHP(r.amount)}</TableCell><TableCell>{r.share}%</TableCell></TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Card>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <Card>
+                  <CardHeader className="flex-row items-center justify-between space-y-0">
+                    <CardTitle className="text-base">Recent Payments</CardTitle>
+                    <Button size="sm" variant="ghost" onClick={() => setActiveSection("disbursement")}>Open Disbursement <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>
+                  </CardHeader>
+                  <Table>
+                    <TableBody>
+                      {fundData.recent.length === 0 && <TableRow><TableCell className="text-center py-6 text-muted-foreground">No payments</TableCell></TableRow>}
+                      {fundData.recent.map((p) => {
+                        const prof = profiles.find((x) => x.id === p.user_id);
+                        return (
+                          <TableRow key={p.id}>
+                            <TableCell><p className="font-medium">{prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() : "Unknown"}</p><p className="text-xs text-muted-foreground">{p.method} · {p.reference || "no reference"}</p></TableCell>
+                            <TableCell>{formatPHP(Number(p.amount))}</TableCell>
+                            <TableCell className="text-right">{disbStatusBadge(p.status)}</TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </Card>
+                <Card>
+                  <CardHeader className="flex-row items-center justify-between space-y-0">
+                    <CardTitle className="text-base">Awaiting Payment ({fundData.awaiting.length})</CardTitle>
+                    <Button size="sm" variant="ghost" onClick={() => { openNewPayment(); setActiveSection("disbursement"); }}>Schedule payment <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>
+                  </CardHeader>
+                  <Table>
+                    <TableBody>
+                      {fundData.awaiting.length === 0 && <TableRow><TableCell className="text-center py-6 text-muted-foreground">All approved scholars have a payment</TableCell></TableRow>}
+                      {fundData.awaiting.map((a) => (
+                        <TableRow key={a.id}>
+                          <TableCell><p className="font-medium">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"}</p><p className="text-xs text-muted-foreground">{a.scholarships?.name || "—"}</p></TableCell>
+                          <TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => { openNewPayment(a.id); setActiveSection("disbursement"); }}>Schedule payment</Button></TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Card>
+              </div>
             </div>
           )}
 
           {/* DISBURSEMENT */}
           {activeSection === "disbursement" && (
             <div className="space-y-4 animate-fade-in">
-              <h2 className="text-xl font-display font-bold">Disbursement Management</h2>
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <h2 className="text-xl font-display font-bold">Disbursement Management</h2>
+                <div className="flex gap-2 flex-wrap">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input placeholder="Student, program, reference..." value={paySearch} onChange={(e) => { setPaySearch(e.target.value); setPayPage(1); }} className="pl-9 w-60" />
+                  </div>
+                  <Select value={payFilter} onValueChange={(v) => { setPayFilter(v); setPayPage(1); }}>
+                    <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All status</SelectItem>
+                      <SelectItem value="Pending">Pending</SelectItem>
+                      <SelectItem value="Processing">Processing</SelectItem>
+                      <SelectItem value="Disbursed">Disbursed</SelectItem>
+                      <SelectItem value="Cancelled">Cancelled</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button className="bg-gradient-primary shadow-primary" onClick={() => openNewPayment()}><Plus className="mr-1 h-4 w-4" /> Schedule Payment</Button>
+                </div>
+              </div>
               <Card className="border-warning/30 bg-warning/5">
                 <CardContent className="py-3 flex items-start gap-2">
                   <Lock className="h-4 w-4 text-warning mt-0.5" />
-                  <p className="text-sm text-muted-foreground">Disbursed payments are <strong className="text-foreground">locked</strong>. Only <strong className="text-foreground">Cheque</strong> and <strong className="text-foreground">Cash</strong> are accepted. A receipt upload is required before marking as disbursed.</p>
+                  <p className="text-sm text-muted-foreground">Payments can only be created for <strong className="text-foreground">approved</strong> applications. Disbursed payments are <strong className="text-foreground">locked</strong>. Only <strong className="text-foreground">Cheque</strong> and <strong className="text-foreground">Cash</strong> are accepted, and a receipt upload is required before marking as disbursed.</p>
                 </CardContent>
               </Card>
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Reference / Cheque No.</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Student</TableHead><TableHead>Reference / Cheque No.</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Student prefers</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead>Student receipt</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {payments.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No payments yet</TableCell></TableRow>}
-                    {payments.map((p) => {
-                      const isLocked = p.status === "Disbursed";
+                    {pagedPayments.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No payments found</TableCell></TableRow>}
+                    {pagedPayments.map((p) => {
+                      const open = p.status === "Pending" || p.status === "Processing";
                       return (
-                        <TableRow key={p.id}>
+                        <TableRow key={p.id} className={p.status === "Cancelled" ? "opacity-60" : undefined}>
+                          <TableCell><p className="font-medium">{payStudent(p)}</p><p className="text-xs text-muted-foreground">{payProgram(p)}</p></TableCell>
                           <TableCell className="font-mono text-xs">{p.reference || "—"}</TableCell>
                           <TableCell className="font-medium">{formatPHP(p.amount)}</TableCell>
                           <TableCell>
@@ -874,22 +1574,49 @@ export default function AdminDashboardPage() {
                               {p.method || "—"}
                             </span>
                           </TableCell>
+                          <TableCell>
+                            {p.preferred_method ? (
+                              <Badge variant={p.preferred_method === p.method ? "default" : "secondary"} title="Chosen by the student — the payment method is fixed">
+                                {p.preferred_method}
+                              </Badge>
+                            ) : <span className="text-muted-foreground">—</span>}
+                          </TableCell>
                           <TableCell>{p.scheduled_date || "—"}</TableCell>
                           <TableCell>{disbStatusBadge(p.status)}</TableCell>
-                          <TableCell className="text-right space-x-1">
-                            {isLocked ? (
-                              <Button size="icon" variant="ghost" title="View receipt"><Receipt className="h-4 w-4" /></Button>
-                            ) : (
+                          <TableCell>
+                            {p.status !== "Disbursed" ? <span className="text-muted-foreground">—</span>
+                              : p.student_receipt_at ? (
+                                p.student_receipt_path ? (
+                                  <button type="button" onClick={() => viewStudentReceipt(p)} className="inline-flex items-center gap-1 text-xs font-medium text-success hover:underline cursor-pointer">
+                                    <CheckCircle className="h-3.5 w-3.5" /> Received · {new Date(p.student_receipt_at).toLocaleDateString()}
+                                  </button>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-xs font-medium text-success" title="Student confirmed receiving the cash without attaching a file">
+                                    <CheckCircle className="h-3.5 w-3.5" /> Confirmed (no file) · {new Date(p.student_receipt_at).toLocaleDateString()}
+                                  </span>
+                                )
+                              ) : <Badge variant="secondary">Awaiting</Badge>}
+                          </TableCell>
+                          <TableCell className="text-right space-x-1 whitespace-nowrap">
+                            {p.status === "Disbursed" && (
+                              <Button size="icon" variant="ghost" title="View receipt" onClick={() => viewReceipt(p)}><Receipt className="h-4 w-4" /></Button>
+                            )}
+                            {open && (<>
+                              <Button size="icon" variant="ghost" title="Edit" onClick={() => { setPayMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash"); setPayDialog(p); }}><Pencil className="h-4 w-4" /></Button>
+                              {p.status === "Pending" && (
+                                <Button size="sm" variant="outline" onClick={() => setPaymentStatus(p, "Processing")}>Process</Button>
+                              )}
                               <Button size="sm" onClick={() => {
                                 setDisbPaymentId(p.id);
-                                setDisbMethod("Cash");
-                                setDisbRef("");
+                                setDisbMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash");
+                                setDisbRef(p.reference || "");
                                 setDisbReceipt(null);
                                 setDisbDialog(true);
                               }}>
                                 Mark Disbursed
                               </Button>
-                            )}
+                              <Button size="icon" variant="ghost" title="Cancel payment" onClick={() => setCancelPay(p)}><XCircle className="h-4 w-4 text-destructive" /></Button>
+                            </>)}
                           </TableCell>
                         </TableRow>
                       );
@@ -897,6 +1624,76 @@ export default function AdminDashboardPage() {
                   </TableBody>
                 </Table>
               </Card>
+              <div className="flex items-center justify-between text-sm text-muted-foreground">
+                <span>{filteredPayments.length === 0 ? "0 payments" : `Showing ${(currentPayPage - 1) * PAY_PAGE_SIZE + 1}–${Math.min(currentPayPage * PAY_PAGE_SIZE, filteredPayments.length)} of ${filteredPayments.length}`}</span>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" disabled={currentPayPage <= 1} onClick={() => setPayPage(currentPayPage - 1)}><ChevronLeft className="h-4 w-4" /></Button>
+                  <span>Page {currentPayPage} of {payPages}</span>
+                  <Button size="sm" variant="outline" disabled={currentPayPage >= payPages} onClick={() => setPayPage(currentPayPage + 1)}><ChevronRight className="h-4 w-4" /></Button>
+                </div>
+              </div>
+
+              {/* Create / edit payment dialog */}
+              <Dialog open={payDialog !== null} onOpenChange={(o) => !o && setPayDialog(null)}>
+                <DialogContent className="max-w-md">
+                  <DialogHeader><DialogTitle className="font-display">{payDialog && payDialog !== "new" ? "Edit Payment" : "Schedule Payment"}</DialogTitle></DialogHeader>
+                  {payDialog && (() => {
+                    const cur = payDialog === "new" ? null : payDialog;
+                    return (
+                      <form key={cur?.id ?? `new-${payAppId}`} onSubmit={savePayment} className="space-y-4">
+                        {cur ? (
+                          <div><Label className="text-muted-foreground text-xs">Student</Label><p className="font-medium">{payStudent(cur)} <span className="text-xs text-muted-foreground">· {payProgram(cur)}</span></p></div>
+                        ) : (
+                          <div>
+                            <Label>Approved applicant *</Label>
+                            <Select value={payAppId} onValueChange={setPayAppId}>
+                              <SelectTrigger><SelectValue placeholder={fundData.awaiting.length ? "Select applicant" : "No approved applicants awaiting payment"} /></SelectTrigger>
+                              <SelectContent>
+                                {fundData.awaiting.map((a) => (
+                                  <SelectItem key={a.id} value={a.id}>
+                                    {a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"} — {a.scholarships?.name || "—"}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+                        <div className="grid grid-cols-2 gap-4">
+                          <div><Label>Amount (₱) *</Label><Input name="amount" type="number" min={0.01} step="0.01" required defaultValue={cur?.amount ?? ""} /></div>
+                          <div><Label>Scheduled date</Label><Input name="scheduled_date" type="date" defaultValue={cur?.scheduled_date ?? ""} /></div>
+                        </div>
+                        <div>
+                          <Label>Method</Label>
+                          <div className="grid grid-cols-2 gap-3 mt-1">
+                            {(["Cash", "Cheque"] as const).map((m) => (
+                              <button key={m} type="button" disabled={!!cur?.preferred_method} onClick={() => setPayMethod(m)}
+                                className={`rounded-lg border p-2 text-sm font-medium ${cur?.preferred_method ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${payMethod === m ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/40"}`}>{m}</button>
+                            ))}
+                          </div>
+                        </div>
+                        {cur?.preferred_method && <p className="text-xs text-muted-foreground -mt-2">The student chose {cur.preferred_method}; the method is fixed.</p>}
+                        <div><Label>{payMethod === "Cheque" ? "Cheque number" : "Reference number"}</Label><Input name="reference" defaultValue={cur?.reference ?? ""} placeholder="Optional now — required to disburse a cheque" /></div>
+                        <div><Label>Notes</Label><Textarea name="notes" defaultValue={cur?.notes ?? ""} placeholder="Optional" /></div>
+                        <Button type="submit" className="w-full bg-gradient-primary" disabled={!cur && !payAppId}>{cur ? "Save Changes" : "Schedule Payment"}</Button>
+                      </form>
+                    );
+                  })()}
+                </DialogContent>
+              </Dialog>
+
+              {/* Cancel confirmation */}
+              <Dialog open={!!cancelPay} onOpenChange={(o) => !o && setCancelPay(null)}>
+                <DialogContent>
+                  <DialogHeader><DialogTitle>Cancel this payment?</DialogTitle></DialogHeader>
+                  <p className="text-sm text-muted-foreground">
+                    {cancelPay && `${formatPHP(cancelPay.amount)} for ${payStudent(cancelPay)} will be cancelled and the student notified. This can't be undone, but you can create a new payment.`}
+                  </p>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setCancelPay(null)}>Keep</Button>
+                    <Button variant="destructive" onClick={async () => { if (cancelPay && await setPaymentStatus(cancelPay, "Cancelled")) setCancelPay(null); }}>Cancel payment</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
               {/* Disburse dialog */}
               <Dialog open={disbDialog} onOpenChange={setDisbDialog}>
@@ -912,18 +1709,22 @@ export default function AdminDashboardPage() {
                           <button
                             key={m}
                             type="button"
+                            disabled={disbLocked}
                             onClick={() => { setDisbMethod(m); setDisbRef(""); }}
                             className={`flex items-center justify-center gap-2 rounded-lg border p-3 text-sm font-medium transition-all cursor-pointer ${
                               disbMethod === m
                                 ? "border-primary bg-primary/5 text-primary"
                                 : "border-border hover:border-primary/40"
-                            }`}
+                            } ${disbLocked ? "opacity-60 cursor-not-allowed" : ""}`}
                           >
                             {m === "Cash" ? <Banknote className="h-4 w-4" /> : <Receipt className="h-4 w-4" />} {m}
                           </button>
                         ))}
                       </div>
                     </div>
+                    {disbLocked && (
+                      <p className="text-xs text-muted-foreground">The student chose <strong className="text-foreground">{disbPay?.preferred_method}</strong> for this payment, so the method is fixed.</p>
+                    )}
                     <div>
                       <Label>{disbMethod === "Cheque" ? "Cheque Number *" : "Reference Number"}</Label>
                       <Input
@@ -955,37 +1756,7 @@ export default function AdminDashboardPage() {
                     <Button
                       className="bg-gradient-primary"
                       disabled={disbLoading || !disbReceipt || (disbMethod === "Cheque" && !disbRef.trim())}
-                      onClick={async () => {
-                        if (!disbReceipt) return;
-                        setDisbLoading(true);
-                        try {
-                          const { data: { user } } = await supabase.auth.getUser();
-                          const path = `receipts/${disbPaymentId}/${disbReceipt.name}`;
-                          await supabase.storage.from("documents").upload(path, disbReceipt, { upsert: true });
-                          const { data: urlData } = supabase.storage.from("documents").getPublicUrl(path);
-                          await supabase.from("payments").update({
-                            status: "Disbursed",
-                            method: disbMethod,
-                            reference: disbRef || null,
-                            disbursed_at: new Date().toISOString(),
-                          }).eq("id", disbPaymentId);
-                          await supabase.from("documents").insert({
-                            user_id: user?.id,
-                            document_type: "Payment Receipt",
-                            file_url: urlData.publicUrl,
-                            file_name: disbReceipt.name,
-                          });
-                          const disbPayment = payments.find((pm) => pm.id === disbPaymentId);
-                          await notifyUser(disbPayment?.user_id, "Payment Disbursed", `Your scholarship payment of ${formatPHP(disbPayment?.amount || 0)} has been disbursed.`, "success");
-                          toast.success("Payment marked as disbursed");
-                          setDisbDialog(false);
-                          loadData();
-                        } catch {
-                          toast.error("Failed to process disbursement");
-                        } finally {
-                          setDisbLoading(false);
-                        }
-                      }}
+                      onClick={confirmDisbursement}
                     >
                       {disbLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                       Confirm Disbursement
@@ -1003,7 +1774,7 @@ export default function AdminDashboardPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
                   { title: "List of Scholars", desc: "Complete roster of active and past scholars", icon: Users, exportKey: "scholars" },
-                  { title: "Fund Utilization Report", desc: "Budget allocation vs disbursement breakdown", icon: Wallet, exportKey: "funds" },
+                  { title: "Fund Utilization Report", desc: "Disbursed and queued funds per scholarship program", icon: Wallet, exportKey: "funds" },
                   { title: "Disbursement Summary", desc: "All payments by period, status, and program", icon: Banknote, exportKey: "disbursements" },
                   { title: "Applicant Statistics", desc: "Applications, approval rates, demographics", icon: BarChart3, exportKey: "statistics" },
                 ].map((r, i) => (
@@ -1081,53 +1852,63 @@ export default function AdminDashboardPage() {
           {/* SCHOLAR VERIFICATION */}
           {activeSection === "verification" && (
             <div className="space-y-4 animate-fade-in">
-              <h2 className="text-xl font-display font-bold">Scholar Verification</h2>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-xl font-display font-bold">Scholar Verification</h2>
+                <Select value={verifFilter} onValueChange={setVerifFilter}>
+                  <SelectTrigger className="w-40"><SelectValue placeholder="Status" /></SelectTrigger>
+                  <SelectContent>
+                    {["all", "Pending", "Flagged", "Verified", "Cleared"].map((st) => (
+                      <SelectItem key={st} value={st}>{st === "all" ? "All statuses" : st}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <Card className="border-warning/30 bg-warning/5">
                 <CardContent className="py-3 flex items-start gap-2">
                   <ShieldCheck className="h-4 w-4 text-warning mt-0.5" />
-                  <p className="text-sm text-muted-foreground">Verify applicants to prevent duplicate scholarships. Flagged records require manual review.</p>
+                  <p className="text-sm text-muted-foreground">Applications can only be approved once their verification is Verified or Cleared. Flagged records share a student or government ID with another applicant.</p>
                 </CardContent>
               </Card>
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Applicant</TableHead><TableHead>Student ID</TableHead><TableHead>Gov ID</TableHead><TableHead>Existing Scholarship</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Applicant</TableHead><TableHead>Application</TableHead><TableHead>Student ID</TableHead><TableHead>Gov ID</TableHead><TableHead>Existing Scholarship</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {verifications.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No verification records</TableCell></TableRow>}
-                    {verifications.map((v) => {
+                    {verifications.filter((v) => verifFilter === "all" || v.verification_status === verifFilter).length === 0 && (
+                      <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No verification records</TableCell></TableRow>
+                    )}
+                    {verifications.filter((v) => verifFilter === "all" || v.verification_status === verifFilter).map((v) => {
                       const prof = profiles.find(p => p.id === v.user_id);
                       const name = prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() : "Unknown";
+                      const app = applications.find((a) => a.id === v.application_id);
                       return (
                         <TableRow key={v.id}>
                           <TableCell className="font-medium">{name}</TableCell>
+                          <TableCell className="text-xs">
+                            {app ? (<><div>{app.scholarships?.name || "—"}</div><div className="text-muted-foreground">{app.status}</div></>) : "—"}
+                          </TableCell>
                           <TableCell className="font-mono text-xs">{v.student_id_number || "—"}</TableCell>
                           <TableCell className="font-mono text-xs">{v.government_id || "—"}</TableCell>
-                          <TableCell>{v.has_existing_scholarship ? <Badge variant="destructive">Yes</Badge> : <Badge variant="outline">No</Badge>}</TableCell>
+                          <TableCell>
+                            {v.has_existing_scholarship ? <Badge variant="destructive">Yes</Badge> : <Badge variant="outline">No</Badge>}
+                            {v.existing_scholarship_details && <p className="text-xs text-muted-foreground mt-1 max-w-[200px]">{v.existing_scholarship_details}</p>}
+                          </TableCell>
                           <TableCell>
                             <Badge variant={v.verification_status === "Verified" ? "default" : v.verification_status === "Flagged" ? "destructive" : "secondary"}>
                               {v.verification_status}
                             </Badge>
+                            {v.notes && <p className="text-xs text-muted-foreground mt-1 max-w-[200px] whitespace-pre-line">{v.notes}</p>}
                           </TableCell>
                           <TableCell className="text-right space-x-1">
-                            {v.verification_status === "Pending" && (<>
-                              <Button size="sm" onClick={async () => {
-                                await supabase.from("scholar_verifications").update({ verification_status: "Verified", verified_at: new Date().toISOString() }).eq("id", v.id);
-                                await logAudit("verify_scholar", "scholar_verifications", v.id, null, { status: "Verified" });
-                                toast.success("Verified!"); loadData();
-                              }}>Verify</Button>
-                              <Button size="sm" variant="destructive" onClick={async () => {
-                                await supabase.from("scholar_verifications").update({ verification_status: "Flagged", verified_at: new Date().toISOString() }).eq("id", v.id);
-                                await logAudit("flag_scholar", "scholar_verifications", v.id, null, { status: "Flagged" });
-                                toast.error("Flagged!"); loadData();
-                              }}>Flag</Button>
-                            </>)}
+                            {(v.verification_status === "Pending" || v.verification_status === "Flagged") && (
+                              <Button size="sm" onClick={() => { setVerifNotes(""); setVerifAction({ v, status: "Verified" }); }}>Verify</Button>
+                            )}
+                            {v.verification_status === "Pending" && (
+                              <Button size="sm" variant="destructive" onClick={() => { setVerifNotes(""); setVerifAction({ v, status: "Flagged" }); }}>Flag</Button>
+                            )}
                             {v.verification_status === "Flagged" && (
-                              <Button size="sm" variant="outline" onClick={async () => {
-                                await supabase.from("scholar_verifications").update({ verification_status: "Cleared" }).eq("id", v.id);
-                                await logAudit("clear_scholar", "scholar_verifications", v.id, null, { status: "Cleared" });
-                                toast.success("Cleared!"); loadData();
-                              }}>Clear</Button>
+                              <Button size="sm" variant="outline" onClick={() => { setVerifNotes(""); setVerifAction({ v, status: "Cleared" }); }}>Clear</Button>
                             )}
                           </TableCell>
                         </TableRow>
@@ -1136,98 +1917,19 @@ export default function AdminDashboardPage() {
                   </TableBody>
                 </Table>
               </Card>
-            </div>
-          )}
-
-          {/* USER MANAGEMENT */}
-          {activeSection === "user-management" && (
-            <div className="space-y-4 animate-fade-in">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-display font-bold">User Management</h2>
-                <Dialog>
-                  <DialogTrigger asChild><Button size="sm"><Plus className="mr-1 h-4 w-4" /> Add Admin</Button></DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader><DialogTitle>Add Admin User</DialogTitle></DialogHeader>
-                    <form onSubmit={async (e) => {
-                      e.preventDefault();
-                      const fd = new FormData(e.currentTarget);
-                      const email = fd.get("email") as string;
-                      const role = fd.get("role") as string;
-                      const existingUser = profiles.find(p => p.email === email);
-                      if (!existingUser) { toast.error("User not found. They must register first."); return; }
-                      await supabase.from("user_roles").update({ role }).eq("user_id", existingUser.id);
-                      await logAudit("assign_role", "user_roles", existingUser.id, null, { role });
-                      toast.success(`${email} promoted to ${role}`); loadData();
-                    }} className="space-y-4">
-                      <div><Label>User Email (must be registered)</Label><Input name="email" required placeholder="user@email.com" /></div>
-                      <div><Label>Role</Label>
-                        <Select name="role" defaultValue="reviewer">
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="admin">Admin</SelectItem>
-                            <SelectItem value="super_admin">Super Admin</SelectItem>
-                            <SelectItem value="finance_admin">Finance Admin</SelectItem>
-                            <SelectItem value="reviewer">Reviewer</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <Button type="submit" className="w-full">Assign Role</Button>
-                    </form>
-                  </DialogContent>
-                </Dialog>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                {[
-                  { label: "Super Admin", desc: "Full system access", color: "border-destructive/30" },
-                  { label: "Admin", desc: "Manage all modules", color: "border-primary/30" },
-                  { label: "Finance Admin", desc: "Funds & disbursement", color: "border-success/30" },
-                  { label: "Reviewer", desc: "Review applications", color: "border-warning/30" },
-                ].map(r => (
-                  <Card key={r.label} className={r.color}>
-                    <CardContent className="py-4">
-                      <p className="text-sm font-semibold">{r.label}</p>
-                      <p className="text-xs text-muted-foreground">{r.desc}</p>
-                      <p className="text-lg font-bold mt-1">{allUserRoles.filter(u => u.role === r.label.toLowerCase().replace(" ", "_")).length}</p>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-              <Card>
-                <Table>
-                  <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead>Role</TableHead><TableHead className="text-right">Actions</TableHead>
-                  </TableRow></TableHeader>
-                  <TableBody>
-                    {allUserRoles.filter(u => u.role !== "student").map((u) => {
-                      const prof = profiles.find(p => p.id === u.user_id);
-                      const name = prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() || prof.email : "Unknown";
-                      return (
-                        <TableRow key={u.id}>
-                          <TableCell className="font-medium">{name}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{prof?.email || "—"}</TableCell>
-                          <TableCell><Badge variant={u.role === "super_admin" ? "destructive" : "default"}>{u.role}</Badge></TableCell>
-                          <TableCell className="text-right space-x-1">
-                            <Select defaultValue={u.role} onValueChange={async (val) => {
-                              await supabase.from("user_roles").update({ role: val }).eq("id", u.id);
-                              await logAudit("change_role", "user_roles", u.user_id, { role: u.role }, { role: val });
-                              toast.success("Role updated"); loadData();
-                            }}>
-                              <SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="admin">Admin</SelectItem>
-                                <SelectItem value="super_admin">Super Admin</SelectItem>
-                                <SelectItem value="finance_admin">Finance Admin</SelectItem>
-                                <SelectItem value="reviewer">Reviewer</SelectItem>
-                                <SelectItem value="student">Student</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </Card>
+              <Dialog open={!!verifAction} onOpenChange={(o) => { if (!o) setVerifAction(null); }}>
+                <DialogContent>
+                  <DialogHeader><DialogTitle>Mark as {verifAction?.status}</DialogTitle></DialogHeader>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Notes (optional)</Label>
+                    <Textarea value={verifNotes} onChange={(e) => setVerifNotes(e.target.value)} placeholder="Reason or evidence..." />
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setVerifAction(null)}>Cancel</Button>
+                    <Button onClick={submitVerification}>Confirm</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </div>
           )}
 

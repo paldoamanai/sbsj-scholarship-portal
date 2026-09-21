@@ -37,9 +37,25 @@ export async function POST(request: Request) {
 
   const body = await request.json();
 
+  // Whitelist columns so clients can't set arbitrary fields.
+  const payload = {
+    name: String(body.name ?? "").trim(),
+    description: body.description ?? null,
+    slots: Number(body.slots) || 0,
+    deadline: body.deadline || null,
+    eligibility: body.eligibility ?? null,
+    is_active: body.is_active ?? true,
+  };
+  if (!payload.name) {
+    return NextResponse.json({ error: "Name is required" }, { status: 400 });
+  }
+  if (payload.slots < 0) {
+    return NextResponse.json({ error: "Slots cannot be negative" }, { status: 400 });
+  }
+
   const { data, error } = await supabase
     .from("scholarships")
-    .insert(body)
+    .insert(payload)
     .select()
     .single();
 

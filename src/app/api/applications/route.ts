@@ -78,7 +78,8 @@ export async function POST(request: Request) {
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    // P0001 = RAISE EXCEPTION from the scholarship rules trigger (closed, past deadline, full).
+    return NextResponse.json({ error: error.message, code: error.code === "P0001" ? "PROGRAM_CLOSED" : undefined }, { status: error.code === "P0001" ? 409 : 500 });
   }
 
   return NextResponse.json(data, { status: 201 });

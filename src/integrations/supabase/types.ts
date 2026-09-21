@@ -133,6 +133,11 @@ export type Database = {
           scheduled_date: string | null
           disbursed_at: string | null
           created_at: string
+          receipt_path: string | null
+          notes: string | null
+          student_receipt_path: string | null
+          student_receipt_at: string | null
+          preferred_method: string | null
         }
         Insert: {
           id?: string
@@ -145,6 +150,11 @@ export type Database = {
           scheduled_date?: string | null
           disbursed_at?: string | null
           created_at?: string
+          receipt_path?: string | null
+          notes?: string | null
+          student_receipt_path?: string | null
+          student_receipt_at?: string | null
+          preferred_method?: string | null
         }
         Update: {
           id?: string
@@ -157,6 +167,11 @@ export type Database = {
           scheduled_date?: string | null
           disbursed_at?: string | null
           created_at?: string
+          receipt_path?: string | null
+          notes?: string | null
+          student_receipt_path?: string | null
+          student_receipt_at?: string | null
+          preferred_method?: string | null
         }
         Relationships: [
           {
@@ -187,6 +202,8 @@ export type Database = {
           course: string | null
           year_level: string | null
           average_grade: number | null
+          student_id_number: string | null
+          government_id: string | null
           is_active: boolean
           created_at: string
           updated_at: string
@@ -209,6 +226,8 @@ export type Database = {
           course?: string | null
           year_level?: string | null
           average_grade?: number | null
+          student_id_number?: string | null
+          government_id?: string | null
           is_active?: boolean
           created_at?: string
           updated_at?: string
@@ -231,6 +250,8 @@ export type Database = {
           course?: string | null
           year_level?: string | null
           average_grade?: number | null
+          student_id_number?: string | null
+          government_id?: string | null
           is_active?: boolean
           created_at?: string
           updated_at?: string
@@ -280,19 +301,19 @@ export type Database = {
         Row: {
           id: string
           user_id: string
-          role: "admin" | "student" | "super_admin" | "finance_admin" | "reviewer"
+          role: "admin" | "student"
           created_at: string
         }
         Insert: {
           id?: string
           user_id: string
-          role: "admin" | "student" | "super_admin" | "finance_admin" | "reviewer"
+          role: "admin" | "student"
           created_at?: string
         }
         Update: {
           id?: string
           user_id?: string
-          role?: "admin" | "student" | "super_admin" | "finance_admin" | "reviewer"
+          role?: "admin" | "student"
           created_at?: string
         }
         Relationships: []
@@ -418,10 +439,31 @@ export type Database = {
     Functions: {
       has_role: {
         Args: {
-          _role: "admin" | "student" | "super_admin" | "finance_admin" | "reviewer"
+          _role: "admin" | "student"
           _user_id: string
         }
         Returns: boolean
+      }
+      set_payment_preference: {
+        Args: {
+          _payment_id: string
+          _method: string
+        }
+        Returns: undefined
+      }
+      submit_student_receipt: {
+        Args: {
+          _payment_id: string
+          _path?: string | null
+        }
+        Returns: undefined
+      }
+      set_student_active: {
+        Args: {
+          _user_id: string
+          _active: boolean
+        }
+        Returns: undefined
       }
       is_admin: {
         Args: {
@@ -431,7 +473,7 @@ export type Database = {
       }
     }
     Enums: {
-      app_role: "admin" | "student" | "super_admin" | "finance_admin" | "reviewer"
+      app_role: "admin" | "student"
     }
     CompositeTypes: {
       [_ in never]: never

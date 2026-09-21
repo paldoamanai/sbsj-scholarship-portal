@@ -39,7 +39,7 @@ export default function ScholarshipsPage() {
   const [scholarships, setScholarships] = useState<Scholarship[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [sortBy, setSortBy] = useState<"deadline" | "amount" | "slots">("deadline");
+  const [sortBy, setSortBy] = useState<"deadline" | "slots">("deadline");
 
   useEffect(() => {
     fetch("/api/scholarships")
@@ -59,7 +59,6 @@ export default function ScholarshipsPage() {
       );
     })
     .sort((a, b) => {
-      if (sortBy === "amount") return (b.amount ?? 0) - (a.amount ?? 0);
       if (sortBy === "slots") return (b.slots ?? 0) - (a.slots ?? 0);
       // deadline: nulls last, soonest first
       if (!a.deadline) return 1;
@@ -110,7 +109,7 @@ export default function ScholarshipsPage() {
               <div className="flex items-center gap-2">
                 <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm text-muted-foreground">Sort:</span>
-                {(["deadline", "amount", "slots"] as const).map((key) => (
+                {(["deadline", "slots"] as const).map((key) => (
                   <Button
                     key={key}
                     size="sm"

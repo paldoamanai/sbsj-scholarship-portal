@@ -156,6 +156,7 @@ export default function RegisterPage() {
   const [form, setForm] = useState({
     lastName: "", firstName: "", middleName: "", sex: "", civilStatus: "",
     nationality: "Filipino", phone: "", barangay: "", municipality: "",
+    studentIdNumber: "", governmentId: "",
   });
   const [dob, setDob] = useState<Date | undefined>(undefined);
   const [dobOpen, setDobOpen] = useState(false);
@@ -218,6 +219,8 @@ export default function RegisterPage() {
         errs.phone = "Valid PH phone required";
       if (!form.barangay.trim()) errs.barangay = "Required";
       if (!form.municipality.trim()) errs.municipality = "Required";
+      if (!form.studentIdNumber.trim()) errs.studentIdNumber = "Required";
+      if (!form.governmentId.trim()) errs.governmentId = "Required";
     } else if (step === 2) {
       if (!academic.schoolName.trim()) errs.schoolName = "Required";
       if (!academic.course.trim()) errs.course = "Required";
@@ -255,6 +258,8 @@ export default function RegisterPage() {
       course: academic.course,
       year_level: academic.yearLevel,
       average_grade: parseFloat(academic.averageGrade),
+      student_id_number: form.studentIdNumber,
+      government_id: form.governmentId,
     };
 
     // 1. Create auth user. Metadata is copied into public.profiles by handle_new_user,
@@ -804,7 +809,6 @@ export default function RegisterPage() {
                                 )}
                                 <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground">
                                   <span>📅 Deadline: <span className="text-foreground font-medium">{deadline}</span></span>
-                                  {s.amount > 0 && <span>💰 ₱{s.amount.toLocaleString()} / scholar</span>}
                                   {s.slots > 0 && <span>👥 {s.slots} slot{s.slots !== 1 ? "s" : ""}</span>}
                                 </div>
                               </div>
