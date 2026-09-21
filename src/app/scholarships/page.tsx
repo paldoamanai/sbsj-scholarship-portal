@@ -6,37 +6,19 @@ import Link from "next/link";
 import Layout from "@/components/Layout";
 import LandingFooter from "@/components/LandingFooter";
 import ScholarshipCard from "@/components/ScholarshipCard";
+import { applyHref, type PublicScholarship } from "@/lib/scholarships";
+import { useSignedIn } from "@/hooks/use-signed-in";
+import { useSystemSettings } from "@/hooks/use-system-settings";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { GraduationCap, Search, ArrowRight, SlidersHorizontal } from "lucide-react";
 
-interface Scholarship {
-  id: string;
-  name: string;
-  description: string | null;
-  amount: number;
-  slots: number;
-  is_active: boolean;
-  deadline: string | null;
-  eligibility: string | null;
-}
-
-function formatDeadline(deadline: string | null): string {
-  if (!deadline) return "Open";
-  const d = new Date(deadline);
-  if (isNaN(d.getTime())) return deadline;
-  const now = new Date();
-  const diffDays = Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-  if (diffDays < 0) return "Closed";
-  if (diffDays === 0) return "Due today";
-  if (diffDays <= 7) return `${diffDays}d left`;
-  return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
-}
-
 export default function ScholarshipsPage() {
   const router = useRouter();
-  const [scholarships, setScholarships] = useState<Scholarship[]>([]);
+  const signedIn = useSignedIn();
+  const { settings } = useSystemSettings();
+  const [scholarships, setScholarships] = useState<PublicScholarship[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"deadline" | "slots">("deadline");
@@ -59,7 +41,10 @@ export default function ScholarshipsPage() {
       );
     })
     .sort((a, b) => {
-      if (sortBy === "slots") return (b.slots ?? 0) - (a.slots ?? 0);
+      // Programs you can apply to right now come first.
+      const rank = (x: PublicScholarship) => (x.availability === "open" ? 0 : x.availability === "upcoming" ? 1 : 2);
+      if (rank(a) !== rank(b)) return rank(a) - rank(b);
+      if (sortBy === "slots") return (b.slots_left ?? Infinity) - (a.slots_left ?? Infinity);
       // deadline: nulls last, soonest first
       if (!a.deadline) return 1;
       if (!b.deadline) return -1;
@@ -155,11 +140,9 @@ export default function ScholarshipsPage() {
               {filtered.map((s, i) => (
                 <div key={s.id} className="animate-fade-in-up" style={{ animationDelay: `${i * 0.05}s` }}>
                   <ScholarshipCard
-                    name={s.name}
-                    description={s.description ?? ""}
-                    eligibility={s.eligibility ?? "Open to all qualified applicants"}
-                    deadline={formatDeadline(s.deadline)}
-                    onApply={() => router.push("/register")}
+                    program={s}
+                    globalMinGrade={settings.min_grade_requirement}
+                    onApply={() => router.push(applyHref(s.id, signedIn))}
                   />
                 </div>
               ))}

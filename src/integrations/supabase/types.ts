@@ -360,6 +360,10 @@ export type Database = {
           deadline: string | null
           eligibility: string | null
           created_at: string
+          open_date: string | null
+          min_grade: number | null
+          year_levels: string[] | null
+          municipality: string | null
         }
         Insert: {
           id?: string
@@ -372,6 +376,10 @@ export type Database = {
           deadline?: string | null
           eligibility?: string | null
           created_at?: string
+          open_date?: string | null
+          min_grade?: number | null
+          year_levels?: string[] | null
+          municipality?: string | null
         }
         Update: {
           id?: string
@@ -384,6 +392,10 @@ export type Database = {
           deadline?: string | null
           eligibility?: string | null
           created_at?: string
+          open_date?: string | null
+          min_grade?: number | null
+          year_levels?: string[] | null
+          municipality?: string | null
         }
         Relationships: []
       }
@@ -527,6 +539,25 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      scholarships_public: {
+        Args: Record<string, never>
+        Returns: {
+          id: string
+          name: string
+          description: string | null
+          amount: number | null
+          slots: number
+          slots_left: number | null
+          deadline: string | null
+          open_date: string | null
+          eligibility: string | null
+          min_grade: number | null
+          year_levels: string[] | null
+          municipality: string | null
+          created_at: string
+          availability: "open" | "upcoming" | "closed" | "full"
+        }[]
+      }
       has_role: {
         Args: {
           _role: "admin" | "student"

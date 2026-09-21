@@ -6,6 +6,9 @@ import { useRouter } from "next/navigation";
 import Layout from "@/components/Layout";
 import LandingFooter from "@/components/LandingFooter";
 import ScholarshipCard from "@/components/ScholarshipCard";
+import { applyHref, type PublicScholarship } from "@/lib/scholarships";
+import { useSignedIn } from "@/hooks/use-signed-in";
+import { useSystemSettings } from "@/hooks/use-system-settings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -82,25 +85,6 @@ function SectionLabel({ children, light = false }: { children: string; light?: b
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
-interface Scholarship {
-  id: string;
-  name: string;
-  description: string | null;
-  eligibility: string | null;
-  deadline: string | null;
-}
-
-function formatDeadline(deadline: string | null): string {
-  if (!deadline) return "Open";
-  const d = new Date(deadline);
-  if (isNaN(d.getTime())) return deadline;
-  const now = new Date();
-  const diffDays = Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-  if (diffDays < 0) return "Closed";
-  if (diffDays === 0) return "Due today";
-  if (diffDays <= 7) return `${diffDays}d left`;
-  return d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
-}
 
 const features = [
   { icon: Zap,      title: "Easy Application",     desc: "Apply in minutes with guided step-by-step forms — no confusion, no paperwork hassle." },
@@ -128,7 +112,9 @@ const contactItems = [
 export default function HomePage() {
   const router = useRouter();
   const [contactSending, setContactSending] = useState(false);
-  const [scholarships, setScholarships] = useState<Scholarship[]>([]);
+  const signedIn = useSignedIn();
+  const { settings } = useSystemSettings();
+  const [scholarships, setScholarships] = useState<PublicScholarship[]>([]);
   const [scholarshipsLoading, setScholarshipsLoading] = useState(true);
 
   useEffect(() => {
@@ -154,6 +140,8 @@ export default function HomePage() {
 
   const featuredScholarships = [...scholarships]
     .sort((a, b) => {
+      const rank = (x: PublicScholarship) => (x.availability === "open" ? 0 : x.availability === "upcoming" ? 1 : 2);
+      if (rank(a) !== rank(b)) return rank(a) - rank(b);
       if (!a.deadline) return 1;
       if (!b.deadline) return -1;
       return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
@@ -285,11 +273,9 @@ export default function HomePage() {
               {featuredScholarships.map((s, i) => (
                 <Reveal key={s.id} delay={i * 80}>
                   <ScholarshipCard
-                    name={s.name}
-                    description={s.description ?? ""}
-                    eligibility={s.eligibility ?? "Open to all qualified applicants"}
-                    deadline={formatDeadline(s.deadline)}
-                    onApply={() => router.push("/register")}
+                    program={s}
+                    globalMinGrade={settings.min_grade_requirement}
+                    onApply={() => router.push(applyHref(s.id, signedIn))}
                   />
                 </Reveal>
               ))}

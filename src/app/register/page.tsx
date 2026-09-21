@@ -21,6 +21,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { DOC_MIME, uploadUserDocument } from "@/lib/documents";
+import { availabilityInfo, peso, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
 import type { RegistrationProfileFields } from "@/lib/registration-profile";
 
 const stepLabels = ["Account", "Personal Info", "School Info", "Documents", "Apply"];
@@ -173,13 +174,15 @@ export default function RegisterPage() {
 
   // Step 4 — Scholarship selection
   const [selectedScholarship, setSelectedScholarship] = useState("");
-  const [scholarships, setScholarships] = useState<{
-    id: string; name: string; description: string | null;
-    eligibility: string | null; deadline: string | null;
-    amount: number; slots: number;
-  }[]>([]);
+  const [scholarships, setScholarships] = useState<PublicScholarship[]>([]);
   const [scholarsLoading, setScholarsLoading] = useState(false);
   const [scholarsError, setScholarsError] = useState(false);
+
+  // Coming from "Apply Now" on the public pages with a program already chosen.
+  useEffect(() => {
+    const program = new URLSearchParams(window.location.search).get("program");
+    if (program) setSelectedScholarship(program);
+  }, []);
 
   useEffect(() => {
     if (step === 4) {
@@ -768,6 +771,8 @@ export default function RegisterPage() {
                     <div className="space-y-3">
                       {scholarships.map((s) => {
                         const isSelected = selectedScholarship === s.id;
+                        const avail = availabilityInfo(s);
+                        const reqs = requirementLines(s);
                         const deadline = s.deadline
                           ? new Date(s.deadline).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })
                           : "Open";
@@ -775,8 +780,9 @@ export default function RegisterPage() {
                           <button
                             key={s.id}
                             type="button"
+                            disabled={!avail.canApply}
                             onClick={() => setSelectedScholarship(isSelected ? "" : s.id)}
-                            className={`w-full text-left rounded-xl border p-4 transition-all duration-200 cursor-pointer ${
+                            className={`w-full text-left rounded-xl border p-4 transition-all duration-200 ${avail.canApply ? "cursor-pointer" : "opacity-60 cursor-not-allowed"} ${
                               isSelected
                                 ? "border-primary bg-primary/5 shadow-sm"
                                 : "border-border hover:border-primary/40 hover:bg-muted/30"
@@ -792,14 +798,16 @@ export default function RegisterPage() {
                                     {s.description}
                                   </p>
                                 )}
-                                {s.eligibility && (
+                                {(reqs.length > 0 || s.eligibility) && (
                                   <p className="text-xs text-muted-foreground">
-                                    <span className="font-medium text-foreground">Eligibility:</span> {s.eligibility}
+                                    <span className="font-medium text-foreground">Eligibility:</span> {[...reqs, s.eligibility].filter(Boolean).join(" · ")}
                                   </p>
                                 )}
                                 <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground">
                                   <span>📅 Deadline: <span className="text-foreground font-medium">{deadline}</span></span>
-                                  {s.slots > 0 && <span>👥 {s.slots} slot{s.slots !== 1 ? "s" : ""}</span>}
+                                  {Number(s.amount) > 0 && <span>💰 <span className="text-foreground font-medium">{peso(s.amount)}</span> per scholar</span>}
+                                  <span>👥 {slotsLabel(s)}</span>
+                                  {!avail.canApply && <span className="font-semibold text-destructive">{avail.label}</span>}
                                 </div>
                               </div>
                               <div className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors ${

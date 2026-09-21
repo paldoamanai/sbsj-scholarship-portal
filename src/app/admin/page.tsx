@@ -20,12 +20,14 @@ import {
   Menu, X, Search, BookOpen, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock, Download,
   FileDown, Receipt, Loader2, User, Upload, ArrowRight,
-   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw,
+   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { createClient } from "@/lib/supabase/client";
+import { scholarshipSchema } from "@/validations/scholarship";
+import { YEAR_LEVELS } from "@/lib/scholarships";
 import NotificationInbox from "@/components/notifications/NotificationInbox";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
 import OverviewPanel from "@/components/admin/OverviewPanel";
@@ -119,6 +121,7 @@ export default function AdminDashboardPage() {
   const [schFilter, setSchFilter] = useState("all");
   const [schDialog, setSchDialog] = useState<"new" | Tables<"scholarships"> | null>(null);
   const [schActive, setSchActive] = useState(true);
+  const [schYearLevels, setSchYearLevels] = useState<string[]>([]);
   const [deleteSch, setDeleteSch] = useState<Tables<"scholarships"> | null>(null);
   const [fundPeriod, setFundPeriod] = useState("all"); // shared by Fund Management and Reports
   const [fromDate, setFromDate] = useState("");
@@ -389,6 +392,16 @@ export default function AdminDashboardPage() {
 
   const isClosed = (sch: Tables<"scholarships">) => !!sch.deadline && sch.deadline < new Date().toISOString().slice(0, 10);
   const approvedCount = (schId: string) => applications.filter((a) => a.scholarship_id === schId && a.status === "Approved").length;
+  // Money committed to a program: approved awards (the program amount where none was set).
+  const committedFor = (sch: Tables<"scholarships">) =>
+    applications.filter((a) => a.scholarship_id === sch.id && a.status === "Approved")
+      .reduce((t, a) => t + Number(a.amount_approved ?? sch.amount ?? 0), 0);
+  // Default payment amount for an application: its approved award, else the program's award.
+  const awardFor = (appId: string) => {
+    const a = applications.find((x) => x.id === appId);
+    const v = Number(a?.amount_approved ?? scholarships.find((x) => x.id === a?.scholarship_id)?.amount ?? 0);
+    return v > 0 ? v : "";
+  };
   const applicantCount = (schId: string) => applications.filter((a) => a.scholarship_id === schId).length;
   const filteredScholarships = scholarships.filter((sch) => {
     const q = schSearch.trim().toLowerCase();
@@ -402,30 +415,58 @@ export default function AdminDashboardPage() {
   const saveScholarship = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    const name = String(fd.get("name") || "").trim();
-    const slots = Number(fd.get("slots") || 0);
-    if (!name) { toast.error("Name is required"); return; }
-    if (!Number.isInteger(slots) || slots < 0) { toast.error("Slots must be a whole number, 0 or more"); return; }
-    const payload = {
-      name,
-      description: String(fd.get("description") || "").trim() || null,
-      eligibility: String(fd.get("eligibility") || "").trim() || null,
-      slots,
-      deadline: String(fd.get("deadline") || "") || null,
-      is_active: schActive,
-    };
-    if (schDialog && schDialog !== "new") {
-      const { error } = await supabase.from("scholarships").update(payload).eq("id", schDialog.id);
+    const text = (k: string) => String(fd.get(k) ?? "");
+    const num = (k: string) => (text(k).trim() === "" ? 0 : Number(text(k)));
+    const parsed = scholarshipSchema.safeParse({
+      name: text("name"), description: text("description"), eligibility: text("eligibility"),
+      amount: num("amount"), total_budget: num("total_budget"), slots: num("slots"),
+      open_date: text("open_date") || null, deadline: text("deadline") || null,
+      min_grade: text("min_grade").trim() === "" ? null : Number(text("min_grade")),
+      year_levels: schYearLevels, municipality: text("municipality"), is_active: schActive,
+    });
+    if (!parsed.success) { toast.error(parsed.error.issues[0]?.message ?? "Check the form"); return; }
+    const payload = parsed.data;
+    const editing = schDialog && schDialog !== "new" ? schDialog : null;
+
+    const today = new Date().toISOString().slice(0, 10);
+    if (payload.deadline && payload.deadline < today && (!editing || payload.deadline !== editing.deadline)) {
+      toast.error("The deadline cannot be in the past"); return;
+    }
+    if (editing) {
+      const approved = approvedCount(editing.id);
+      if (payload.slots > 0 && payload.slots < approved) { toast.error(`Slots cannot be lower than the ${approved} scholar(s) already approved`); return; }
+      const committed = committedFor(editing);
+      if (payload.total_budget > 0 && payload.total_budget < committed) { toast.error(`The budget cannot be lower than the ${formatPHP(committed)} already committed`); return; }
+    }
+
+    if (editing) {
+      const { error } = await supabase.from("scholarships").update(payload).eq("id", editing.id);
       if (error) { toast.error(error.message); return; }
-      await logAudit("update_scholarship", "scholarships", schDialog.id, { name: schDialog.name, slots: schDialog.slots, deadline: schDialog.deadline, is_active: schDialog.is_active }, payload);
+      // Log every field that can change, not just a few.
+      const before = Object.fromEntries(Object.keys(payload).map((k) => [k, editing[k as keyof typeof editing] ?? null]));
+      await logAudit("update_scholarship", "scholarships", editing.id, before as Json, payload as unknown as Json);
       toast.success("Scholarship updated");
     } else {
       const { data, error } = await supabase.from("scholarships").insert(payload).select().single();
       if (error) { toast.error(error.message); return; }
-      await logAudit("create_scholarship", "scholarships", data.id, null, payload);
+      await logAudit("create_scholarship", "scholarships", data.id, null, payload as unknown as Json);
       toast.success("Scholarship added");
     }
     setSchDialog(null); loadData();
+  };
+
+  // Start next year's program from an existing one: same rules, disabled and undated until reviewed.
+  const duplicateScholarship = async (sch: Tables<"scholarships">) => {
+    const copy = {
+      name: `${sch.name} (copy)`, description: sch.description, eligibility: sch.eligibility,
+      amount: sch.amount, total_budget: sch.total_budget, slots: sch.slots, min_grade: sch.min_grade,
+      year_levels: sch.year_levels, municipality: sch.municipality, open_date: null, deadline: null, is_active: false,
+    };
+    const { data, error } = await supabase.from("scholarships").insert(copy).select().single();
+    if (error) { toast.error(error.message); return; }
+    await logAudit("duplicate_scholarship", "scholarships", data.id, { source: sch.id } as Json, copy as unknown as Json);
+    toast.success(`Created "${copy.name}"`, { description: "It's disabled and has no dates yet. Edit it to set them and enable it." });
+    loadData();
   };
 
   const toggleScholarship = async (sch: Tables<"scholarships">) => {
@@ -439,7 +480,9 @@ export default function AdminDashboardPage() {
     if (!deleteSch) return;
     const { error } = await supabase.from("scholarships").delete().eq("id", deleteSch.id);
     if (error) {
-      toast.error("Could not delete", { description: "This program likely has applications. Disable it instead." });
+      toast.error("Could not delete", {
+        description: error.code === "23503" ? "This program has applications, so it can't be deleted. Disable it instead." : error.message,
+      });
       return;
     }
     await logAudit("delete_scholarship", "scholarships", deleteSch.id, { name: deleteSch.name }, null);
@@ -1236,7 +1279,7 @@ export default function AdminDashboardPage() {
                       <SelectItem value="inactive">Disabled</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Button className="bg-gradient-primary shadow-primary" onClick={() => { setSchActive(true); setSchDialog("new"); }}>
+                  <Button className="bg-gradient-primary shadow-primary" onClick={() => { setSchActive(true); setSchYearLevels([]); setSchDialog("new"); }}>
                     <Plus className="mr-1 h-4 w-4" /> Add Scholarship
                   </Button>
                 </div>
@@ -1252,10 +1295,38 @@ export default function AdminDashboardPage() {
                         <div><Label>Name</Label><Input name="name" required defaultValue={cur?.name ?? ""} placeholder="Scholarship name" /></div>
                         <div><Label>Description</Label><Textarea name="description" defaultValue={cur?.description ?? ""} placeholder="Description" /></div>
                         <div><Label>Eligibility</Label><Textarea name="eligibility" defaultValue={cur?.eligibility ?? ""} placeholder="Who can apply?" /></div>
-                        <div>
-                          <div><Label>Slots (0 = unlimited)</Label><Input name="slots" type="number" min={0} step={1} defaultValue={cur?.slots ?? ""} placeholder="50" /></div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div><Label>Award per scholar (₱)</Label><Input name="amount" type="number" min={0} step="0.01" defaultValue={cur?.amount ?? 0} /></div>
+                          <div><Label>Total budget (₱, 0 = no cap)</Label><Input name="total_budget" type="number" min={0} step="0.01" defaultValue={cur?.total_budget ?? 0} /></div>
                         </div>
-                        <div><Label>Deadline</Label><Input name="deadline" type="date" defaultValue={cur?.deadline ?? ""} /></div>
+                        <p className="-mt-2 text-xs text-muted-foreground">
+                          Approving a scholar awards this amount, and approvals stop once the budget is used up.
+                          {cur && cur.total_budget > 0 && ` Committed so far: ${formatPHP(committedFor(cur))} of ${formatPHP(cur.total_budget)}.`}
+                        </p>
+                        <div><Label>Slots (0 = unlimited)</Label><Input name="slots" type="number" min={0} step={1} defaultValue={cur?.slots ?? ""} placeholder="50" /></div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div><Label>Applications open</Label><Input name="open_date" type="date" defaultValue={cur?.open_date ?? ""} /></div>
+                          <div><Label>Deadline</Label><Input name="deadline" type="date" defaultValue={cur?.deadline ?? ""} /></div>
+                        </div>
+                        <div className="rounded-md border p-3 space-y-3">
+                          <p className="text-sm font-medium">Eligibility rules <span className="font-normal text-muted-foreground">(enforced when a student applies)</span></p>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div><Label>Minimum average grade</Label><Input name="min_grade" type="number" min={0} max={100} step="0.01" defaultValue={cur?.min_grade ?? ""} placeholder="Global minimum" /></div>
+                            <div><Label>Residents of</Label><Input name="municipality" defaultValue={cur?.municipality ?? ""} placeholder="Any municipality" /></div>
+                          </div>
+                          <div>
+                            <Label>Year levels <span className="font-normal text-muted-foreground">(none ticked = any)</span></Label>
+                            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                              {YEAR_LEVELS.map((y) => (
+                                <label key={y} className="flex items-center gap-1.5 text-sm">
+                                  <input type="checkbox" checked={schYearLevels.includes(y)}
+                                    onChange={(e) => setSchYearLevels((prev) => e.target.checked ? [...prev, y] : prev.filter((x) => x !== y))} />
+                                  {y}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
                         <div className="flex items-center justify-between rounded-md border px-3 py-2">
                           <Label>Accepting applications</Label>
                           <Switch checked={schActive} onCheckedChange={setSchActive} />
@@ -1276,7 +1347,7 @@ export default function AdminDashboardPage() {
                   </p>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setDeleteSch(null)}>Cancel</Button>
-                    <Button variant="destructive" onClick={confirmDeleteScholarship}>Delete</Button>
+                    <Button variant="destructive" disabled={!!deleteSch && applicantCount(deleteSch.id) > 0} onClick={confirmDeleteScholarship}>Delete</Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -1284,10 +1355,10 @@ export default function AdminDashboardPage() {
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Program</TableHead><TableHead>Slots</TableHead><TableHead>Applicants</TableHead><TableHead>Deadline</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Program</TableHead><TableHead>Award &amp; budget</TableHead><TableHead>Slots</TableHead><TableHead>Applicants</TableHead><TableHead>Dates</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {filteredScholarships.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No scholarship programs found</TableCell></TableRow>}
+                    {filteredScholarships.length === 0 && <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No scholarship programs found</TableCell></TableRow>}
                     {filteredScholarships.map((sch) => {
                       const approved = approvedCount(sch.id);
                       const full = sch.slots > 0 && approved >= sch.slots;
@@ -1297,15 +1368,31 @@ export default function AdminDashboardPage() {
                             <p className="font-medium">{sch.name}</p>
                             {sch.eligibility && <p className="text-xs text-muted-foreground line-clamp-2" title={sch.eligibility}>{sch.eligibility}</p>}
                           </TableCell>
+                          <TableCell className="text-sm">
+                            <p>{Number(sch.amount) > 0 ? `${formatPHP(Number(sch.amount))} each` : <span className="text-muted-foreground">No award set</span>}</p>
+                            {Number(sch.total_budget) > 0 && (() => {
+                              const committed = committedFor(sch);
+                              const pct = Math.min(100, Math.round((committed / Number(sch.total_budget)) * 100));
+                              return (
+                                <p className={`text-xs ${committed >= Number(sch.total_budget) ? "text-destructive font-medium" : "text-muted-foreground"}`}>
+                                  {formatPHP(committed)} of {formatPHP(Number(sch.total_budget))} ({pct}%)
+                                </p>
+                              );
+                            })()}
+                          </TableCell>
                           <TableCell>
                             {sch.slots > 0 ? `${Math.max(sch.slots - approved, 0)} left of ${sch.slots}` : "Unlimited"}
                             {full && <Badge variant="secondary" className="ml-2">Full</Badge>}
                           </TableCell>
                           <TableCell>{applicantCount(sch.id)}</TableCell>
-                          <TableCell>{sch.deadline || "—"}{isClosed(sch) && <Badge variant="secondary" className="ml-2">Closed</Badge>}</TableCell>
+                          <TableCell className="text-sm">
+                            {sch.open_date && <p className="text-xs text-muted-foreground">Opens {sch.open_date}</p>}
+                            <p>{sch.deadline || "—"}{isClosed(sch) && <Badge variant="secondary" className="ml-2">Closed</Badge>}</p>
+                          </TableCell>
                           <TableCell><Badge variant={sch.is_active ? "default" : "secondary"}>{sch.is_active ? "Active" : "Disabled"}</Badge></TableCell>
                           <TableCell className="text-right space-x-1">
-                            <Button size="icon" variant="ghost" title="Edit" onClick={() => { setSchActive(sch.is_active); setSchDialog(sch); }}><Pencil className="h-4 w-4" /></Button>
+                            <Button size="icon" variant="ghost" title="Edit" onClick={() => { setSchActive(sch.is_active); setSchYearLevels(sch.year_levels ?? []); setSchDialog(sch); }}><Pencil className="h-4 w-4" /></Button>
+                            <Button size="icon" variant="ghost" title="Duplicate for next year" onClick={() => duplicateScholarship(sch)}><Copy className="h-4 w-4" /></Button>
                             <Button size="icon" variant="ghost" title={sch.is_active ? "Disable" : "Enable"} onClick={() => toggleScholarship(sch)}>
                               {sch.is_active ? <XCircle className="h-4 w-4" /> : <CheckCircle className="h-4 w-4 text-success" />}
                             </Button>
@@ -1700,7 +1787,7 @@ export default function AdminDashboardPage() {
                           </div>
                         )}
                         <div className="grid grid-cols-2 gap-4">
-                          <div><Label>Amount (₱) *</Label><Input name="amount" type="number" min={0.01} step="0.01" required defaultValue={cur?.amount ?? ""} /></div>
+                          <div><Label>Amount (₱) *</Label><Input key={cur?.id ?? payAppId} name="amount" type="number" min={0.01} step="0.01" required defaultValue={cur?.amount ?? awardFor(payAppId)} /></div>
                           <div><Label>Scheduled date</Label><Input name="scheduled_date" type="date" defaultValue={cur ? (cur.scheduled_date ?? "") : defaultScheduledDate} /></div>
                         </div>
                         <div>

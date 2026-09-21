@@ -33,6 +33,7 @@ import { useSystemSettings } from "@/hooks/use-system-settings";
 import { applicationsBlockedReason } from "@/lib/settings";
 import { STATEMENT_MIN, STATEMENT_MAX } from "@/validations/application";
 import { DOC_MIME, documentPath, uploadUserDocument } from "@/lib/documents";
+import { availabilityInfo, peso as pesoFmt, requirementLines, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Payment = Tables<"payments">;
@@ -428,7 +429,7 @@ export default function StudentDashboardPage() {
   const [documents, setDocuments]       = useState<Tables<"documents">[]>([]);
   const [payments, setPayments]         = useState<Tables<"payments">[]>([]);
   const [notifications, setNotifications] = useState<Tables<"notifications">[]>([]);
-  const [scholarships, setScholarships] = useState<Tables<"scholarships">[]>([]);
+  const [scholarships, setScholarships] = useState<PublicScholarship[]>([]);
   const [userEmail, setUserEmail]       = useState("");
   const [userId, setUserId]             = useState("");
   const [applyScholarshipId, setApplyScholarshipId] = useState("");
@@ -498,7 +499,7 @@ export default function StudentDashboardPage() {
       supabase.from("documents").select("*").eq("user_id", user.id),
       supabase.from("payments").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
-      supabase.from("scholarships").select("*").eq("is_active", true),
+      supabase.rpc("scholarships_public"),
     ]);
 
     let profileRow = profileRes.data;
@@ -639,6 +640,17 @@ export default function StudentDashboardPage() {
   if (isRenewing && approvedBefore > settings.max_renewals) applyIssues.push(`You have reached the maximum of ${settings.max_renewals} renewal(s).`);
   if (minGrade > 0 && myGrade == null) applyIssues.push(`Add your average grade to your profile (minimum required: ${minGrade}).`);
   else if (minGrade > 0 && myGrade != null && myGrade < minGrade) applyIssues.push(`Your average grade (${myGrade}) is below the minimum of ${minGrade}.`);
+
+  // The chosen program's own rules (the database enforces the same ones).
+  const applyProgram = scholarships.find((s) => s.id === applyScholarshipId);
+  if (applyProgram) {
+    if (!availabilityInfo(applyProgram).canApply) applyIssues.push(`${applyProgram.name}: ${availabilityInfo(applyProgram).label.toLowerCase()}.`);
+    const pg = Number(applyProgram.min_grade ?? 0);
+    if (pg > 0 && myGrade == null && minGrade < pg) applyIssues.push(`Add your average grade to your profile (${applyProgram.name} requires ${pg}).`);
+    else if (pg > 0 && myGrade != null && myGrade < pg) applyIssues.push(`${applyProgram.name} requires an average grade of ${pg}; yours is ${myGrade}.`);
+    if (applyProgram.year_levels?.length && !applyProgram.year_levels.includes(profile?.year_level ?? "")) applyIssues.push(`${applyProgram.name} is open to ${applyProgram.year_levels.join(", ")} students only.`);
+    if (applyProgram.municipality?.trim() && (profile?.municipality ?? "").trim().toLowerCase() !== applyProgram.municipality.trim().toLowerCase()) applyIssues.push(`${applyProgram.name} is for residents of ${applyProgram.municipality.trim()} only.`);
+  }
 
   const openDocument = async (doc: Tables<"documents">) => {
     const path = documentPath(doc);
@@ -918,7 +930,7 @@ export default function StudentDashboardPage() {
                     </div>
                     <button
                       onClick={guard(() => { setApplyScholarshipId(s.id); setApplyDialogOpen(true); setActive("application"); })}
-                      disabled={!!currentApp}
+                      disabled={!!currentApp || !availabilityInfo(s).canApply}
                       className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-primary/30 text-primary text-xs font-semibold px-3 py-1.5 hover:bg-accent transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                     >
                       View <ArrowRight className="h-3 w-3" />
@@ -926,7 +938,9 @@ export default function StudentDashboardPage() {
                   </div>
                   <div className="flex flex-wrap items-center gap-4 mt-3 text-xs text-muted-foreground">
                     {s.deadline && <span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {new Date(s.deadline).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</span>}
-                    <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" /> {s.slots} slots</span>
+                    <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" /> {slotsLabel(s)}</span>
+                    {Number(s.amount) > 0 && <span>{pesoFmt(s.amount)} per scholar</span>}
+                    {!availabilityInfo(s).canApply && <span className="font-semibold text-destructive">{availabilityInfo(s).label}</span>}
                   </div>
                 </div>
               ))}
@@ -1208,7 +1222,11 @@ export default function StudentDashboardPage() {
                 <Select value={applyScholarshipId} onValueChange={setApplyScholarshipId}>
                   <SelectTrigger className="rounded-xl border-border"><SelectValue placeholder="Select program" /></SelectTrigger>
                   <SelectContent>
-                    {scholarships.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                    {scholarships.filter((s) => availabilityInfo(s).canApply || s.id === applyScholarshipId).map((s) => (
+                      <SelectItem key={s.id} value={s.id} disabled={!availabilityInfo(s).canApply}>
+                        {s.name}{Number(s.amount) > 0 ? ` · ${pesoFmt(s.amount)}` : ""}{!availabilityInfo(s).canApply ? ` (${availabilityInfo(s).label})` : ""}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -1367,40 +1385,67 @@ export default function StudentDashboardPage() {
   );
 
   // ── Section: Scholarship ───────────────────────────────────────────────────
-  const Scholarship = () => (
-    <Panel>
-      <div className="px-6 py-5 border-b border-muted">
-        <SectionTitle>{currentApp?.scholarships?.name || "No Active Scholarship"}</SectionTitle>
-        <p className="text-sm text-muted-foreground -mt-3">Program details and conditions</p>
-      </div>
-      <div className="p-6 space-y-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="rounded-xl bg-muted border border-muted p-4">
-            <p className="text-xs text-muted-foreground mb-1">Required Grade</p>
-            <p className="text-xl font-bold text-sidebar-accent">85% and above</p>
-          </div>
+  const Scholarship = () => {
+    const program = scholarships.find((p) => p.id === currentApp?.scholarship_id);
+    const grade = isRenewing ? settings.renewal_min_grade : settings.min_grade_requirement;
+    const reqLines = program ? requirementLines(program, grade) : grade > 0 ? [`Average grade of at least ${grade}`] : [];
+    const award = currentApp?.amount_approved ?? program?.amount;
+    return (
+      <Panel>
+        <div className="px-6 py-5 border-b border-muted">
+          <SectionTitle>{currentApp?.scholarships?.name || "No Active Scholarship"}</SectionTitle>
+          <p className="text-sm text-muted-foreground -mt-3">Program details and conditions</p>
         </div>
-        <div>
-          <p className="text-sm font-semibold text-foreground mb-3">Scholarship Conditions</p>
-          <div className="space-y-2">
-            {[
-              "Maintain a minimum grade of 85.",
-              "Submit a Certificate of Registration each semester.",
-              "Attend mandatory orientation and progress meetings.",
-              "No failing grades or dropped subjects.",
-            ].map((c, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <div className="h-5 w-5 rounded-full bg-accent flex items-center justify-center shrink-0 mt-0.5">
-                  <CheckCircle className="h-3 w-3 text-primary" />
-                </div>
-                <p className="text-sm text-muted-foreground">{c}</p>
+        {!currentApp ? (
+          <div className="p-6 text-sm text-muted-foreground">You haven&apos;t applied to a scholarship yet. Apply from the Application tab to see your program&apos;s details here.</div>
+        ) : (
+          <div className="p-6 space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="rounded-xl bg-muted border border-muted p-4">
+                <p className="text-xs text-muted-foreground mb-1">{currentApp.status === "Approved" ? "Approved award" : "Award per scholar"}</p>
+                <p className="text-xl font-bold text-sidebar-accent">{Number(award) > 0 ? pesoFmt(award) : "To be announced"}</p>
               </div>
-            ))}
+              <div className="rounded-xl bg-muted border border-muted p-4">
+                <p className="text-xs text-muted-foreground mb-1">Required grade</p>
+                <p className="text-xl font-bold text-sidebar-accent">{Math.max(grade, Number(program?.min_grade ?? 0)) > 0 ? `${Math.max(grade, Number(program?.min_grade ?? 0))} and above` : "No minimum"}</p>
+              </div>
+              {program && (
+                <>
+                  <div className="rounded-xl bg-muted border border-muted p-4">
+                    <p className="text-xs text-muted-foreground mb-1">Application deadline</p>
+                    <p className="text-sm font-semibold text-sidebar-accent">{program.deadline ? `${new Date(`${program.deadline}T00:00:00`).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" })} (${deadlineLabel(program.deadline)})` : "No closing date"}</p>
+                  </div>
+                  <div className="rounded-xl bg-muted border border-muted p-4">
+                    <p className="text-xs text-muted-foreground mb-1">Slots</p>
+                    <p className="text-sm font-semibold text-sidebar-accent">{slotsLabel(program)}</p>
+                  </div>
+                </>
+              )}
+            </div>
+            {program?.description && <p className="text-sm text-muted-foreground leading-relaxed">{program.description}</p>}
+            <div>
+              <p className="text-sm font-semibold text-foreground mb-3">Eligibility &amp; conditions</p>
+              <div className="space-y-2">
+                {[
+                  ...reqLines,
+                  ...(program?.eligibility ? [program.eligibility] : []),
+                  `Keep these documents on file: ${requiredDocTypes.join(", ") || "none required"}.`,
+                  ...(settings.renewal_enabled ? [`You may renew up to ${settings.max_renewals} time(s)${settings.renewal_min_grade > 0 ? `, with an average grade of at least ${settings.renewal_min_grade}` : ""}.`] : []),
+                ].map((c, i) => (
+                  <div key={i} className="flex items-start gap-3">
+                    <div className="h-5 w-5 rounded-full bg-accent flex items-center justify-center shrink-0 mt-0.5">
+                      <CheckCircle className="h-3 w-3 text-primary" />
+                    </div>
+                    <p className="text-sm text-muted-foreground">{c}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
-    </Panel>
-  );
+        )}
+      </Panel>
+    );
+  };
 
   // ── Section: Notifications ─────────────────────────────────────────────────
   const Notifications = () => (
