@@ -62,6 +62,7 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
     Processing: { icon: Clock,        cls: "bg-accent text-primary border-primary/20" },
     Waitlisted: { icon: Clock,        cls: "bg-muted text-muted-foreground border-border" },
     Cancelled:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
+    Withdrawn:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
   };
   const m = map[status];
   if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{status}</span>;
@@ -1019,6 +1020,7 @@ export default function AdminDashboardPage() {
                       <SelectItem value="approved">Approved</SelectItem>
                       <SelectItem value="waitlisted">Waitlisted</SelectItem>
                       <SelectItem value="rejected">Rejected</SelectItem>
+                      <SelectItem value="withdrawn">Withdrawn</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1089,6 +1091,15 @@ export default function AdminDashboardPage() {
                         <div><Label className="text-muted-foreground text-xs">Grade</Label><p className="font-medium">{viewApp.profiles?.average_grade || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Scholarship</Label><p className="font-medium">{viewApp.scholarships?.name || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Status</Label><div>{statusBadge(viewApp.status)}</div></div>
+                        <div><Label className="text-muted-foreground text-xs">Type</Label><p className="font-medium">{viewApp.is_renewal ? "Renewal" : "New application"}</p></div>
+                        <div><Label className="text-muted-foreground text-xs">Term</Label><p className="font-medium">{[viewApp.academic_year, viewApp.semester].filter(Boolean).join(" · ") || "—"}</p></div>
+                        <div><Label className="text-muted-foreground text-xs">Grade when applied</Label><p className="font-medium">{viewApp.average_grade ?? "—"}</p></div>
+                        <div><Label className="text-muted-foreground text-xs">Household income</Label><p className="font-medium">{viewApp.household_income != null ? `₱${Number(viewApp.household_income).toLocaleString("en-PH")}` : "—"}</p></div>
+                        <div><Label className="text-muted-foreground text-xs">Household size</Label><p className="font-medium">{viewApp.household_size ?? "—"}</p></div>
+                      </div>
+                      <div>
+                        <Label className="text-xs">Applicant statement</Label>
+                        <p className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/40 px-3 py-2 text-sm">{viewApp.statement || "—"}</p>
                       </div>
                       <div>
                         <Label className="text-xs">Documents</Label>

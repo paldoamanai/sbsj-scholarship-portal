@@ -10,6 +10,12 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import {
   LayoutDashboard, FileText, Upload, GraduationCap, Banknote, Receipt,
@@ -25,9 +31,20 @@ import type { Tables } from "@/integrations/supabase/types";
 import { profileFromUserMetadata } from "@/lib/registration-profile";
 import { useSystemSettings } from "@/hooks/use-system-settings";
 import { applicationsBlockedReason } from "@/lib/settings";
+import { STATEMENT_MIN, STATEMENT_MAX } from "@/validations/application";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Payment = Tables<"payments">;
+
+const numOrNull = (v: string) => (v.trim() === "" ? null : Number(v));
+const peso = (n: number | null | undefined) => (n == null ? "—" : `₱${Number(n).toLocaleString("en-PH")}`);
+
+// The storage object path behind a stored document URL (the bucket is private, so the stored
+// public URL can't be opened directly).
+function storagePathFromUrl(url: string) {
+  const i = url.indexOf("/documents/");
+  return i === -1 ? null : decodeURIComponent(url.slice(i + "/documents/".length).split("?")[0]);
+}
 
 // ── Status badge ──────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: string | null | undefined }) {
@@ -39,6 +56,7 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
     Disbursed:  { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
     Processing: { icon: Clock,        cls: "bg-accent text-primary border-primary/20" },
     Waitlisted: { icon: Clock,        cls: "bg-muted text-muted-foreground border-border" },
+    Withdrawn:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
   };
   const m = map[status];
   if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{status}</span>;
@@ -411,6 +429,18 @@ export default function StudentDashboardPage() {
   const [applyScholarshipId, setApplyScholarshipId] = useState("");
   const [applyDialogOpen, setApplyDialogOpen]       = useState(false);
   const [applyLoading, setApplyLoading]             = useState(false);
+  const [applyStatement, setApplyStatement]         = useState("");
+  const [applyIncome, setApplyIncome]               = useState("");
+  const [applySize, setApplySize]                   = useState("");
+  const [applyCertified, setApplyCertified]         = useState(false);
+  const [viewOpen, setViewOpen]                     = useState(false);
+  const [editOpen, setEditOpen]                     = useState(false);
+  const [editSaving, setEditSaving]                 = useState(false);
+  const [appStatement, setAppStatement]             = useState("");
+  const [appIncome, setAppIncome]                   = useState("");
+  const [appSize, setAppSize]                       = useState("");
+  const [withdrawOpen, setWithdrawOpen]             = useState(false);
+  const [withdrawing, setWithdrawing]               = useState(false);
   const { settings } = useSystemSettings();
   const applyBlocked = applicationsBlockedReason(settings);
 
@@ -538,7 +568,8 @@ export default function StudentDashboardPage() {
   }, [userId]);
 
   const currentYear  = new Date().getFullYear();
-  const currentApp   = applications.find((app) => new Date(app.created_at).getFullYear() === currentYear);
+  // A withdrawn application no longer counts: the student can apply again.
+  const currentApp   = applications.find((app) => app.status !== "Withdrawn" && new Date(app.created_at).getFullYear() === currentYear);
   const isDisbursed  = currentApp?.disbursement_status === "Disbursed";
   const isApproved   = currentApp?.status === "Approved";
   const locked       = isApproved || isDisbursed;
@@ -558,7 +589,35 @@ export default function StudentDashboardPage() {
 
   const unreadCount = notifications.filter(n => !n.read).length;
   const requiredDocTypes = settings.required_documents;
-  const docsUploaded = requiredDocTypes.filter(t => documents.some(d => d.document_type === t)).length;
+  // Documents that count for the application in progress: filed with it, or still unattached
+  // (uploaded ahead of applying). Documents tied to older applications don't count. Latest wins.
+  const docByType = new Map<string, Tables<"documents">>();
+  [...documents]
+    .filter((d) => !d.application_id || d.application_id === currentApp?.id)
+    .sort((a, b) => a.uploaded_at.localeCompare(b.uploaded_at))
+    .forEach((d) => docByType.set(d.document_type, d));
+  const docsUploaded = requiredDocTypes.filter(t => docByType.has(t)).length;
+  const missingDocs = requiredDocTypes.filter(t => !docByType.has(t));
+
+  // Renewal: an earlier approved application means this one would be a renewal.
+  const approvedBefore = applications.filter((a) => a.status === "Approved").length;
+  const isRenewing = approvedBefore > 0;
+  const minGrade = isRenewing ? settings.renewal_min_grade : settings.min_grade_requirement;
+  const myGrade = profile?.average_grade ?? null;
+  const applyIssues: string[] = [];
+  if (isRenewing && !settings.renewal_enabled) applyIssues.push("Scholarship renewals are not open right now.");
+  if (isRenewing && approvedBefore > settings.max_renewals) applyIssues.push(`You have reached the maximum of ${settings.max_renewals} renewal(s).`);
+  if (minGrade > 0 && myGrade == null) applyIssues.push(`Add your average grade to your profile (minimum required: ${minGrade}).`);
+  else if (minGrade > 0 && myGrade != null && myGrade < minGrade) applyIssues.push(`Your average grade (${myGrade}) is below the minimum of ${minGrade}.`);
+
+  const openDocument = async (doc: Tables<"documents">) => {
+    const path = storagePathFromUrl(doc.file_url);
+    if (!path) { toast.error("Could not open document"); return; }
+    const win = window.open("", "_blank");
+    const { data, error } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
+    if (error || !data?.signedUrl) { win?.close(); toast.error("Could not open document"); return; }
+    if (win) win.location.href = data.signedUrl; else window.location.href = data.signedUrl;
+  };
 
   // ── Loading ────────────────────────────────────────────────────────────────
   if (loading) {
@@ -573,6 +632,76 @@ export default function StudentDashboardPage() {
       </div>
     );
   }
+
+  // ── Application actions ────────────────────────────────────────────────────
+  const submitApplication = async () => {
+    if (!applyScholarshipId) return;
+    setApplyLoading(true);
+    try {
+      const res = await fetch("/api/applications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scholarship_id: applyScholarshipId,
+          statement: applyStatement.trim(),
+          household_income: numOrNull(applyIncome),
+          household_size: numOrNull(applySize),
+          certified: applyCertified,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(json.error ?? "Failed to submit application.");
+      } else {
+        toast.success(isRenewing ? "Renewal application submitted!" : "Application submitted!");
+        setApplyDialogOpen(false);
+        setApplyScholarshipId(""); setApplyStatement(""); setApplyIncome(""); setApplySize(""); setApplyCertified(false);
+        loadData();
+      }
+    } catch {
+      toast.error("Network error. Please try again.");
+    } finally {
+      setApplyLoading(false);
+    }
+  };
+
+  const saveApplicationEdit = async () => {
+    if (!currentApp) return;
+    setEditSaving(true);
+    try {
+      const res = await fetch(`/api/applications/${currentApp.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ statement: appStatement.trim(), household_income: numOrNull(appIncome), household_size: numOrNull(appSize) }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(json.error ?? "Could not save changes."); return; }
+      toast.success("Application updated");
+      setEditOpen(false);
+      loadData();
+    } catch {
+      toast.error("Network error. Please try again.");
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const withdrawApplication = async () => {
+    if (!currentApp) return;
+    setWithdrawing(true);
+    try {
+      const res = await fetch(`/api/applications/${currentApp.id}`, { method: "DELETE" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(json.error ?? "Could not withdraw the application."); return; }
+      toast.success("Application withdrawn");
+      setWithdrawOpen(false);
+      loadData();
+    } catch {
+      toast.error("Network error. Please try again.");
+    } finally {
+      setWithdrawing(false);
+    }
+  };
 
   // ── Section: Overview ──────────────────────────────────────────────────────
   const Overview = () => (
@@ -778,13 +907,19 @@ export default function StudentDashboardPage() {
         </div>
       )}
       {currentApp ? (
+        <>
         <Panel>
           <div className="px-6 py-5 border-b border-muted flex items-center justify-between flex-wrap gap-3">
             <div>
               <SectionTitle>My Application</SectionTitle>
               <p className="text-sm text-muted-foreground -mt-3">{currentApp.scholarships?.name}</p>
             </div>
-            <StatusBadge status={currentApp.status} />
+            <div className="flex items-center gap-2">
+              {currentApp.is_renewal && (
+                <span className="inline-flex items-center rounded-full border border-primary/20 bg-accent px-2.5 py-0.5 text-xs font-semibold text-primary">Renewal</span>
+              )}
+              <StatusBadge status={currentApp.status} />
+            </div>
           </div>
           <div className="p-6">
             <div className="grid grid-cols-2 gap-4 text-sm mb-5">
@@ -793,39 +928,153 @@ export default function StudentDashboardPage() {
                 <p className="font-semibold text-sidebar-accent">{new Date(currentApp.created_at).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}</p>
               </div>
               <div>
+                <p className="text-xs text-muted-foreground mb-1">Term</p>
+                <p className="font-semibold text-sidebar-accent">{[currentApp.academic_year, currentApp.semester].filter(Boolean).join(" · ") || "—"}</p>
+              </div>
+              <div>
                 <p className="text-xs text-muted-foreground mb-1">Year Level</p>
-                <p className="font-semibold text-sidebar-accent">{profile?.year_level || "—"}</p>
+                <p className="font-semibold text-sidebar-accent">{currentApp.year_level || profile?.year_level || "—"}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1">School</p>
-                <p className="font-semibold text-sidebar-accent">{profile?.school_name || "—"}</p>
+                <p className="font-semibold text-sidebar-accent">{currentApp.school_name || profile?.school_name || "—"}</p>
               </div>
-              <div>
+              <div className="col-span-2">
                 <p className="text-xs text-muted-foreground mb-1">Course</p>
-                <p className="font-semibold text-sidebar-accent">{profile?.course || "—"}</p>
+                <p className="font-semibold text-sidebar-accent">{currentApp.course || profile?.course || "—"}</p>
               </div>
             </div>
+            {currentApp.notes && (
+              <div className={`rounded-xl border px-4 py-3 mb-5 text-sm ${
+                currentApp.status === "Rejected" ? "bg-red-50 border-red-200 text-red-800"
+                : currentApp.status === "Approved" ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                : "bg-amber-50 border-amber-200 text-amber-800"}`}>
+                <p className="text-xs font-semibold uppercase tracking-wide mb-1">Remarks from the scholarship office</p>
+                <p className="whitespace-pre-wrap">{currentApp.notes}</p>
+              </div>
+            )}
+            {currentApp.status === "Waitlisted" && !currentApp.notes && (
+              <p className="text-sm text-muted-foreground mb-5">You are on the waitlist. We will notify you if a slot opens.</p>
+            )}
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" className="text-xs border-border rounded-xl hover:bg-muted"
                 disabled={locked || currentApp.status !== "Pending"}
-                onClick={guard(() => toast.success("Edit mode enabled"))}>
+                onClick={guard(() => {
+                  setAppStatement(currentApp.statement ?? "");
+                  setAppIncome(currentApp.household_income?.toString() ?? "");
+                  setAppSize(currentApp.household_size?.toString() ?? "");
+                  setEditOpen(true);
+                })}>
                 <Pencil className="mr-1 h-3 w-3" /> Edit
               </Button>
-              <Button size="sm" variant="outline" className="text-xs border-red-200 text-red-600 hover:bg-red-50 rounded-xl"
-                disabled={locked || currentApp.status === "Approved"}
-                onClick={guard(async () => {
-                  await supabase.from("applications").delete().eq("id", currentApp.id);
-                  toast.success("Application cancelled");
-                  loadData();
-                })}>
-                <Trash2 className="mr-1 h-3 w-3" /> Cancel
-              </Button>
-              <Button size="sm" variant="outline" className="text-xs border-border rounded-xl hover:bg-muted">
+              {(currentApp.status === "Pending" || currentApp.status === "Waitlisted") && (
+                <Button size="sm" variant="outline" className="text-xs border-red-200 text-red-600 hover:bg-red-50 rounded-xl"
+                  disabled={locked} onClick={guard(() => setWithdrawOpen(true))}>
+                  <Trash2 className="mr-1 h-3 w-3" /> Withdraw
+                </Button>
+              )}
+              <Button size="sm" variant="outline" className="text-xs border-border rounded-xl hover:bg-muted" onClick={() => setViewOpen(true)}>
                 <Eye className="mr-1 h-3 w-3" /> View
               </Button>
             </div>
           </div>
         </Panel>
+
+        {/* View */}
+        <Dialog open={viewOpen} onOpenChange={setViewOpen}>
+          <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader><DialogTitle className="font-display">Application details</DialogTitle></DialogHeader>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div><p className="text-xs text-muted-foreground mb-1">Program</p><p className="font-semibold">{currentApp.scholarships?.name || "—"}</p></div>
+              <div><p className="text-xs text-muted-foreground mb-1">Status</p><StatusBadge status={currentApp.status} /></div>
+              <div><p className="text-xs text-muted-foreground mb-1">Submitted</p><p className="font-semibold">{new Date(currentApp.created_at).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}</p></div>
+              <div><p className="text-xs text-muted-foreground mb-1">Type</p><p className="font-semibold">{currentApp.is_renewal ? "Renewal" : "New application"}</p></div>
+              <div><p className="text-xs text-muted-foreground mb-1">School</p><p className="font-semibold">{currentApp.school_name || "—"}</p></div>
+              <div><p className="text-xs text-muted-foreground mb-1">Course · Year</p><p className="font-semibold">{[currentApp.course, currentApp.year_level].filter(Boolean).join(" · ") || "—"}</p></div>
+              <div><p className="text-xs text-muted-foreground mb-1">Average grade</p><p className="font-semibold">{currentApp.average_grade ?? "—"}</p></div>
+              <div><p className="text-xs text-muted-foreground mb-1">Amount approved</p><p className="font-semibold">{peso(currentApp.amount_approved)}</p></div>
+              <div><p className="text-xs text-muted-foreground mb-1">Household income</p><p className="font-semibold">{peso(currentApp.household_income)}</p></div>
+              <div><p className="text-xs text-muted-foreground mb-1">Household size</p><p className="font-semibold">{currentApp.household_size ?? "—"}</p></div>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Statement</p>
+              <p className="text-sm whitespace-pre-wrap rounded-xl bg-muted/50 px-3 py-2">{currentApp.statement || "—"}</p>
+            </div>
+            {currentApp.notes && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Remarks from the scholarship office</p>
+                <p className="text-sm whitespace-pre-wrap rounded-xl bg-muted/50 px-3 py-2">{currentApp.notes}</p>
+              </div>
+            )}
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Documents</p>
+              {docByType.size === 0 ? <p className="text-sm text-muted-foreground">None uploaded.</p> : (
+                <ul className="space-y-1">
+                  {[...docByType.values()].map((d) => (
+                    <li key={d.id}>
+                      <button type="button" onClick={() => openDocument(d)}
+                        className="w-full flex items-center justify-between rounded-lg border px-3 py-1.5 text-sm hover:bg-muted text-left cursor-pointer">
+                        <span className="truncate"><span className="font-medium">{d.document_type}</span> · {d.file_name}</span>
+                        <Eye className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {currentApp.certified_at && (
+              <p className="text-xs text-muted-foreground">Certified true and correct on {new Date(currentApp.certified_at).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}.</p>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit */}
+        <Dialog open={editOpen} onOpenChange={setEditOpen}>
+          <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader><DialogTitle className="font-display">Edit application</DialogTitle></DialogHeader>
+            <div>
+              <Label className="text-sm font-medium mb-1.5 block">Statement *</Label>
+              <Textarea rows={6} value={appStatement} maxLength={STATEMENT_MAX} onChange={(e) => setAppStatement(e.target.value)} className="rounded-xl" />
+              <p className={`text-xs mt-1 ${appStatement.trim().length < STATEMENT_MIN ? "text-warning" : "text-muted-foreground"}`}>{appStatement.trim().length} / {STATEMENT_MAX} (minimum {STATEMENT_MIN})</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-sm font-medium mb-1.5 block">Monthly household income (₱)</Label>
+                <Input type="number" min={0} value={appIncome} onChange={(e) => setAppIncome(e.target.value)} className="rounded-xl" />
+              </div>
+              <div>
+                <Label className="text-sm font-medium mb-1.5 block">Household size</Label>
+                <Input type="number" min={1} max={30} step={1} value={appSize} onChange={(e) => setAppSize(e.target.value)} className="rounded-xl" />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" className="rounded-xl" onClick={() => setEditOpen(false)}>Cancel</Button>
+              <Button className="bg-primary hover:bg-primary text-white rounded-xl" disabled={editSaving || appStatement.trim().length < STATEMENT_MIN} onClick={saveApplicationEdit}>
+                {editSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Save changes
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Withdraw */}
+        <AlertDialog open={withdrawOpen} onOpenChange={setWithdrawOpen}>
+          <AlertDialogContent className="rounded-2xl">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Withdraw this application?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Your application for {currentApp.scholarships?.name} will be withdrawn. Your uploaded documents are kept, and you can apply again while applications are open.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="rounded-xl" disabled={withdrawing}>Keep application</AlertDialogCancel>
+              <AlertDialogAction className="rounded-xl bg-red-600 hover:bg-red-700 text-white" disabled={withdrawing}
+                onClick={(e) => { e.preventDefault(); withdrawApplication(); }}>
+                {withdrawing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Withdraw
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        </>
       ) : (
         <Panel className="p-10 text-center">
           <div className="h-14 w-14 rounded-2xl bg-accent flex items-center justify-center mx-auto mb-4">
@@ -847,14 +1096,35 @@ export default function StudentDashboardPage() {
                 <FileText className="mr-2 h-4 w-4" /> Apply for Scholarship
               </Button>
             </DialogTrigger>
-            <DialogContent className="rounded-2xl">
+            <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle className="font-display">Apply for Scholarship</DialogTitle>
+                <DialogTitle className="font-display">{isRenewing ? "Renew Scholarship" : "Apply for Scholarship"}</DialogTitle>
               </DialogHeader>
               <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
-                <span>You may only submit <strong>{settings.max_scholarships_per_student === 1 ? "one application" : `${settings.max_scholarships_per_student} applications`} per year</strong>{settings.min_grade_requirement > 0 && <> and need an average grade of at least <strong>{settings.min_grade_requirement}</strong></>}. Choose your scholarship program carefully.</span>
+                <span>You may only submit <strong>{settings.max_scholarships_per_student === 1 ? "one application" : `${settings.max_scholarships_per_student} applications`} per year</strong>{minGrade > 0 && <> and need an average grade of at least <strong>{minGrade}</strong></>}. Choose your scholarship program carefully.</span>
               </div>
+              {isRenewing && (
+                <div className="flex items-start gap-3 bg-accent border border-primary/20 rounded-xl px-4 py-3 text-sm text-foreground text-left">
+                  <GraduationCap className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
+                  <span>This is a <strong>renewal</strong> (renewal {Math.min(approvedBefore, settings.max_renewals)} of {settings.max_renewals} allowed). Your earlier scholarship was approved, so the renewal grade requirement applies{settings.renewal_min_grade > 0 ? <> ({settings.renewal_min_grade})</> : null}.</span>
+                </div>
+              )}
+              {applyIssues.length > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 space-y-1">
+                  {applyIssues.map((m) => <p key={m}>{m}</p>)}
+                </div>
+              )}
+              {missingDocs.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+                  <p className="font-semibold mb-1">Upload your required documents first</p>
+                  <p className="mb-2">Missing: {missingDocs.join(", ")}.</p>
+                  <Button size="sm" variant="outline" className="rounded-xl border-amber-300 text-amber-800 hover:bg-amber-100"
+                    onClick={() => { setApplyDialogOpen(false); setActive("documents"); }}>
+                    <Upload className="mr-1 h-3 w-3" /> Go to Documents
+                  </Button>
+                </div>
+              )}
               <div>
                 <Label className="text-sm font-medium text-foreground mb-1.5 block">Scholarship Program *</Label>
                 <Select value={applyScholarshipId} onValueChange={setApplyScholarshipId}>
@@ -864,35 +1134,34 @@ export default function StudentDashboardPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <Label className="text-sm font-medium text-foreground mb-1.5 block">Why do you need this scholarship? *</Label>
+                <Textarea rows={5} value={applyStatement} maxLength={STATEMENT_MAX} className="rounded-xl"
+                  placeholder="Tell us about your situation, your goals and how this scholarship will help."
+                  onChange={(e) => setApplyStatement(e.target.value)} />
+                <p className={`text-xs mt-1 ${applyStatement.trim().length < STATEMENT_MIN ? "text-warning" : "text-muted-foreground"}`}>{applyStatement.trim().length} / {STATEMENT_MAX} (minimum {STATEMENT_MIN})</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-sm font-medium text-foreground mb-1.5 block">Monthly household income (₱)</Label>
+                  <Input type="number" min={0} value={applyIncome} onChange={(e) => setApplyIncome(e.target.value)} className="rounded-xl" placeholder="Optional" />
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-foreground mb-1.5 block">Household size</Label>
+                  <Input type="number" min={1} max={30} step={1} value={applySize} onChange={(e) => setApplySize(e.target.value)} className="rounded-xl" placeholder="Optional" />
+                </div>
+              </div>
+              <label className="flex items-start gap-3 text-sm text-foreground cursor-pointer">
+                <Checkbox checked={applyCertified} onCheckedChange={(v) => setApplyCertified(v === true)} className="mt-0.5" />
+                <span>I certify that the information and documents I have provided are true and correct.</span>
+              </label>
               <DialogFooter>
-                <Button disabled={!applyScholarshipId || applyLoading}
+                <Button
+                  disabled={!applyScholarshipId || applyLoading || applyIssues.length > 0 || missingDocs.length > 0 || applyStatement.trim().length < STATEMENT_MIN || !applyCertified}
                   className="bg-primary hover:bg-primary text-white rounded-xl w-full"
-                  onClick={async () => {
-                    if (!applyScholarshipId) return;
-                    setApplyLoading(true);
-                    try {
-                      const res = await fetch("/api/applications", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ scholarship_id: applyScholarshipId }),
-                      });
-                      const json = await res.json();
-                      if (!res.ok) {
-                        toast.error(json.error ?? "Failed to submit application.");
-                      } else {
-                        toast.success("Application submitted!");
-                        setApplyDialogOpen(false);
-                        setApplyScholarshipId("");
-                        loadData();
-                      }
-                    } catch {
-                      toast.error("Network error. Please try again.");
-                    } finally {
-                      setApplyLoading(false);
-                    }
-                  }}>
+                  onClick={submitApplication}>
                   {applyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Submit Application
+                  {isRenewing ? "Submit Renewal" : "Submit Application"}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -931,7 +1200,7 @@ export default function StudentDashboardPage() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {requiredDocTypes.map((docType) => {
-          const uploaded = documents.find((d) => d.document_type === docType);
+          const uploaded = docByType.get(docType);
           return (
             <Panel key={docType} className={`p-4 flex items-center justify-between ${uploaded ? "border-emerald-100" : ""}`}>
               <div className="flex items-center gap-3 min-w-0">
@@ -945,7 +1214,8 @@ export default function StudentDashboardPage() {
               </div>
               <div className="flex gap-2 shrink-0 ml-2">
                 {uploaded && (
-                  <Button size="sm" variant="outline" className="h-8 w-8 p-0 rounded-xl border-border hover:bg-muted">
+                  <Button size="sm" variant="outline" className="h-8 w-8 p-0 rounded-xl border-border hover:bg-muted"
+                    aria-label={`View ${docType}`} onClick={() => openDocument(uploaded)}>
                     <Eye className="h-3.5 w-3.5 text-muted-foreground" />
                   </Button>
                 )}
@@ -962,7 +1232,8 @@ export default function StudentDashboardPage() {
                       const { error } = await supabase.storage.from("documents").upload(filePath, file);
                       if (error) { toast.error(error.message); return; }
                       const { data: urlData } = supabase.storage.from("documents").getPublicUrl(filePath);
-                      await supabase.from("documents").insert({ user_id: user.id, document_type: docType, file_url: urlData.publicUrl, file_name: file.name });
+                      const { error: insertError } = await supabase.from("documents").insert({ user_id: user.id, application_id: currentApp?.id ?? null, document_type: docType, file_url: urlData.publicUrl, file_name: file.name });
+                      if (insertError) { toast.error(insertError.message); return; }
                       toast.success(`${docType} uploaded`);
                       loadData();
                     }} />
@@ -1234,7 +1505,7 @@ export default function StudentDashboardPage() {
   const renderActive = () => {
     switch (active) {
       case "overview":      return <Overview />;
-      case "application":   return <Application />;
+      case "application":   return Application(); // called, not rendered: inputs inside must keep focus
       case "documents":     return <Documents />;
       case "scholarship":   return <Scholarship />;
       case "disbursement":  return <DisbursementSection payments={payments} disbursementStatus={currentApp?.disbursement_status} onUploaded={refreshPayments} />;

@@ -21,6 +21,14 @@ export type Database = {
           academic_year: string | null
           semester: string | null
           is_renewal: boolean
+          statement: string | null
+          household_income: number | null
+          household_size: number | null
+          certified_at: string | null
+          school_name: string | null
+          course: string | null
+          year_level: string | null
+          average_grade: number | null
           created_at: string
           updated_at: string
         }
@@ -35,6 +43,14 @@ export type Database = {
           academic_year?: string | null
           semester?: string | null
           is_renewal?: boolean
+          statement?: string | null
+          household_income?: number | null
+          household_size?: number | null
+          certified_at?: string | null
+          school_name?: string | null
+          course?: string | null
+          year_level?: string | null
+          average_grade?: number | null
           created_at?: string
           updated_at?: string
         }
@@ -49,6 +65,14 @@ export type Database = {
           academic_year?: string | null
           semester?: string | null
           is_renewal?: boolean
+          statement?: string | null
+          household_income?: number | null
+          household_size?: number | null
+          certified_at?: string | null
+          school_name?: string | null
+          course?: string | null
+          year_level?: string | null
+          average_grade?: number | null
           created_at?: string
           updated_at?: string
         }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { applicationsBlockedReason, parseSettings } from "@/lib/settings";
 import { isAdminRole } from "@/lib/settings";
+import { submitApplicationSchema } from "@/validations/application";
 
 export async function GET() {
   const supabase = await createClient();
@@ -43,7 +44,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await request.json();
+  const parsed = submitApplicationSchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Invalid application", code: "VALIDATION" },
+      { status: 400 }
+    );
+  }
+  const input = parsed.data;
 
   const { data: settingRows } = await supabase.from("system_settings").select("key, value");
   const settings = parseSettings(settingRows);
@@ -65,6 +73,7 @@ export async function POST(request: Request) {
     .from("applications")
     .select("id", { count: "exact", head: true })
     .eq("user_id", user.id)
+    .neq("status", "Withdrawn")
     .gte("created_at", yearStart)
     .lt("created_at", yearEnd);
 
@@ -82,11 +91,19 @@ export async function POST(request: Request) {
       { status: 409 }
     );
   }
-  // Minimum grade, application window and the same limit are also enforced by a database trigger.
+  // Minimum grade, application window, required documents, renewal rules and the same limit are also
+  // enforced by a database trigger, which is what actually protects the table.
 
   const { data, error } = await supabase
     .from("applications")
-    .insert({ user_id: user.id, scholarship_id: body.scholarship_id })
+    .insert({
+      user_id: user.id,
+      scholarship_id: input.scholarship_id,
+      statement: input.statement,
+      household_income: input.household_income ?? null,
+      household_size: input.household_size ?? null,
+      certified_at: new Date().toISOString(),
+    })
     .select()
     .single();
 

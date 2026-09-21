@@ -1,61 +1,119 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { isAdminRole } from "@/lib/settings";
+import { applicationDetailsSchema } from "@/validations/application";
 
-export async function PUT(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id } = await params;
+const ADMIN_FIELDS = ["status", "notes", "amount_approved", "disbursement_status"] as const;
+
+async function loadContext(id: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const body = await request.json();
+  if (!user) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) } as const;
 
   const { data: app } = await supabase
     .from("applications")
-    .select("disbursement_status, user_id")
+    .select("disbursement_status, user_id, status")
     .eq("id", id)
-    .single();
-
-  if (!app) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  if (app.disbursement_status === "Disbursed") {
-    return NextResponse.json(
-      { error: "Application is locked after disbursement" },
-      { status: 403 }
-    );
-  }
+    .maybeSingle();
+  if (!app) return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) } as const;
 
   const { data: roleData } = await supabase
     .from("user_roles")
     .select("role")
     .eq("user_id", user.id)
-    .single();
+    .maybeSingle();
 
-  const isAdmin = isAdminRole(roleData?.role);
-  const isOwner = app.user_id === user.id;
+  return {
+    supabase,
+    app,
+    isAdmin: isAdminRole(roleData?.role),
+    isOwner: app.user_id === user.id,
+  } as const;
+}
 
+// Students may edit their statement and household details while the application is pending.
+// Admins may change the review fields only. The database trigger enforces the same rules.
+export async function PUT(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const ctx = await loadContext(id);
+  if ("error" in ctx) return ctx.error;
+  const { supabase, app, isAdmin, isOwner } = ctx;
+
+  if (app.disbursement_status === "Disbursed") {
+    return NextResponse.json({ error: "Application is locked after disbursement" }, { status: 403 });
+  }
   if (!isAdmin && !isOwner) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  }
+
+  let update: Record<string, unknown>;
+  if (isAdmin) {
+    update = Object.fromEntries(ADMIN_FIELDS.filter((k) => k in body).map((k) => [k, body[k]]));
+    if (Object.keys(update).length === 0) {
+      return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
+    }
+  } else {
+    if (app.status !== "Pending") {
+      return NextResponse.json({ error: "Only a pending application can be edited" }, { status: 409 });
+    }
+    const parsed = applicationDetailsSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid details" }, { status: 400 });
+    }
+    update = {
+      statement: parsed.data.statement,
+      household_income: parsed.data.household_income ?? null,
+      household_size: parsed.data.household_size ?? null,
+    };
+  }
+
   const { data, error } = await supabase
     .from("applications")
-    .update({ ...body, updated_at: new Date().toISOString() })
+    .update({ ...update, updated_at: new Date().toISOString() })
     .eq("id", id)
     .select()
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: error.code === "P0001" ? 409 : 500 });
+  }
+  return NextResponse.json(data);
+}
+
+// "Cancel" for a student: marks the application Withdrawn (the row is kept for the record and
+// stops counting toward the yearly limit). Approved applications can't be withdrawn.
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const ctx = await loadContext(id);
+  if ("error" in ctx) return ctx.error;
+  const { supabase, app, isOwner } = ctx;
+
+  if (!isOwner) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (app.status === "Withdrawn") return NextResponse.json({ error: "Already withdrawn" }, { status: 409 });
+  if (app.status !== "Pending" && app.status !== "Waitlisted") {
+    return NextResponse.json({ error: `A ${app.status.toLowerCase()} application can't be withdrawn` }, { status: 409 });
   }
 
+  const { data, error } = await supabase
+    .from("applications")
+    .update({ status: "Withdrawn", updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: error.code === "P0001" ? 409 : 500 });
+  }
   return NextResponse.json(data);
 }
