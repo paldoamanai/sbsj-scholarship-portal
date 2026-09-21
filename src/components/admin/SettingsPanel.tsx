@@ -37,6 +37,7 @@ const LABELS: Record<SettingKey, string> = {
   required_documents: "Required documents", default_payment_method: "Default payment method",
   default_payment_lead_days: "Default payment lead time", renewal_enabled: "Renewals open",
   renewal_min_grade: "Renewal minimum grade", max_renewals: "Max renewals",
+  payment_pickup_location: "Payment pickup place", payment_pickup_instructions: "Payment claim instructions",
 };
 
 const fmt = (v: unknown) => (Array.isArray(v) ? v.join(", ") : typeof v === "boolean" ? (v ? "On" : "Off") : v === "" || v == null ? "—" : String(v));
@@ -247,7 +248,10 @@ export default function SettingsPanel({ rows, auditLogs, onSave }: Props) {
             </div>
             <div><Label>Schedule payments (days from today)</Label><Input type="number" min={0} max={365} step={1} value={draft.default_payment_lead_days} onChange={(e) => set("default_payment_lead_days", e.target.value as unknown as number)} /><Err k="default_payment_lead_days" /></div>
           </div>
-          <SaveBar id="disbursement" keys={["default_payment_method", "default_payment_lead_days"]} />
+          <div><Label>Where students collect payments</Label><Input maxLength={500} value={draft.payment_pickup_location} onChange={(e) => set("payment_pickup_location", e.target.value)} placeholder="e.g. Treasurer's Office, Sangguniang Bayan Building" /><Err k="payment_pickup_location" /></div>
+          <div><Label>What students should bring / do</Label><Textarea rows={2} maxLength={500} value={draft.payment_pickup_instructions} onChange={(e) => set("payment_pickup_instructions", e.target.value)} placeholder="e.g. Bring a valid ID and your approval notice." /><Err k="payment_pickup_instructions" /></div>
+          <p className="text-xs text-muted-foreground">Shown to students under &quot;Next payment&quot; on their Payments tab, along with the office hours.</p>
+          <SaveBar id="disbursement" keys={["default_payment_method", "default_payment_lead_days", "payment_pickup_location", "payment_pickup_instructions"]} />
         </CardContent>
       </Card>
 

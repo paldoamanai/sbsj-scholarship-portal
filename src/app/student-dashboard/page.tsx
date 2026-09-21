@@ -32,7 +32,7 @@ import { profileFromUserMetadata } from "@/lib/registration-profile";
 import { useSystemSettings } from "@/hooks/use-system-settings";
 import { applicationsBlockedReason } from "@/lib/settings";
 import { STATEMENT_MIN, STATEMENT_MAX } from "@/validations/application";
-import { DOC_MIME, documentPath, uploadUserDocument } from "@/lib/documents";
+import { DOC_MIME, documentPath, safeFileName, uploadUserDocument } from "@/lib/documents";
 import { availabilityInfo, peso as pesoFmt, requirementLines, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -63,6 +63,7 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
     Processing: { icon: Clock,        cls: "bg-accent text-primary border-primary/20" },
     Waitlisted: { icon: Clock,        cls: "bg-muted text-muted-foreground border-border" },
     Withdrawn:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
+    Cancelled:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
   };
   const m = map[status];
   if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{status}</span>;
@@ -127,7 +128,8 @@ function Panel({ children, className = "" }: { children: React.ReactNode; classN
 }
 
 // ── Disbursement section ───────────────────────────────────────────────────────
-// Shared receipt-upload logic for the Disbursement and Payments sections.
+// Shared receipt-upload logic. The file goes to private storage first; the database then checks it
+// exists, its type and size, and refuses a second submission (unless staff rejected the first).
 const RECEIPT_TYPES = ["application/pdf", "image/jpeg", "image/png"];
 
 function useReceiptUpload(onUploaded: () => void) {
@@ -139,6 +141,7 @@ function useReceiptUpload(onUploaded: () => void) {
 
   const pickFile = (paymentId: string, file: File | null) => {
     if (file && !RECEIPT_TYPES.includes(file.type)) { toast.error("Upload a PDF, JPG or PNG file."); return; }
+    if (file && file.size === 0) { toast.error("That file is empty."); return; }
     if (file && file.size > settings.max_upload_mb * 1024 * 1024) { toast.error(`File is too large (max ${settings.max_upload_mb} MB).`); return; }
     setReceiptFiles((prev) => ({ ...prev, [paymentId]: file }));
   };
@@ -153,9 +156,8 @@ function useReceiptUpload(onUploaded: () => void) {
       if (!user) { toast.error("Please log in again."); return; }
       let path: string | null = null;
       if (file) {
-        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-        path = `${user.id}/receipts/${paymentId}/${Date.now()}-${safeName}`;
-        const { error: uploadError } = await supabase.storage.from("documents").upload(path, file);
+        path = `${user.id}/receipts/${paymentId}/${Date.now()}-${safeFileName(file.name)}`;
+        const { error: uploadError } = await supabase.storage.from("documents").upload(path, file, { contentType: file.type });
         if (uploadError) { toast.error("Upload failed", { description: uploadError.message }); return; }
       }
       const { error } = await supabase.rpc("submit_student_receipt", { _payment_id: paymentId, _path: path });
@@ -220,20 +222,38 @@ function MethodPreference({ payment, onChanged, compact = false }: { payment: Pa
 
 type ReceiptCtl = ReturnType<typeof useReceiptUpload>;
 
+const ISSUE_KINDS: Record<string, string> = {
+  not_received: "I didn't receive this payment",
+  wrong_amount: "The amount is wrong",
+  other: "Something else",
+};
+
+const fmtMoney = (n: number) => `₱${Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
+const fmtDay = (d: string | null | undefined) =>
+  d ? new Date(d.length <= 10 ? `${d}T00:00:00` : d).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "—";
+
 // Everything a student sees to acknowledge a disbursed payment. Cash: file OR a confirmation; Cheque: file.
+// A submitted receipt is final unless the office rejected it, in which case a new one can be sent.
 function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl }) {
   const { receiptFiles, uploadingFor, confirmed, setConfirmed, pickFile, upload, view } = ctl;
   const isCash = p.method === "Cash";
+  const rejected = p.receipt_review_status === "Rejected";
 
-  if (p.student_receipt_at) {
-    return p.student_receipt_path ? (
-      <button type="button" onClick={() => view(p.student_receipt_path)} className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium hover:underline cursor-pointer">
-        <CheckCircle className="h-3.5 w-3.5" /> Submitted · View
-      </button>
-    ) : (
-      <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
-        <CheckCircle className="h-3.5 w-3.5" /> Cash receipt confirmed
-      </span>
+  if (p.student_receipt_at && !rejected) {
+    const accepted = p.receipt_review_status === "Accepted";
+    return (
+      <div className="space-y-1">
+        {p.student_receipt_path ? (
+          <button type="button" onClick={() => view(p.student_receipt_path)} className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium hover:underline cursor-pointer">
+            <CheckCircle className="h-3.5 w-3.5" /> Submitted {fmtDay(p.student_receipt_at)} · View
+          </button>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
+            <CheckCircle className="h-3.5 w-3.5" /> Cash receipt confirmed {fmtDay(p.student_receipt_at)}
+          </span>
+        )}
+        <p className={`text-[11px] font-semibold ${accepted ? "text-emerald-700" : "text-amber-700"}`}>{accepted ? "Accepted by the office" : "Waiting for the office to review"}</p>
+      </div>
     );
   }
 
@@ -242,6 +262,11 @@ function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl 
   const canSubmit = !!file || (isCash && checked);
   return (
     <div className="space-y-2 min-w-[230px]">
+      {rejected && (
+        <p className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+          <span className="font-semibold">Your receipt was not accepted.</span> {p.receipt_review_note}
+        </p>
+      )}
       <p className="text-xs text-muted-foreground">
         {isCash
           ? "Upload a photo of the voucher you signed when you received the cash, or confirm below."
@@ -252,7 +277,12 @@ function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl 
           <Upload className="h-3 w-3 shrink-0" />
           <span className="truncate">{file ? file.name : "Choose file"}</span>
           <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png"
-            onChange={(e) => pickFile(p.id, e.target.files?.[0] ?? null)} />
+            onChange={(e) => {
+              const input = e.target;
+              const f = input.files?.[0] ?? null;
+              input.value = ""; // so picking the same file again still fires onChange
+              if (f) pickFile(p.id, f);
+            }} />
         </label>
         <Button size="sm" className="h-7 px-2 text-xs bg-primary hover:bg-primary text-white rounded-lg shrink-0"
           disabled={!canSubmit || uploadingFor === p.id} onClick={() => upload(p.id)}>
@@ -263,95 +293,106 @@ function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl 
         <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
           <input type="checkbox" className="mt-0.5" checked={checked}
             onChange={(e) => setConfirmed((prev) => ({ ...prev, [p.id]: e.target.checked }))} />
-          <span>I confirm I received ₱{p.amount.toLocaleString("en-PH", { minimumFractionDigits: 2 })} in cash.</span>
+          <span>I confirm I received {fmtMoney(p.amount)} in cash.</span>
         </label>
       )}
     </div>
   );
 }
 
-function DisbursementSection({ payments, disbursementStatus, onUploaded }: {
+// One place for everything about money: what you're owed, what's coming, how to claim it, receipts and problems.
+function DisbursementSection({ payments, issues, disbursementStatus, approvedTotal, onChanged }: {
   payments: Payment[];
+  issues: Tables<"payment_issues">[];
   disbursementStatus: string | null | undefined;
-  onUploaded: () => void;
+  approvedTotal: number;
+  onChanged: () => void;
 }) {
-  const ctl = useReceiptUpload(onUploaded);
+  const supabase = createClient();
+  const { settings } = useSystemSettings();
+  const ctl = useReceiptUpload(onChanged);
+  const [issueFor, setIssueFor] = useState<Payment | null>(null);
+  const [issueKind, setIssueKind] = useState("not_received");
+  const [issueText, setIssueText] = useState("");
+  const [sending, setSending] = useState(false);
 
-  const totalDisbursed = payments.filter(p => p.status === "Disbursed").reduce((s, p) => s + p.amount, 0);
+  const live = payments.filter((p) => p.status !== "Cancelled");
+  const disbursed = live.filter((p) => p.status === "Disbursed").reduce((t, p) => t + p.amount, 0);
+  const scheduled = live.filter((p) => p.status === "Pending" || p.status === "Processing").reduce((t, p) => t + p.amount, 0);
+  const remaining = Math.max(approvedTotal - disbursed - scheduled, 0);
+  const next = live
+    .filter((p) => p.status === "Pending" || p.status === "Processing")
+    .sort((a, b) => (a.scheduled_date ?? "9999").localeCompare(b.scheduled_date ?? "9999"))[0];
+  const issuesFor = (id: string) => issues.filter((i) => i.payment_id === id).sort((a, b) => b.created_at.localeCompare(a.created_at));
+
+  const sendIssue = async () => {
+    if (!issueFor) return;
+    setSending(true);
+    const { error } = await supabase.rpc("report_payment_issue", { _payment_id: issueFor.id, _kind: issueKind, _message: issueText.trim() });
+    setSending(false);
+    if (error) { toast.error("Could not send your report", { description: error.message }); return; }
+    toast.success("Report sent. The office will respond here.");
+    setIssueFor(null); setIssueText(""); setIssueKind("not_received");
+    onChanged();
+  };
+
+  const downloadCsv = () => {
+    const rows = [
+      ["Reference", "Amount", "Method", "Status", "Scheduled", "Disbursed", "Receipt", "Receipt review"],
+      ...payments.map((p) => [
+        p.reference ?? "", p.amount.toFixed(2), p.method ?? "", p.status, p.scheduled_date ?? "",
+        p.disbursed_at ? p.disbursed_at.slice(0, 10) : "",
+        p.student_receipt_at ? (p.student_receipt_path ? "File" : "Confirmed") : "",
+        p.student_receipt_at ? p.receipt_review_status : "",
+      ]),
+    ];
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `payment-history-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  };
+
+  const claimInfo = [settings.payment_pickup_location && `Where: ${settings.payment_pickup_location}`, settings.payment_pickup_instructions, settings.office_hours && `Office hours: ${settings.office_hours}`].filter(Boolean);
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <StatCard icon={Banknote} label="Total Disbursed" value={`₱${totalDisbursed.toLocaleString("en-PH", { minimumFractionDigits: 2 })}`} />
-        <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-          <p className="text-xs font-medium text-muted-foreground mb-2">Disbursement Status</p>
-          <StatusBadge status={disbursementStatus || "—"} />
-        </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {approvedTotal > 0 && <StatCard icon={GraduationCap} label="Approved award" value={fmtMoney(approvedTotal)} />}
+        <StatCard icon={Banknote} label="Disbursed" value={fmtMoney(disbursed)} accent />
+        <StatCard icon={Clock} label="Scheduled" value={fmtMoney(scheduled)} sub={next ? `Next: ${fmtDay(next.scheduled_date)}` : "Nothing scheduled"} />
+        {approvedTotal > 0 && <StatCard icon={Receipt} label="Not yet scheduled" value={fmtMoney(remaining)} sub={remaining === 0 ? "Fully scheduled" : "The office will schedule this"} subTone={remaining === 0 ? "positive" : "neutral"} />}
+        {approvedTotal === 0 && (
+          <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
+            <p className="text-xs font-medium text-muted-foreground mb-2">Disbursement status</p>
+            <StatusBadge status={disbursementStatus || "—"} />
+          </div>
+        )}
       </div>
 
-      <Panel>
-        <div className="px-6 py-4 border-b border-muted">
-          <SectionTitle>Disbursement Records</SectionTitle>
-        </div>
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/60 hover:bg-muted/60">
-                <TableHead className="text-xs text-muted-foreground font-semibold">Reference</TableHead>
-                <TableHead className="text-xs text-muted-foreground font-semibold">Amount</TableHead>
-                <TableHead className="text-xs text-muted-foreground font-semibold">Method</TableHead>
-                <TableHead className="text-xs text-muted-foreground font-semibold">Date</TableHead>
-                <TableHead className="text-xs text-muted-foreground font-semibold">Status</TableHead>
-                <TableHead className="text-xs text-muted-foreground font-semibold">Receipt</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {payments.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-10 text-muted-foreground text-sm">No payments yet.</TableCell>
-                </TableRow>
-              )}
-              {payments.map((p) => {
-                const isDisbursedPay = p.status === "Disbursed";
-                return (
-                  <TableRow key={p.id} className="hover:bg-accent/30">
-                    <TableCell className="font-mono text-xs text-muted-foreground">{p.reference || "—"}</TableCell>
-                    <TableCell className="font-semibold text-sidebar-accent">₱{p.amount.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</TableCell>
-                    <TableCell>
-                      {p.method ? (
-                        <span className={`inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full ${
-                          p.method === "Cheque" ? "bg-blue-50 text-blue-700"
-                          : p.method === "Cash" ? "bg-emerald-50 text-emerald-700"
-                          : "bg-muted text-muted-foreground"
-                        }`}>{p.method}</span>
-                      ) : "—"}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{p.scheduled_date || "—"}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={p.status} />
-                      <div className="mt-2"><MethodPreference payment={p} onChanged={onUploaded} compact /></div>
-                    </TableCell>
-                    <TableCell>
-                      {isDisbursedPay ? <ReceiptSubmit payment={p} ctl={ctl} /> : <span className="text-xs text-muted-foreground">—</span>}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
-      </Panel>
-    </div>
-  );
-}
+      {next && (
+        <Panel className="border-primary/30">
+          <div className="p-5 space-y-3">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-primary">Next payment</p>
+                <p className="text-2xl font-bold text-sidebar-accent mt-1">{fmtMoney(next.amount)}</p>
+                <p className="text-sm text-muted-foreground">{next.scheduled_date ? `Scheduled ${fmtDay(next.scheduled_date)}` : "Date to be announced"} · via {next.method || "—"}</p>
+              </div>
+              <StatusBadge status={next.status} />
+            </div>
+            {claimInfo.length > 0 && (
+              <div className="rounded-xl bg-accent border border-primary/20 px-4 py-3 space-y-1">
+                <p className="text-xs font-semibold text-primary">How to claim</p>
+                {claimInfo.map((l, i) => <p key={i} className="text-sm text-foreground">{l as string}</p>)}
+              </div>
+            )}
+            <MethodPreference payment={next} onChanged={onChanged} />
+          </div>
+        </Panel>
+      )}
 
-// ── Payments section ───────────────────────────────────────────────────────────
-function PaymentsSection({ payments, onUploaded }: { payments: Payment[]; onUploaded: () => void }) {
-  const ctl = useReceiptUpload(onUploaded);
-
-  return (
-    <div className="space-y-4">
-      {payments.some((p) => p.status === "Disbursed") && (
+      {payments.some((p) => p.status === "Disbursed" && (!p.student_receipt_at || p.receipt_review_status === "Rejected")) && (
         <div className="flex items-start gap-3 bg-accent border border-primary/20 rounded-xl px-4 py-3">
           <Upload className="h-4 w-4 text-primary mt-0.5 shrink-0" />
           <p className="text-sm text-primary">
@@ -359,11 +400,12 @@ function PaymentsSection({ payments, onUploaded }: { payments: Payment[]; onUplo
           </p>
         </div>
       )}
+
       <Panel>
-        <div className="px-6 py-4 border-b border-muted flex items-center justify-between">
+        <div className="px-6 py-4 border-b border-muted flex items-center justify-between gap-2">
           <SectionTitle>Payment History</SectionTitle>
-          <Button size="sm" variant="outline" className="text-xs border-border text-muted-foreground hover:bg-muted rounded-lg">
-            <Download className="mr-1 h-3 w-3" /> Download
+          <Button size="sm" variant="outline" className="text-xs border-border text-muted-foreground hover:bg-muted rounded-lg" disabled={payments.length === 0} onClick={downloadCsv}>
+            <Download className="mr-1 h-3 w-3" /> Download CSV
           </Button>
         </div>
         <div className="p-4 space-y-3">
@@ -375,29 +417,82 @@ function PaymentsSection({ payments, onUploaded }: { payments: Payment[]; onUplo
           )}
           {payments.map((p) => {
             const isDisbursedPay = p.status === "Disbursed";
+            const cancelled = p.status === "Cancelled";
+            const list = issuesFor(p.id);
+            const openIssue = list.find((i) => i.status === "Open");
             return (
-              <div key={p.id} className={`rounded-xl border p-4 space-y-3 ${isDisbursedPay ? "border-emerald-100 bg-emerald-50/40" : "border-muted"}`}>
+              <div key={p.id} className={`rounded-xl border p-4 space-y-3 ${isDisbursedPay ? "border-emerald-100 bg-emerald-50/40" : cancelled ? "border-muted opacity-75" : "border-muted"}`}>
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
                     <p className="text-sm font-semibold text-sidebar-accent">
-                      ₱{p.amount.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                      {fmtMoney(p.amount)}
                       <span className="ml-2 text-xs font-normal text-muted-foreground">via {p.method || "—"}</span>
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {p.reference ? `Ref: ${p.reference}` : "No reference"} · {p.scheduled_date || "—"}
+                      {p.reference ? `${p.method === "Cheque" ? "Cheque no." : "Ref"}: ${p.reference}` : "No reference yet"}
+                      {" · "}{isDisbursedPay ? `Disbursed ${fmtDay(p.disbursed_at)}` : p.scheduled_date ? `Scheduled ${fmtDay(p.scheduled_date)}` : "Date to be announced"}
                     </p>
                   </div>
                   <StatusBadge status={p.status} />
                 </div>
-                <MethodPreference payment={p} onChanged={onUploaded} />
+
+                {cancelled && p.cancel_reason && (
+                  <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground"><span className="font-semibold">Cancelled: </span>{p.cancel_reason}</p>
+                )}
+
+                {p !== next && <MethodPreference payment={p} onChanged={onChanged} />}
+
                 {isDisbursedPay && (
                   <div className="pt-2 border-t border-muted"><ReceiptSubmit payment={p} ctl={ctl} /></div>
+                )}
+
+                {list.map((i) => (
+                  <div key={i.id} className={`rounded-lg border px-3 py-2 text-xs ${i.status === "Open" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-muted bg-muted/40 text-muted-foreground"}`}>
+                    <p className="font-semibold">{ISSUE_KINDS[i.kind] ?? i.kind} · {i.status === "Open" ? "Waiting for the office" : `Resolved ${fmtDay(i.resolved_at)}`}</p>
+                    <p className="mt-0.5 whitespace-pre-wrap">{i.message}</p>
+                    {i.response && <p className="mt-1 whitespace-pre-wrap text-foreground"><span className="font-semibold">Office: </span>{i.response}</p>}
+                  </div>
+                ))}
+
+                {!cancelled && !openIssue && (
+                  <button type="button" onClick={() => { setIssueFor(p); setIssueKind(isDisbursedPay ? "not_received" : "wrong_amount"); }}
+                    className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer">
+                    Report a problem with this payment
+                  </button>
                 )}
               </div>
             );
           })}
         </div>
       </Panel>
+
+      <Dialog open={!!issueFor} onOpenChange={(o) => { if (!o) setIssueFor(null); }}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader><DialogTitle className="font-display">Report a problem</DialogTitle></DialogHeader>
+          {issueFor && <p className="text-sm text-muted-foreground">Payment of {fmtMoney(issueFor.amount)} · {issueFor.status}</p>}
+          <div>
+            <Label className="text-sm font-medium mb-1.5 block">What&apos;s wrong?</Label>
+            <Select value={issueKind} onValueChange={setIssueKind}>
+              <SelectTrigger className="rounded-xl border-border"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {Object.entries(ISSUE_KINDS).map(([k, label]) => <SelectItem key={k} value={k}>{label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-sm font-medium mb-1.5 block">Tell us what happened</Label>
+            <Textarea rows={4} value={issueText} maxLength={1000} className="rounded-xl" onChange={(e) => setIssueText(e.target.value)}
+              placeholder="For example: I went to the office on the scheduled date but was told there was no payment for me." />
+            <p className={`text-xs mt-1 ${issueText.trim().length < 10 ? "text-warning" : "text-muted-foreground"}`}>{issueText.trim().length} / 1000 (minimum 10)</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="rounded-xl" onClick={() => setIssueFor(null)}>Cancel</Button>
+            <Button className="bg-primary hover:bg-primary text-white rounded-xl" disabled={sending || issueText.trim().length < 10} onClick={sendIssue}>
+              {sending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Send report
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -408,8 +503,7 @@ const sidebarItems = [
   { icon: FileText,        label: "Application",    key: "application" },
   { icon: Upload,          label: "Documents",      key: "documents" },
   { icon: GraduationCap,  label: "Scholarship",    key: "scholarship" },
-  { icon: Banknote,        label: "Disbursement",   key: "disbursement" },
-  { icon: Receipt,         label: "Payment History",key: "payments" },
+  { icon: Banknote,        label: "Payments",       key: "disbursement" },
   { icon: Bell,            label: "Notifications",  key: "notifications" },
   { icon: User,            label: "Profile",        key: "profile" },
   { icon: SettingsIcon,    label: "Settings",       key: "settings" },
@@ -428,6 +522,7 @@ export default function StudentDashboardPage() {
   const [applications, setApplications] = useState<(Tables<"applications"> & { scholarships: { name: string } | null })[]>([]);
   const [documents, setDocuments]       = useState<Tables<"documents">[]>([]);
   const [payments, setPayments]         = useState<Tables<"payments">[]>([]);
+  const [issues, setIssues]             = useState<Tables<"payment_issues">[]>([]);
   const [notifications, setNotifications] = useState<Tables<"notifications">[]>([]);
   const [scholarships, setScholarships] = useState<PublicScholarship[]>([]);
   const [userEmail, setUserEmail]       = useState("");
@@ -472,7 +567,7 @@ export default function StudentDashboardPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sec = params.get("section");
-    if (sec && sidebarItems.some((i) => i.key === sec)) setActive(sec);
+    if (sec) { const key = sec === "payments" ? "disbursement" : sec; if (sidebarItems.some((i) => i.key === key)) setActive(key); }
     // Coming from registration with a program already chosen: open the apply form once data has loaded.
     const apply = params.get("apply");
     if (apply) { setApplyScholarshipId(apply); setActive("application"); setOpenApplyOnLoad(true); }
@@ -493,13 +588,14 @@ export default function StudentDashboardPage() {
     setUserEmail(user.email || "");
     setUserId(user.id);
 
-    const [profileRes, appsRes, docsRes, paymentsRes, notifsRes, scholsRes] = await Promise.all([
+    const [profileRes, appsRes, docsRes, paymentsRes, notifsRes, scholsRes, issuesRes] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", user.id).single(),
       supabase.from("applications").select("*, scholarships(name)").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("documents").select("*").eq("user_id", user.id),
       supabase.from("payments").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.rpc("scholarships_public"),
+      supabase.from("payment_issues").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
     ]);
 
     let profileRow = profileRes.data;
@@ -529,6 +625,7 @@ export default function StudentDashboardPage() {
     if (appsRes.data) setApplications(appsRes.data);
     if (docsRes.data) setDocuments(docsRes.data);
     if (paymentsRes.data) setPayments(paymentsRes.data);
+    if (issuesRes.data) setIssues(issuesRes.data);
     if (notifsRes.data) setNotifications(notifsRes.data);
     if (scholsRes.data) setScholarships(scholsRes.data);
     setLoading(false);
@@ -537,12 +634,14 @@ export default function StudentDashboardPage() {
   // Re-fetch application/payment rows in the background (no loading flicker) —
   // used when a live status/disbursement update comes in over realtime.
   const silentRefresh = async (uid: string) => {
-    const [appsRes, paymentsRes] = await Promise.all([
+    const [appsRes, paymentsRes, issuesRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").eq("user_id", uid).order("created_at", { ascending: false }),
       supabase.from("payments").select("*").eq("user_id", uid).order("created_at", { ascending: false }),
+      supabase.from("payment_issues").select("*").eq("user_id", uid).order("created_at", { ascending: false }),
     ]);
     if (appsRes.data) setApplications(appsRes.data);
     if (paymentsRes.data) setPayments(paymentsRes.data);
+    if (issuesRes.data) setIssues(issuesRes.data);
   };
 
   const refreshDocuments = async (uid: string) => {
@@ -568,6 +667,7 @@ export default function StudentDashboardPage() {
           const n = payload.new as Tables<"notifications">;
           setNotifications((prev) => (prev.some((x) => x.id === n.id) ? prev : [n, ...prev]));
           if (n.entity_type === "documents") refreshDocuments(userId);
+          if (n.entity_type === "payments" || n.entity_type === "payment_issues") silentRefresh(userId);
           const notify = toast[n.type as "info" | "success" | "warning" | "error"] ?? toast.message;
           notify(n.title, { description: n.message });
         }
@@ -587,7 +687,7 @@ export default function StudentDashboardPage() {
       )
       .on(
         "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "payments", filter: `user_id=eq.${userId}` },
+        { event: "*", schema: "public", table: "payments", filter: `user_id=eq.${userId}` },
         () => silentRefresh(userId)
       )
       .subscribe();
@@ -651,6 +751,11 @@ export default function StudentDashboardPage() {
     if (applyProgram.year_levels?.length && !applyProgram.year_levels.includes(profile?.year_level ?? "")) applyIssues.push(`${applyProgram.name} is open to ${applyProgram.year_levels.join(", ")} students only.`);
     if (applyProgram.municipality?.trim() && (profile?.municipality ?? "").trim().toLowerCase() !== applyProgram.municipality.trim().toLowerCase()) applyIssues.push(`${applyProgram.name} is for residents of ${applyProgram.municipality.trim()} only.`);
   }
+
+  // Everything awarded to this student: approved awards, using the program amount where none was set.
+  const approvedTotal = applications
+    .filter((a) => a.status === "Approved")
+    .reduce((t, a) => t + Number(a.amount_approved ?? scholarships.find((sc) => sc.id === a.scholarship_id)?.amount ?? 0), 0);
 
   const openDocument = async (doc: Tables<"documents">) => {
     const path = documentPath(doc);
@@ -1655,7 +1760,7 @@ export default function StudentDashboardPage() {
     const u = new URL(link, window.location.origin);
     if (u.pathname === "/student-dashboard") {
       const sec = u.searchParams.get("section");
-      if (sec && sidebarItems.some((i) => i.key === sec)) setActive(sec);
+      if (sec) { const key = sec === "payments" ? "disbursement" : sec; if (sidebarItems.some((i) => i.key === key)) setActive(key); }
     } else {
       router.push(link);
     }
@@ -1667,8 +1772,8 @@ export default function StudentDashboardPage() {
       case "application":   return Application(); // called, not rendered: inputs inside must keep focus
       case "documents":     return Documents();
       case "scholarship":   return <Scholarship />;
-      case "disbursement":  return <DisbursementSection payments={payments} disbursementStatus={currentApp?.disbursement_status} onUploaded={refreshPayments} />;
-      case "payments":      return <PaymentsSection payments={payments} onUploaded={refreshPayments} />;
+      case "payments":      // old deep links (?section=payments) land on the merged tab
+      case "disbursement":  return <DisbursementSection payments={payments} issues={issues} disbursementStatus={currentApp?.disbursement_status} approvedTotal={approvedTotal} onChanged={refreshPayments} />;
       case "notifications": return <Notifications />;
       case "profile":       return <Profile />;
       case "settings":      return <SettingsView />;

@@ -28,6 +28,8 @@ export interface AppSettings {
   renewal_enabled: boolean;
   renewal_min_grade: number;
   max_renewals: number;
+  payment_pickup_location: string;
+  payment_pickup_instructions: string;
 }
 
 export const SETTING_DEFAULTS: AppSettings = {
@@ -54,6 +56,8 @@ export const SETTING_DEFAULTS: AppSettings = {
   renewal_enabled: true,
   renewal_min_grade: 85,
   max_renewals: 3,
+  payment_pickup_location: "",
+  payment_pickup_instructions: "Please bring a valid ID.",
 };
 
 export type SettingKey = keyof AppSettings;
@@ -102,6 +106,8 @@ export function parseSettings(rows: { key: string; value: Json }[] | null | unde
     contact_phone: str(raw.contact_phone, d.contact_phone),
     contact_address: str(raw.contact_address, d.contact_address),
     office_hours: str(raw.office_hours, d.office_hours),
+    payment_pickup_location: str(raw.payment_pickup_location, d.payment_pickup_location),
+    payment_pickup_instructions: str(raw.payment_pickup_instructions, d.payment_pickup_instructions),
   };
 }
 
@@ -152,6 +158,9 @@ export function validateSetting(key: SettingKey, value: unknown): string | null 
     }
     case "payment_methods":
       return Array.isArray(value) && value.length > 0 ? null : "Enable at least one payment method";
+    case "payment_pickup_location":
+    case "payment_pickup_instructions":
+      return String(value).length <= 500 ? null : "Keep this under 500 characters";
     case "program_name":
     case "contact_email":
       return String(value).trim() ? null : "This field cannot be blank";

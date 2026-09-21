@@ -20,7 +20,7 @@ import {
   Menu, X, Search, BookOpen, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock, Download,
   FileDown, Receipt, Loader2, User, Upload, ArrowRight,
-   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy,
+   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -142,6 +142,13 @@ export default function AdminDashboardPage() {
   const [payAppId, setPayAppId] = useState("");
   const [payMethod, setPayMethod] = useState<"Cash" | "Cheque">("Cash");
   const [cancelPay, setCancelPay] = useState<Tables<"payments"> | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [payIssues, setPayIssues] = useState<Tables<"payment_issues">[]>([]);
+  const [issueDialog, setIssueDialog] = useState<Tables<"payments"> | null>(null);
+  const [issueResponse, setIssueResponse] = useState("");
+  const [rejectReceipt, setRejectReceipt] = useState<Tables<"payments"> | null>(null);
+  const [receiptNote, setReceiptNote] = useState("");
+  const [payBusy, setPayBusy] = useState(false);
   const [studentSearch, setStudentSearch] = useState("");
   const [studentFilter, setStudentFilter] = useState("all");
   const [studentSort, setStudentSort] = useState("name");
@@ -212,7 +219,7 @@ export default function AdminDashboardPage() {
     if (!isAdminRole(role)) { router.push("/student-dashboard"); return; }
     setAdminRole(role as string);
 
-    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, docsRes] = await Promise.all([
+    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, docsRes, issuesRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("scholarships").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
@@ -223,9 +230,10 @@ export default function AdminDashboardPage() {
       supabase.from("profiles").select("*").eq("id", user.id).single(),
       supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at"),
+      supabase.from("payment_issues").select("*").order("created_at", { ascending: false }),
     ]);
 
-    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, docsRes].find((r) => r.error);
+    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, docsRes, issuesRes].find((r) => r.error);
     setLoadError(failed?.error ? failed.error.message : null);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (scholsRes.data) setScholarships(scholsRes.data);
@@ -237,6 +245,7 @@ export default function AdminDashboardPage() {
     if (adminProfRes.data) setAdminProfile(adminProfRes.data);
     if (notifsRes.data) setNotifications(notifsRes.data);
     if (docsRes.data) setAllDocs(docsRes.data);
+    if (issuesRes.data) setPayIssues(issuesRes.data);
     setLastUpdated(new Date());
     setLoading(false);
     setRefreshing(false);
@@ -498,7 +507,9 @@ export default function AdminDashboardPage() {
   };
   const payProgram = (p: Tables<"payments">) => applications.find((a) => a.id === p.application_id)?.scholarships?.name || "—";
   const filteredPayments = payments.filter((p) => {
-    if (payFilter !== "all" && p.status !== payFilter) return false;
+    if (payFilter === "issues") { if (!openIssueFor(p.id)) return false; }
+    else if (payFilter === "receipts") { if (!(p.student_receipt_at && p.receipt_review_status === "Pending")) return false; }
+    else if (payFilter !== "all" && p.status !== payFilter) return false;
     const q = paySearch.trim().toLowerCase();
     return !q || `${payStudent(p)} ${payProgram(p)} ${p.reference || ""}`.toLowerCase().includes(q);
   });
@@ -538,10 +549,11 @@ export default function AdminDashboardPage() {
     setPayDialog(null); loadData();
   };
 
-  const setPaymentStatus = async (p: Tables<"payments">, status: "Processing" | "Cancelled") => {
-    const { error } = await supabase.from("payments").update({ status }).eq("id", p.id);
+  const setPaymentStatus = async (p: Tables<"payments">, status: "Processing" | "Cancelled", reason?: string) => {
+    const cancel_reason = status === "Cancelled" ? reason?.trim() || null : null;
+    const { error } = await supabase.from("payments").update(status === "Cancelled" ? { status, cancel_reason } : { status }).eq("id", p.id);
     if (error) { toast.error(error.message); return false; }
-    await logAudit(status === "Cancelled" ? "cancel_payment" : "process_payment", "payments", p.id, { status: p.status }, { status });
+    await logAudit(status === "Cancelled" ? "cancel_payment" : "process_payment", "payments", p.id, { status: p.status }, { status, ...(cancel_reason ? { cancel_reason } : {}) });
     toast.success(status === "Cancelled" ? "Payment cancelled" : "Marked as processing");
     loadData();
     return true;
@@ -556,6 +568,28 @@ export default function AdminDashboardPage() {
   };
   const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment");
   const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The student hasn't submitted a receipt");
+
+  // Accept or reject the receipt a student submitted. The student is notified by the database.
+  const reviewReceipt = async (p: Tables<"payments">, status: "Accepted" | "Rejected", note?: string) => {
+    setPayBusy(true);
+    const { error } = await supabase.rpc("review_student_receipt", { _payment_id: p.id, _status: status, _note: note ?? null });
+    setPayBusy(false);
+    if (error) { toast.error(error.message); return false; }
+    toast.success(status === "Accepted" ? "Receipt accepted" : "Receipt rejected — the student was asked to resubmit");
+    loadData();
+    return true;
+  };
+
+  const resolveIssue = async (issue: Tables<"payment_issues">) => {
+    setPayBusy(true);
+    const { error } = await supabase.rpc("resolve_payment_issue", { _issue_id: issue.id, _response: issueResponse });
+    setPayBusy(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Response sent to the student");
+    setIssueResponse("");
+    loadData();
+  };
+  const openIssueFor = (paymentId: string) => payIssues.find((i) => i.payment_id === paymentId && i.status === "Open");
 
   const disbPay = payments.find((pm) => pm.id === disbPaymentId);
   const disbLocked = !!disbPay?.preferred_method; // student chose the method; it is final
@@ -1661,13 +1695,15 @@ export default function AdminDashboardPage() {
                     <Input placeholder="Student, program, reference..." value={paySearch} onChange={(e) => { setPaySearch(e.target.value); setPayPage(1); }} className="pl-9 w-60" />
                   </div>
                   <Select value={payFilter} onValueChange={(v) => { setPayFilter(v); setPayPage(1); }}>
-                    <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All status</SelectItem>
                       <SelectItem value="Pending">Pending</SelectItem>
                       <SelectItem value="Processing">Processing</SelectItem>
                       <SelectItem value="Disbursed">Disbursed</SelectItem>
                       <SelectItem value="Cancelled">Cancelled</SelectItem>
+                      <SelectItem value="receipts">Receipts to review</SelectItem>
+                      <SelectItem value="issues">Open problems</SelectItem>
                     </SelectContent>
                   </Select>
                   <Button className="bg-gradient-primary shadow-primary" onClick={() => openNewPayment()}><Plus className="mr-1 h-4 w-4" /> Schedule Payment</Button>
@@ -1714,18 +1750,37 @@ export default function AdminDashboardPage() {
                           <TableCell>
                             {p.status !== "Disbursed" ? <span className="text-muted-foreground">—</span>
                               : p.student_receipt_at ? (
-                                p.student_receipt_path ? (
-                                  <button type="button" onClick={() => viewStudentReceipt(p)} className="inline-flex items-center gap-1 text-xs font-medium text-success hover:underline cursor-pointer">
-                                    <CheckCircle className="h-3.5 w-3.5" /> Received · {new Date(p.student_receipt_at).toLocaleDateString()}
-                                  </button>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 text-xs font-medium text-success" title="Student confirmed receiving the cash without attaching a file">
-                                    <CheckCircle className="h-3.5 w-3.5" /> Confirmed (no file) · {new Date(p.student_receipt_at).toLocaleDateString()}
-                                  </span>
-                                )
+                                <div className="space-y-1">
+                                  {p.student_receipt_path ? (
+                                    <button type="button" onClick={() => viewStudentReceipt(p)} className="inline-flex items-center gap-1 text-xs font-medium text-success hover:underline cursor-pointer">
+                                      <CheckCircle className="h-3.5 w-3.5" /> Received · {new Date(p.student_receipt_at).toLocaleDateString()}
+                                    </button>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-success" title="Student confirmed receiving the cash without attaching a file">
+                                      <CheckCircle className="h-3.5 w-3.5" /> Confirmed (no file) · {new Date(p.student_receipt_at).toLocaleDateString()}
+                                    </span>
+                                  )}
+                                  <div className="flex items-center gap-1.5">
+                                    <Badge variant={p.receipt_review_status === "Accepted" ? "default" : "secondary"} className={p.receipt_review_status === "Rejected" ? "text-destructive" : undefined}>
+                                      {p.receipt_review_status === "Pending" ? "To review" : p.receipt_review_status}
+                                    </Badge>
+                                    {p.receipt_review_status !== "Accepted" && (
+                                      <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={payBusy} onClick={() => reviewReceipt(p, "Accepted")}>Accept</Button>
+                                    )}
+                                    {p.receipt_review_status !== "Rejected" && (
+                                      <Button size="sm" variant="outline" className="h-6 px-2 text-xs text-destructive" disabled={payBusy} onClick={() => { setReceiptNote(""); setRejectReceipt(p); }}>Reject</Button>
+                                    )}
+                                  </div>
+                                  {p.receipt_review_status === "Rejected" && p.receipt_review_note && <p className="text-xs text-destructive">{p.receipt_review_note}</p>}
+                                </div>
                               ) : <Badge variant="secondary">Awaiting</Badge>}
                           </TableCell>
                           <TableCell className="text-right space-x-1 whitespace-nowrap">
+                            {payIssues.some((i) => i.payment_id === p.id) && (
+                              <Button size="icon" variant="ghost" title={openIssueFor(p.id) ? "Open problem reported by the student" : "Problem reports"} onClick={() => { setIssueResponse(""); setIssueDialog(p); }}>
+                                <AlertTriangle className={`h-4 w-4 ${openIssueFor(p.id) ? "text-warning" : "text-muted-foreground"}`} />
+                              </Button>
+                            )}
                             {p.status === "Disbursed" && (
                               <Button size="icon" variant="ghost" title="View receipt" onClick={() => viewReceipt(p)}><Receipt className="h-4 w-4" /></Button>
                             )}
@@ -1743,7 +1798,7 @@ export default function AdminDashboardPage() {
                               }}>
                                 Mark Disbursed
                               </Button>
-                              <Button size="icon" variant="ghost" title="Cancel payment" onClick={() => setCancelPay(p)}><XCircle className="h-4 w-4 text-destructive" /></Button>
+                              <Button size="icon" variant="ghost" title="Cancel payment" onClick={() => { setCancelReason(""); setCancelPay(p); }}><XCircle className="h-4 w-4 text-destructive" /></Button>
                             </>)}
                           </TableCell>
                         </TableRow>
@@ -1816,9 +1871,13 @@ export default function AdminDashboardPage() {
                   <p className="text-sm text-muted-foreground">
                     {cancelPay && `${formatPHP(cancelPay.amount)} for ${payStudent(cancelPay)} will be cancelled and the student notified. This can't be undone, but you can create a new payment.`}
                   </p>
+                  <div>
+                    <Label className="text-xs">Reason (shown to the student, optional)</Label>
+                    <Textarea rows={2} maxLength={300} value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="e.g. Rescheduled to next month." />
+                  </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setCancelPay(null)}>Keep</Button>
-                    <Button variant="destructive" onClick={async () => { if (cancelPay && await setPaymentStatus(cancelPay, "Cancelled")) setCancelPay(null); }}>Cancel payment</Button>
+                    <Button variant="destructive" onClick={async () => { if (cancelPay && await setPaymentStatus(cancelPay, "Cancelled", cancelReason)) setCancelPay(null); }}>Cancel payment</Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -2199,6 +2258,48 @@ export default function AdminDashboardPage() {
           )}
         </main>
       </div>
+
+      <Dialog open={!!rejectReceipt} onOpenChange={(o) => { if (!o) setRejectReceipt(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Reject the student&apos;s receipt</DialogTitle></DialogHeader>
+          <div>
+            <Label className="text-xs">Reason (shown to the student, who will be asked to resubmit)</Label>
+            <Textarea value={receiptNote} onChange={(e) => setReceiptNote(e.target.value)} placeholder="e.g. The signature is missing — please upload the signed voucher." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRejectReceipt(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={payBusy || !receiptNote.trim()} onClick={async () => {
+              if (rejectReceipt && await reviewReceipt(rejectReceipt, "Rejected", receiptNote)) setRejectReceipt(null);
+            }}>Reject receipt</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!issueDialog} onOpenChange={(o) => { if (!o) setIssueDialog(null); }}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Payment problem reports</DialogTitle></DialogHeader>
+          {issueDialog && (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">{payStudent(issueDialog)} · {formatPHP(issueDialog.amount)} · {issueDialog.status}</p>
+              {payIssues.filter((i) => i.payment_id === issueDialog.id).map((i) => (
+                <div key={i.id} className={`rounded-md border p-3 text-sm ${i.status === "Open" ? "border-warning/40 bg-warning/5" : ""}`}>
+                  <p className="font-medium">{{ not_received: "Not received", wrong_amount: "Wrong amount", other: "Other" }[i.kind] ?? i.kind} · {i.status}</p>
+                  <p className="mt-1 whitespace-pre-wrap">{i.message}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Reported {new Date(i.created_at).toLocaleString()}</p>
+                  {i.response && <p className="mt-2 whitespace-pre-wrap border-t pt-2"><span className="font-medium">Response: </span>{i.response}</p>}
+                  {i.status === "Open" && (
+                    <div className="mt-3 space-y-2">
+                      <Label className="text-xs">Response to the student</Label>
+                      <Textarea value={issueResponse} onChange={(e) => setIssueResponse(e.target.value)} placeholder="Explain what you found or what happens next." />
+                      <Button size="sm" disabled={payBusy || !issueResponse.trim()} onClick={() => resolveIssue(i)}>Send response &amp; resolve</Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!rejectDoc} onOpenChange={(o) => { if (!o) setRejectDoc(null); }}>
         <DialogContent>

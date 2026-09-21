@@ -228,6 +228,11 @@ export type Database = {
           student_receipt_path: string | null
           student_receipt_at: string | null
           preferred_method: string | null
+          receipt_review_status: string
+          receipt_review_note: string | null
+          receipt_reviewed_by: string | null
+          receipt_reviewed_at: string | null
+          cancel_reason: string | null
         }
         Insert: {
           id?: string
@@ -245,6 +250,11 @@ export type Database = {
           student_receipt_path?: string | null
           student_receipt_at?: string | null
           preferred_method?: string | null
+          receipt_review_status?: string
+          receipt_review_note?: string | null
+          receipt_reviewed_by?: string | null
+          receipt_reviewed_at?: string | null
+          cancel_reason?: string | null
         }
         Update: {
           id?: string
@@ -262,6 +272,11 @@ export type Database = {
           student_receipt_path?: string | null
           student_receipt_at?: string | null
           preferred_method?: string | null
+          receipt_review_status?: string
+          receipt_review_note?: string | null
+          receipt_reviewed_by?: string | null
+          receipt_reviewed_at?: string | null
+          cancel_reason?: string | null
         }
         Relationships: [
           {
@@ -272,6 +287,45 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      payment_issues: {
+        Row: {
+          id: string
+          payment_id: string
+          user_id: string
+          kind: string
+          message: string
+          status: string
+          response: string | null
+          created_at: string
+          resolved_at: string | null
+          resolved_by: string | null
+        }
+        Insert: {
+          id?: string
+          payment_id: string
+          user_id: string
+          kind: string
+          message: string
+          status?: string
+          response?: string | null
+          created_at?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+        }
+        Update: {
+          id?: string
+          payment_id?: string
+          user_id?: string
+          kind?: string
+          message?: string
+          status?: string
+          response?: string | null
+          created_at?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+        }
+        Relationships: []
       }
       profiles: {
         Row: {
@@ -569,6 +623,29 @@ export type Database = {
         Args: {
           _payment_id: string
           _method: string
+        }
+        Returns: undefined
+      }
+      report_payment_issue: {
+        Args: {
+          _payment_id: string
+          _kind: string
+          _message: string
+        }
+        Returns: string
+      }
+      resolve_payment_issue: {
+        Args: {
+          _issue_id: string
+          _response: string
+        }
+        Returns: undefined
+      }
+      review_student_receipt: {
+        Args: {
+          _payment_id: string
+          _status: string
+          _note?: string | null
         }
         Returns: undefined
       }
