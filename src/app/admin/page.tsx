@@ -31,8 +31,9 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import NotificationInbox from "@/components/notifications/NotificationInbox";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
+import AdminProfilePanel from "@/components/admin/AdminProfilePanel";
 import SettingsPanel from "@/components/admin/SettingsPanel";
-import { parseSettings, type AppSettings } from "@/lib/settings";
+import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
 const sidebarItems = [
@@ -163,6 +164,7 @@ export default function AdminDashboardPage() {
   const [adminProfile, setAdminProfile] = useState<Tables<"profiles"> | null>(null);
   const [adminEmail, setAdminEmail] = useState("");
   const [adminUserId, setAdminUserId] = useState("");
+  const [adminRole, setAdminRole] = useState("admin");
   const [verifFilter, setVerifFilter] = useState("all");
   const [verifAction, setVerifAction] = useState<{ v: Tables<"scholar_verifications">; status: "Verified" | "Flagged" | "Cleared" } | null>(null);
   const [verifNotes, setVerifNotes] = useState("");
@@ -194,7 +196,8 @@ export default function AdminDashboardPage() {
     setAdminUserId(user.id);
     const { data: roleData } = await supabase.from("user_roles").select("role").eq("user_id", user.id).single();
     const role = (roleData as { role?: string } | null)?.role;
-    if (role !== "admin") { router.push("/student-dashboard"); return; }
+    if (!isAdminRole(role)) { router.push("/student-dashboard"); return; }
+    setAdminRole(role as string);
 
     const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
@@ -405,7 +408,7 @@ export default function AdminDashboardPage() {
   const pagedPayments = filteredPayments.slice((currentPayPage - 1) * PAY_PAGE_SIZE, currentPayPage * PAY_PAGE_SIZE);
 
   const openNewPayment = (applicationId = "") => {
-    setPayAppId(applicationId); setPayMethod("Cash"); setPayDialog("new");
+    setPayAppId(applicationId); setPayMethod(parseSettings(systemSettings).default_payment_method); setPayDialog("new");
   };
 
   const savePayment = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -462,6 +465,8 @@ export default function AdminDashboardPage() {
     if (!disbReceipt) return;
     const payment = payments.find((pm) => pm.id === disbPaymentId);
     if (!payment) return;
+    const maxMb = parseSettings(systemSettings).max_upload_mb;
+    if (disbReceipt.size > maxMb * 1024 * 1024) { toast.error(`Receipt is too large (max ${maxMb} MB)`); return; }
     setDisbLoading(true);
     try {
       const safeName = disbReceipt.name.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -613,6 +618,11 @@ export default function AdminDashboardPage() {
   };
 
   const enabledMethods = parseSettings(systemSettings).payment_methods;
+  const defaultScheduledDate = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + parseSettings(systemSettings).default_payment_lead_days);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
   // Keep the selected methods valid when a method gets turned off in Settings.
   useEffect(() => {
     if (!enabledMethods.includes(payMethod)) setPayMethod(enabledMethods[0]);
@@ -1860,7 +1870,7 @@ export default function AdminDashboardPage() {
                         )}
                         <div className="grid grid-cols-2 gap-4">
                           <div><Label>Amount (₱) *</Label><Input name="amount" type="number" min={0.01} step="0.01" required defaultValue={cur?.amount ?? ""} /></div>
-                          <div><Label>Scheduled date</Label><Input name="scheduled_date" type="date" defaultValue={cur?.scheduled_date ?? ""} /></div>
+                          <div><Label>Scheduled date</Label><Input name="scheduled_date" type="date" defaultValue={cur ? (cur.scheduled_date ?? "") : defaultScheduledDate} /></div>
                         </div>
                         <div>
                           <Label>Method</Label>
@@ -2254,84 +2264,15 @@ export default function AdminDashboardPage() {
 
           {/* ADMIN PROFILE */}
           {activeSection === "profile" && (
-            <div className="space-y-4 animate-fade-in max-w-2xl">
-              <h2 className="text-xl font-display font-bold">Admin Profile</h2>
-              <Card>
-                <CardContent className="py-6 space-y-6">
-                  <div className="flex items-center gap-4">
-                    <div className="relative">
-                      <div className="h-20 w-20 rounded-full bg-accent flex items-center justify-center overflow-hidden">
-                        {adminProfile?.profile_picture_url ? (
-                          <img src={adminProfile.profile_picture_url} alt="Profile" className="h-20 w-20 rounded-full object-cover" />
-                        ) : (
-                          <User className="h-10 w-10 text-muted-foreground" />
-                        )}
-                      </div>
-                      <label className="absolute bottom-0 right-0 h-7 w-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center cursor-pointer hover:bg-primary/90">
-                        <Camera className="h-3.5 w-3.5" />
-                        <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (!file) return;
-                          const { data: { user } } = await supabase.auth.getUser();
-                          if (!user) return;
-                          const filePath = `${user.id}/avatar/${file.name}`;
-                          await supabase.storage.from("profile-pictures").upload(filePath, file, { upsert: true });
-                          const { data: urlData } = supabase.storage.from("profile-pictures").getPublicUrl(filePath);
-                          await supabase.from("profiles").update({ profile_picture_url: urlData.publicUrl }).eq("id", user.id);
-                          await logAudit("update_profile_photo", "profiles", user.id);
-                          toast.success("Profile photo updated"); loadData();
-                        }} />
-                      </label>
-                    </div>
-                    <div>
-                      <p className="text-lg font-semibold">{adminProfile?.first_name} {adminProfile?.last_name}</p>
-                      <p className="text-sm text-muted-foreground">{adminEmail}</p>
-                      <Badge className="mt-1">Admin</Badge>
-                    </div>
-                  </div>
-                  <form onSubmit={async (e) => {
-                    e.preventDefault();
-                    const fd = new FormData(e.currentTarget);
-                    const { data: { user } } = await supabase.auth.getUser();
-                    if (!user) return;
-                    const updates = {
-                      first_name: fd.get("first_name") as string,
-                      last_name: fd.get("last_name") as string,
-                      phone: fd.get("phone") as string,
-                    };
-                    await supabase.from("profiles").update(updates).eq("id", user.id);
-                    await logAudit("update_profile", "profiles", user.id, null, updates);
-                    toast.success("Profile updated"); loadData();
-                  }} className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div><Label>First Name</Label><Input name="first_name" defaultValue={adminProfile?.first_name || ""} /></div>
-                      <div><Label>Last Name</Label><Input name="last_name" defaultValue={adminProfile?.last_name || ""} /></div>
-                    </div>
-                    <div><Label>Phone</Label><Input name="phone" defaultValue={adminProfile?.phone || ""} /></div>
-                    <Button type="submit">Save Changes</Button>
-                  </form>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader><CardTitle className="text-base">Change Password</CardTitle></CardHeader>
-                <CardContent>
-                  <form onSubmit={async (e) => {
-                    e.preventDefault();
-                    const fd = new FormData(e.currentTarget);
-                    const newPassword = fd.get("new_password") as string;
-                    if (newPassword.length < 8) { toast.error("Password must be at least 8 characters"); return; }
-                    const { error } = await supabase.auth.updateUser({ password: newPassword });
-                    if (error) { toast.error(error.message); return; }
-                    await logAudit("change_password", "auth", undefined);
-                    toast.success("Password updated");
-                    e.currentTarget.reset();
-                  }} className="space-y-3">
-                    <div><Label>New Password</Label><Input name="new_password" type="password" required minLength={8} placeholder="Min 8 characters" /></div>
-                    <Button type="submit">Update Password</Button>
-                  </form>
-                </CardContent>
-              </Card>
-            </div>
+            <AdminProfilePanel
+              profile={adminProfile}
+              email={adminEmail}
+              userId={adminUserId}
+              role={adminRole}
+              auditLogs={auditLogs}
+              logAudit={logAudit}
+              onChanged={loadData}
+            />
           )}
 
           {/* SETTINGS */}
