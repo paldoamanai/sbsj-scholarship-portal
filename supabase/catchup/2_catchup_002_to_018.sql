@@ -954,6 +954,8 @@ BEGIN
 END;
 $$;
 
+DROP FUNCTION IF EXISTS public.submit_student_receipt(uuid, text);
+DROP FUNCTION IF EXISTS public.submit_student_receipt(uuid);
 CREATE OR REPLACE FUNCTION public.submit_student_receipt(_payment_id UUID, _path TEXT)
 RETURNS VOID
 LANGUAGE plpgsql
@@ -1052,6 +1054,8 @@ GRANT EXECUTE ON FUNCTION public.set_payment_preference(UUID, TEXT) TO authentic
 -- which records student_receipt_at (the confirmation) with no student_receipt_path.
 -- Cheque payments still require a file.
 
+DROP FUNCTION IF EXISTS public.submit_student_receipt(uuid, text);
+DROP FUNCTION IF EXISTS public.submit_student_receipt(uuid);
 CREATE OR REPLACE FUNCTION public.submit_student_receipt(_payment_id UUID, _path TEXT DEFAULT NULL)
 RETURNS VOID
 LANGUAGE plpgsql
@@ -1621,6 +1625,8 @@ CREATE TRIGGER tr_notify_payment_events
   AFTER INSERT OR UPDATE OF status ON public.payments FOR EACH ROW EXECUTE FUNCTION public.notify_payment_events();
 
 -- Student receipt / method preference -> admins (replaces the inline inserts from 011-014).
+DROP FUNCTION IF EXISTS public.submit_student_receipt(uuid, text);
+DROP FUNCTION IF EXISTS public.submit_student_receipt(uuid);
 CREATE OR REPLACE FUNCTION public.submit_student_receipt(_payment_id UUID, _path TEXT DEFAULT NULL)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -1787,6 +1793,11 @@ BEGIN
 EXCEPTION WHEN others THEN
   RAISE NOTICE 'pg_cron not available (%). Schedule public.send_scheduled_notifications() manually.', SQLERRM;
 END $$;
+
+
+-- Dropping submit_student_receipt above resets its permissions; restore them.
+REVOKE ALL ON FUNCTION public.submit_student_receipt(UUID, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.submit_student_receipt(UUID, TEXT) TO authenticated;
 
 
 NOTIFY pgrst, 'reload schema';
