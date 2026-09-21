@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { isAdminRole } from "@/lib/settings";
 
 export async function PUT(
   request: Request,
@@ -38,7 +39,7 @@ export async function PUT(
     .eq("user_id", user.id)
     .single();
 
-  const isAdmin = roleData?.role === "admin";
+  const isAdmin = isAdminRole(roleData?.role);
   const isOwner = app.user_id === user.id;
 
   if (!isAdmin && !isOwner) {

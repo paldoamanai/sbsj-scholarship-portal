@@ -7,45 +7,7 @@
 --   * payment methods: only enabled methods can be used (Cash / Cheque are the supported ones)
 
 -- ── 0. Create the table if this database never had it (see schema.sql section 14) ──
-CREATE TABLE IF NOT EXISTS public.system_settings (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  key TEXT UNIQUE NOT NULL,
-  value JSONB NOT NULL,
-  description TEXT,
-  updated_by UUID REFERENCES auth.users(id),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE public.system_settings ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Anyone can read settings" ON public.system_settings;
-CREATE POLICY "Anyone can read settings" ON public.system_settings
-  FOR SELECT USING (true);
-DROP POLICY IF EXISTS "Admins can manage settings" ON public.system_settings;
-CREATE POLICY "Admins can manage settings" ON public.system_settings
-  FOR ALL USING (public.has_role('admin', auth.uid()))
-  WITH CHECK (public.has_role('admin', auth.uid()));
-
--- ── 1. Seed new settings and normalize old values ──
-INSERT INTO public.system_settings (key, value, description) VALUES
-  ('applications_open', 'true', 'Master switch: students can submit applications'),
-  ('application_open_date', '""', 'First day applications are accepted (YYYY-MM-DD, blank = no start date)'),
-  ('application_close_date', '""', 'Last day applications are accepted (YYYY-MM-DD, blank = no end date)'),
-  ('maintenance_mode', 'false', 'Block student submissions while the office is doing maintenance'),
-  ('maintenance_message', '"The portal is temporarily unavailable for submissions. Please try again later."', 'Message shown to students during maintenance'),
-  ('max_upload_mb', '5', 'Maximum size of an uploaded document, in MB'),
-  ('program_name', '"SB San Jose Scholarship Portal"', 'Program name shown on the public site'),
-  ('contact_email', '"scholarship@sbsj.gov.ph"', 'Public contact email'),
-  ('contact_phone', '"(043) 457-0001"', 'Public contact phone'),
-  ('contact_address', '"Sangguniang Bayan Building, San Jose, Occidental Mindoro, Philippines 5100"', 'Public contact address'),
-  ('office_hours', '"Monday to Friday, 8:00 AM – 5:00 PM"', 'Public office hours'),
-  ('academic_year', '"2025-2026"', 'Current academic year'),
-  ('current_semester', '"1st Semester"', 'Current semester'),
-  ('payment_methods', '["Cash", "Cheque"]', 'Enabled payment methods'),
-  ('email_notifications', 'true', 'Enable email notifications'),
-  ('max_scholarships_per_student', '1', 'Maximum applications per student per calendar year'),
-  ('min_grade_requirement', '85', 'Minimum average grade required to apply (0 = no minimum)')
-ON CONFLICT (key) DO NOTHING;
+Success. 
 
 UPDATE public.system_settings SET description = 'Maximum applications per student per calendar year'
  WHERE key = 'max_scholarships_per_student';

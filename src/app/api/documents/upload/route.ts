@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { parseSettings } from "@/lib/settings";
+import { isAdminRole } from "@/lib/settings";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -15,7 +16,7 @@ export async function POST(request: Request) {
 
   if (settings.maintenance_mode) {
     const { data: role } = await supabase.from("user_roles").select("role").eq("user_id", user.id).maybeSingle();
-    if (role?.role !== "admin") {
+    if (!isAdminRole(role?.role)) {
       return NextResponse.json({ error: settings.maintenance_message, code: "MAINTENANCE" }, { status: 503 });
     }
   }

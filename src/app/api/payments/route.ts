@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { isAdminRole } from "@/lib/settings";
 
 export async function GET() {
   const supabase = await createClient();
@@ -20,7 +21,7 @@ export async function GET() {
     .select("*")
     .order("created_at", { ascending: false });
 
-  if (roleData?.role !== "admin") {
+  if (!isAdminRole(roleData?.role)) {
     query = query.eq("user_id", user.id);
   }
 

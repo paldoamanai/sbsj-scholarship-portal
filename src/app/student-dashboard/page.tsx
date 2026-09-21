@@ -105,17 +105,17 @@ function Panel({ children, className = "" }: { children: React.ReactNode; classN
 // ── Disbursement section ───────────────────────────────────────────────────────
 // Shared receipt-upload logic for the Disbursement and Payments sections.
 const RECEIPT_TYPES = ["application/pdf", "image/jpeg", "image/png"];
-const RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
 
 function useReceiptUpload(onUploaded: () => void) {
   const supabase = createClient();
+  const { settings } = useSystemSettings();
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [receiptFiles, setReceiptFiles] = useState<Record<string, File | null>>({});
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
 
   const pickFile = (paymentId: string, file: File | null) => {
     if (file && !RECEIPT_TYPES.includes(file.type)) { toast.error("Upload a PDF, JPG or PNG file."); return; }
-    if (file && file.size > RECEIPT_MAX_BYTES) { toast.error("File is too large (max 5 MB)."); return; }
+    if (file && file.size > settings.max_upload_mb * 1024 * 1024) { toast.error(`File is too large (max ${settings.max_upload_mb} MB).`); return; }
     setReceiptFiles((prev) => ({ ...prev, [paymentId]: file }));
   };
 
@@ -391,7 +391,6 @@ const sidebarItems = [
   { icon: SettingsIcon,    label: "Settings",       key: "settings" },
 ];
 
-const requiredDocTypes = ["Valid ID", "Grades", "Certificate of Registration", "Barangay Indigency", "Birth Certificate"];
 
 // ══════════════════════════════════════════════════════════════════════════════
 export default function StudentDashboardPage() {
@@ -558,6 +557,7 @@ export default function StudentDashboardPage() {
     : userEmail.split("@")[0];
 
   const unreadCount = notifications.filter(n => !n.read).length;
+  const requiredDocTypes = settings.required_documents;
   const docsUploaded = requiredDocTypes.filter(t => documents.some(d => d.document_type === t)).length;
 
   // ── Loading ────────────────────────────────────────────────────────────────
@@ -921,7 +921,7 @@ export default function StudentDashboardPage() {
         <div className="h-2.5 w-full rounded-full bg-muted overflow-hidden">
           <div
             className="h-full rounded-full bg-primary transition-all duration-500"
-            style={{ width: `${(docsUploaded / requiredDocTypes.length) * 100}%` }}
+            style={{ width: `${requiredDocTypes.length ? (docsUploaded / requiredDocTypes.length) * 100 : 100}%` }}
           />
         </div>
         <p className="text-xs text-muted-foreground mt-2">
@@ -954,6 +954,8 @@ export default function StudentDashboardPage() {
                     onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
+                      if (file.size > settings.max_upload_mb * 1024 * 1024) { toast.error(`File is too large (max ${settings.max_upload_mb} MB).`); return; }
+                      if (settings.maintenance_mode) { toast.error(settings.maintenance_message); return; }
                       const { data: { user } } = await supabase.auth.getUser();
                       if (!user) return;
                       const filePath = `${user.id}/${docType}/${Date.now()}-${file.name}`;

@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { LogIn, ShieldCheck, Loader2, Eye, EyeOff, GraduationCap } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { isAdminRole } from "@/lib/settings";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -54,7 +55,7 @@ export default function LoginPage() {
 
     toast.success("Login successful!");
     const userRole = (roleData as { role?: string } | null)?.role || "student";
-    const dest = userRole === "admin" ? "/admin" : "/student-dashboard";
+    const dest = isAdminRole(userRole) ? "/admin" : "/student-dashboard";
     router.push(dest);
     router.refresh();
   };

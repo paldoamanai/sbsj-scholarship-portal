@@ -20,6 +20,7 @@ export type Database = {
           notes: string | null
           academic_year: string | null
           semester: string | null
+          is_renewal: boolean
           created_at: string
           updated_at: string
         }
@@ -33,6 +34,7 @@ export type Database = {
           notes?: string | null
           academic_year?: string | null
           semester?: string | null
+          is_renewal?: boolean
           created_at?: string
           updated_at?: string
         }
@@ -46,6 +48,7 @@ export type Database = {
           notes?: string | null
           academic_year?: string | null
           semester?: string | null
+          is_renewal?: boolean
           created_at?: string
           updated_at?: string
         }

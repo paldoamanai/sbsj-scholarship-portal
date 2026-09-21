@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { normalizeSupabaseUrl } from "./url";
+import { isAdminRole } from "@/lib/settings";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -51,7 +52,7 @@ export async function updateSession(request: NextRequest) {
 
     const userRole = (roleData as { role?: string } | null)?.role || "student";
     url.pathname =
-      userRole === "admin" ? "/admin" : "/student-dashboard";
+      isAdminRole(userRole) ? "/admin" : "/student-dashboard";
     return NextResponse.redirect(url);
   }
 

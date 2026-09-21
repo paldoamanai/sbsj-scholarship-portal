@@ -22,6 +22,12 @@ export interface AppSettings {
   contact_phone: string;
   contact_address: string;
   office_hours: string;
+  required_documents: string[];
+  default_payment_method: PaymentMethod;
+  default_payment_lead_days: number;
+  renewal_enabled: boolean;
+  renewal_min_grade: number;
+  max_renewals: number;
 }
 
 export const SETTING_DEFAULTS: AppSettings = {
@@ -42,6 +48,12 @@ export const SETTING_DEFAULTS: AppSettings = {
   contact_phone: "(043) 457-0001",
   contact_address: "Sangguniang Bayan Building, San Jose, Occidental Mindoro, Philippines 5100",
   office_hours: "Monday to Friday, 8:00 AM – 5:00 PM",
+  required_documents: ["Valid ID", "Grades", "Certificate of Registration", "Barangay Indigency", "Birth Certificate"],
+  default_payment_method: "Cash",
+  default_payment_lead_days: 7,
+  renewal_enabled: true,
+  renewal_min_grade: 85,
+  max_renewals: 3,
 };
 
 export type SettingKey = keyof AppSettings;
@@ -61,7 +73,18 @@ export function parseSettings(rows: { key: string; value: Json }[] | null | unde
   const methods = Array.isArray(raw.payment_methods)
     ? (raw.payment_methods.filter((m): m is PaymentMethod => m === "Cash" || m === "Cheque"))
     : d.payment_methods;
+  const docs = Array.isArray(raw.required_documents)
+    ? raw.required_documents.filter((x): x is string => typeof x === "string" && x.trim() !== "")
+    : d.required_documents;
+  const finalMethods = methods.length ? methods : d.payment_methods;
+  const defMethod = raw.default_payment_method === "Cheque" || raw.default_payment_method === "Cash" ? raw.default_payment_method : d.default_payment_method;
   return {
+    required_documents: docs,
+    default_payment_method: finalMethods.includes(defMethod) ? defMethod : finalMethods[0],
+    default_payment_lead_days: num(raw.default_payment_lead_days, d.default_payment_lead_days),
+    renewal_enabled: bool(raw.renewal_enabled, d.renewal_enabled),
+    renewal_min_grade: num(raw.renewal_min_grade, d.renewal_min_grade),
+    max_renewals: num(raw.max_renewals, d.max_renewals),
     academic_year: str(raw.academic_year, d.academic_year),
     current_semester: str(raw.current_semester, d.current_semester),
     min_grade_requirement: num(raw.min_grade_requirement, d.min_grade_requirement),
@@ -95,6 +118,7 @@ export function applicationsBlockedReason(s: AppSettings, today = new Date()): s
 /** Client-side validation mirroring the database trigger. Returns an error message or null. */
 export function validateSetting(key: SettingKey, value: unknown): string | null {
   switch (key) {
+    case "renewal_min_grade":
     case "min_grade_requirement": {
       const n = Number(value);
       return Number.isFinite(n) && n >= 0 && n <= 100 ? null : "Minimum grade must be between 0 and 100";
@@ -102,6 +126,21 @@ export function validateSetting(key: SettingKey, value: unknown): string | null 
     case "max_scholarships_per_student": {
       const n = Number(value);
       return Number.isInteger(n) && n >= 1 && n <= 20 ? null : "Max applications must be a whole number from 1 to 20";
+    }
+    case "default_payment_lead_days": {
+      const n = Number(value);
+      return Number.isInteger(n) && n >= 0 && n <= 365 ? null : "Lead days must be a whole number from 0 to 365";
+    }
+    case "max_renewals": {
+      const n = Number(value);
+      return Number.isInteger(n) && n >= 0 && n <= 10 ? null : "Max renewals must be a whole number from 0 to 10";
+    }
+    case "required_documents": {
+      if (!Array.isArray(value)) return "Required documents must be a list";
+      if (value.length > 12) return "At most 12 documents";
+      const names = value.map((x) => String(x).trim().toLowerCase());
+      if (names.some((x) => !x || x.length > 60)) return "Each document needs a name of up to 60 characters";
+      return new Set(names).size === names.length ? null : "Documents must not repeat";
     }
     case "max_upload_mb": {
       const n = Number(value);
@@ -120,3 +159,6 @@ export function validateSetting(key: SettingKey, value: unknown): string | null 
       return null;
   }
 }
+
+/** Roles that can open the admin area. */
+export const isAdminRole = (role: string | null | undefined) => role === "admin" || role === "super_admin";

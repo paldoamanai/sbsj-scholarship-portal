@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, RotateCcw } from "lucide-react";
+import { Loader2, Plus, RotateCcw, X } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +34,9 @@ const LABELS: Record<SettingKey, string> = {
   maintenance_mode: "Maintenance mode", maintenance_message: "Maintenance message",
   max_upload_mb: "Max upload size", program_name: "Program name", contact_email: "Contact email",
   contact_phone: "Contact phone", contact_address: "Contact address", office_hours: "Office hours",
+  required_documents: "Required documents", default_payment_method: "Default payment method",
+  default_payment_lead_days: "Default payment lead time", renewal_enabled: "Renewals open",
+  renewal_min_grade: "Renewal minimum grade", max_renewals: "Max renewals",
 };
 
 const fmt = (v: unknown) => (Array.isArray(v) ? v.join(", ") : typeof v === "boolean" ? (v ? "On" : "Off") : v === "" || v == null ? "—" : String(v));
@@ -44,6 +47,7 @@ export default function SettingsPanel({ rows, auditLogs, onSave }: Props) {
   const [draft, setDraft] = useState<AppSettings>(saved);
   const [errors, setErrors] = useState<Partial<Record<SettingKey, string>>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  const [newDoc, setNewDoc] = useState("");
 
   // Re-sync whenever the saved values change (after a save, reset or reload).
   useEffect(() => { setDraft(saved); setErrors({}); }, [saved]);
@@ -101,7 +105,8 @@ export default function SettingsPanel({ rows, auditLogs, onSave }: Props) {
 
   const toggleMethod = (m: PaymentMethod, on: boolean) => {
     const next = on ? [...draft.payment_methods, m] : draft.payment_methods.filter((x) => x !== m);
-    set("payment_methods", PAYMENT_METHODS.filter((x) => next.includes(x)));
+    const methods = PAYMENT_METHODS.filter((x) => next.includes(x));
+    setDraft((d) => ({ ...d, payment_methods: methods, default_payment_method: methods.includes(d.default_payment_method) ? d.default_payment_method : (methods[0] ?? d.default_payment_method) }));
   };
 
   const history = useMemo(
@@ -182,7 +187,67 @@ export default function SettingsPanel({ rows, auditLogs, onSave }: Props) {
           ))}
           <Err k="payment_methods" />
           {draft.payment_methods.length === 0 && <p className="text-xs text-destructive">Enable at least one payment method.</p>}
-          <SaveBar id="payments" keys={["payment_methods"]} />
+          <SaveBar id="payments" keys={["payment_methods", "default_payment_method"]} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Renewals</CardTitle><CardDescription>A student with an earlier approved application is treated as renewing. The yearly application limit still applies.</CardDescription></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div><p className="text-sm font-medium">Renewals open</p><p className="text-xs text-muted-foreground">Turn off to stop scholars from applying again.</p></div>
+            <Switch checked={draft.renewal_enabled} onCheckedChange={(v) => set("renewal_enabled", v)} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label>Minimum grade to renew (0 = none)</Label><Input type="number" min={0} max={100} step="0.01" value={draft.renewal_min_grade} onChange={(e) => set("renewal_min_grade", e.target.value as unknown as number)} /><Err k="renewal_min_grade" /></div>
+            <div><Label>Max renewals per scholar</Label><Input type="number" min={0} max={10} step={1} value={draft.max_renewals} onChange={(e) => set("max_renewals", e.target.value as unknown as number)} /><Err k="max_renewals" /></div>
+          </div>
+          <SaveBar id="renewals" keys={["renewal_enabled", "renewal_min_grade", "max_renewals"]} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Required Documents</CardTitle><CardDescription>Students see this checklist and its progress on their dashboard.</CardDescription></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {draft.required_documents.map((d) => (
+              <span key={d} className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-sm">
+                {d}
+                <button type="button" aria-label={`Remove ${d}`} className="text-muted-foreground hover:text-destructive cursor-pointer"
+                  onClick={() => set("required_documents", draft.required_documents.filter((x) => x !== d))}><X className="h-3.5 w-3.5" /></button>
+              </span>
+            ))}
+            {draft.required_documents.length === 0 && <span className="text-sm text-muted-foreground">No documents required.</span>}
+          </div>
+          <form className="flex gap-2" onSubmit={(e) => {
+            e.preventDefault();
+            const name = newDoc.trim();
+            if (!name) return;
+            set("required_documents", [...draft.required_documents, name]);
+            setNewDoc("");
+          }}>
+            <Input value={newDoc} maxLength={60} placeholder="Add a document, e.g. Recommendation Letter" onChange={(e) => setNewDoc(e.target.value)} />
+            <Button type="submit" variant="outline"><Plus className="mr-1 h-4 w-4" />Add</Button>
+          </form>
+          <Err k="required_documents" />
+          <p className="text-xs text-muted-foreground">Removing a document only hides it from the checklist. Files students already uploaded are kept.</p>
+          <SaveBar id="documents" keys={["required_documents"]} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Disbursement Defaults</CardTitle><CardDescription>Pre-filled when you create a new payment. You can still change them per payment.</CardDescription></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label>Default method</Label>
+              <Select value={draft.default_payment_method} onValueChange={(v) => set("default_payment_method", v as PaymentMethod)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{draft.payment_methods.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div><Label>Schedule payments (days from today)</Label><Input type="number" min={0} max={365} step={1} value={draft.default_payment_lead_days} onChange={(e) => set("default_payment_lead_days", e.target.value as unknown as number)} /><Err k="default_payment_lead_days" /></div>
+          </div>
+          <SaveBar id="disbursement" keys={["default_payment_method", "default_payment_lead_days"]} />
         </CardContent>
       </Card>
 
@@ -201,7 +266,7 @@ export default function SettingsPanel({ rows, auditLogs, onSave }: Props) {
       <Card>
         <CardHeader><CardTitle className="text-base">Uploads & Maintenance</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          <div><Label>Max document upload size (MB)</Label><Input type="number" min={1} max={25} value={draft.max_upload_mb} onChange={(e) => set("max_upload_mb", e.target.value as unknown as number)} /><Err k="max_upload_mb" /></div>
+          <div><Label>Max upload size for documents and receipts (MB)</Label><Input type="number" min={1} max={25} value={draft.max_upload_mb} onChange={(e) => set("max_upload_mb", e.target.value as unknown as number)} /><Err k="max_upload_mb" /></div>
           <div className="flex items-center justify-between">
             <div><p className="text-sm font-medium">Maintenance mode</p><p className="text-xs text-muted-foreground">Blocks student applications and document uploads. Admins are not affected.</p></div>
             <Switch checked={draft.maintenance_mode} onCheckedChange={(v) => set("maintenance_mode", v)} />
