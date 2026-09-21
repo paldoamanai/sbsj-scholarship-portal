@@ -73,6 +73,37 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
   );
 }
 
+// ── Reports / audit helpers ──
+type ReportSection = { name: string; head: string[]; rows: (string | number)[][]; money?: string[] };
+type ReportDef = { title: string; filters: string[]; sections: ReportSection[]; count: number; countLabel: string };
+
+function getRange(period: string, from: string, to: string): { since: Date | null; until: Date | null } {
+  const now = new Date();
+  if (period === "year") return { since: new Date(now.getFullYear(), 0, 1), until: null };
+  if (period === "6m") return { since: new Date(now.getFullYear(), now.getMonth() - 5, 1), until: null };
+  if (period === "30d") return { since: new Date(now.getTime() - 30 * 86400000), until: null };
+  if (period === "custom") {
+    return {
+      since: from ? new Date(`${from}T00:00:00`) : null,
+      until: to ? new Date(`${to}T23:59:59.999`) : null,
+    };
+  }
+  return { since: null, until: null };
+}
+
+// Older audit rows stored their values as JSON-encoded strings; newer ones are real JSON.
+function parseJson(v: Json | null | undefined): unknown {
+  if (typeof v === "string") { try { return JSON.parse(v); } catch { return v; } }
+  return v ?? null;
+}
+function asObj(v: Json | null | undefined): Record<string, unknown> {
+  const x = parseJson(v);
+  if (x && typeof x === "object" && !Array.isArray(x)) return x as Record<string, unknown>;
+  return x === null ? {} : { value: x };
+}
+const fmtVal = (v: unknown) => (v === null || v === undefined ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v));
+const jsonText = (v: Json | null | undefined) => { const x = parseJson(v); return x === null ? "—" : typeof x === "string" ? x : JSON.stringify(x); };
+
 export default function AdminDashboardPage() {
   const router = useRouter();
   const supabase = createClient();
@@ -86,7 +117,18 @@ export default function AdminDashboardPage() {
   const [schDialog, setSchDialog] = useState<"new" | Tables<"scholarships"> | null>(null);
   const [schActive, setSchActive] = useState(true);
   const [deleteSch, setDeleteSch] = useState<Tables<"scholarships"> | null>(null);
-  const [fundPeriod, setFundPeriod] = useState("all");
+  const [fundPeriod, setFundPeriod] = useState("all"); // shared by Fund Management and Reports
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [reportProgram, setReportProgram] = useState("all");
+  const [reportPayStatus, setReportPayStatus] = useState("all");
+  const [auditSearch, setAuditSearch] = useState("");
+  const [auditAction, setAuditAction] = useState("all");
+  const [auditEntity, setAuditEntity] = useState("all");
+  const [auditFrom, setAuditFrom] = useState("");
+  const [auditTo, setAuditTo] = useState("");
+  const [auditPage, setAuditPage] = useState(1);
+  const [viewLog, setViewLog] = useState<Tables<"audit_logs"> | null>(null);
   const [paySearch, setPaySearch] = useState("");
   const [payFilter, setPayFilter] = useState("all");
   const [payPage, setPayPage] = useState(1);
@@ -155,7 +197,7 @@ export default function AdminDashboardPage() {
       supabase.from("scholarships").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
       supabase.from("payments").select("*").order("created_at", { ascending: false }),
-      supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(100),
+      supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(1000),
       supabase.from("scholar_verifications").select("*").order("created_at", { ascending: false }),
       supabase.from("system_settings").select("*"),
       supabase.from("profiles").select("*").eq("id", user.id).single(),
@@ -443,6 +485,31 @@ export default function AdminDashboardPage() {
     }
   };
 
+  // ── Audit log browsing ──
+  const AUDIT_PAGE_SIZE = 15;
+  const auditActions = useMemo(() => [...new Set(auditLogs.map((l) => l.action))].sort(), [auditLogs]);
+  const auditEntities = useMemo(() => [...new Set(auditLogs.map((l) => l.entity_type))].sort(), [auditLogs]);
+  const filteredLogs = useMemo(() => {
+    const q = auditSearch.trim().toLowerCase();
+    const from = auditFrom ? new Date(`${auditFrom}T00:00:00`) : null;
+    const to = auditTo ? new Date(`${auditTo}T23:59:59.999`) : null;
+    return auditLogs.filter((l) => {
+      if (auditAction !== "all" && l.action !== auditAction) return false;
+      if (auditEntity !== "all" && l.entity_type !== auditEntity) return false;
+      const t = new Date(l.created_at);
+      if ((from && t < from) || (to && t > to)) return false;
+      return !q || `${l.user_email || ""} ${l.action} ${l.entity_type} ${l.entity_id || ""}`.toLowerCase().includes(q);
+    });
+  }, [auditLogs, auditSearch, auditAction, auditEntity, auditFrom, auditTo]);
+  const auditPages = Math.max(1, Math.ceil(filteredLogs.length / AUDIT_PAGE_SIZE));
+  const currentAuditPage = Math.min(auditPage, auditPages);
+  const pagedLogs = filteredLogs.slice((currentAuditPage - 1) * AUDIT_PAGE_SIZE, currentAuditPage * AUDIT_PAGE_SIZE);
+  const auditDef = (): ReportDef => ({
+    title: "Audit Log", count: filteredLogs.length, countLabel: "entries",
+    filters: [`${filteredLogs.length} of ${auditLogs.length} loaded entries`, ...(auditAction !== "all" ? [`Action: ${auditAction}`] : []), ...(auditEntity !== "all" ? [`Entity: ${auditEntity}`] : []), ...(auditFrom || auditTo ? [`Dates: ${auditFrom || "…"} to ${auditTo || "…"}`] : [])],
+    sections: [logsToSection(filteredLogs)],
+  });
+
   const STUDENT_PAGE_SIZE = 10;
   const verificationForUser = (userId: string) => verifications.find((v) => v.user_id === userId);
   const filteredStudents = useMemo(() => {
@@ -537,90 +604,193 @@ export default function AdminDashboardPage() {
     setVerifAction(null); setVerifNotes(""); loadData();
   };
 
-  const logAudit = async (action: string, entityType: string, entityId?: string, prev?: Json, next?: Json) => {
+  const logAudit = async (action: string, entityType: string, entityId?: string, prev?: Json | null, next?: Json | null) => {
     const { data: { user } } = await supabase.auth.getUser();
-    await supabase.from("audit_logs").insert({
+    const { error } = await supabase.from("audit_logs").insert({
       user_id: user?.id, user_email: user?.email || adminEmail,
       action, entity_type: entityType, entity_id: entityId,
-      previous_value: prev ? JSON.stringify(prev) : null,
-      new_value: next ? JSON.stringify(next) : null,
+      previous_value: prev ?? null,
+      new_value: next ?? null,
+      user_agent: typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 250) : null,
     });
+    if (error) {
+      console.error("Audit log write failed", error);
+      toast.error("Action saved, but the audit log entry failed", { description: error.message });
+    }
   };
 
-  const exportPDF = async (key: string) => {
-    const { default: jsPDF } = await import("jspdf");
-    const { default: autoTable } = await import("jspdf-autotable");
-    const doc = new jsPDF();
-    doc.setFontSize(16);
-    doc.text("SB San Jose Scholarship Portal", 14, 15);
-    doc.setFontSize(10);
-    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 22);
+  const saveSetting = async (key: string, value: string, storedValue: string) => {
+    const previous = systemSettings.find((st) => st.key === key)?.value ?? null;
+    const { error } = await supabase.from("system_settings").update({ value: storedValue }).eq("key", key);
+    if (error) { toast.error(error.message); return; }
+    await logAudit("update_setting", "system_settings", undefined, { key, value: previous as Json }, { key, value });
+    toast.success("Setting saved");
+  };
+
+  // ── Reports ──
+  const periodLabel = () => {
+    if (fundPeriod === "year") return "This year";
+    if (fundPeriod === "6m") return "Last 6 months";
+    if (fundPeriod === "30d") return "Last 30 days";
+    if (fundPeriod === "custom") return `${fromDate || "…"} to ${toDate || "…"}`;
+    return "All time";
+  };
+  const programLabel = () => (reportProgram === "all" ? "All programs" : scholarships.find((sc) => sc.id === reportProgram)?.name || "Unknown program");
+  const personName = (p?: Tables<"profiles"> | null) => (p ? `${p.first_name || ""} ${p.last_name || ""}`.trim() || p.email || "—" : "—");
+
+  const logsToSection = (logs: Tables<"audit_logs">[]): ReportSection => ({
+    name: "Audit Log",
+    head: ["Date", "User", "Action", "Entity", "Entity ID", "Before", "After"],
+    rows: logs.map((l) => [new Date(l.created_at).toLocaleString(), l.user_email || "System", l.action, l.entity_type, l.entity_id || "—", jsonText(l.previous_value), jsonText(l.new_value)]),
+  });
+
+  const buildReport = (key: string): ReportDef => {
+    const { since, until } = getRange(fundPeriod, fromDate, toDate);
+    const within = (d: string | null | undefined) => {
+      if (!d) return !since && !until;
+      const t = new Date(d);
+      return (!since || t >= since) && (!until || t <= until);
+    };
+    const inProgram = (schId: string | null | undefined) => reportProgram === "all" || schId === reportProgram;
+    const filters = [`Period: ${periodLabel()}`, `Program: ${programLabel()}`];
+    const count = (list: { length: number }) => list.length;
 
     if (key === "scholars") {
-      const approved = applications.filter(a => a.status === "Approved");
-      autoTable(doc, {
-        startY: 28,
-        head: [["Name", "School", "Course", "Year Level", "Scholarship", "Status"]],
-        body: approved.map(a => [
-          a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}` : "—",
-          a.profiles?.school_name || "—", a.profiles?.course || "—", a.profiles?.year_level || "—",
-          a.scholarships?.name || "—", a.status,
-        ]),
-      });
-    } else if (key === "funds") {
-      autoTable(doc, {
-        startY: 28,
-        head: [["Status", "Payments", "Amount"]],
-        body: fundData.pipeline.map((r) => [r.status, r.count, formatPHP(r.amount)]),
-      });
-      autoTable(doc, {
-        startY: (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8,
-        head: [["Scholarship", "Scholars Paid", "Disbursed", "Queued"]],
-        body: fundData.byProgram.map((r) => [r.name, r.scholars, formatPHP(r.disbursed), formatPHP(r.queued)]),
-      });
-    } else if (key === "disbursements") {
-      autoTable(doc, {
-        startY: 28,
-        head: [["Reference", "Amount", "Method", "Status", "Date"]],
-        body: payments.map(p => [p.reference || "—", formatPHP(p.amount), p.method, p.status, p.scheduled_date || "—"]),
-      });
-    } else if (key === "statistics") {
-      const t = { total: applications.length, approved: applications.filter(a => a.status === "Approved").length, rejected: applications.filter(a => a.status === "Rejected").length, pending: applications.filter(a => a.status === "Pending").length };
-      autoTable(doc, {
-        startY: 28,
-        head: [["Metric", "Value"]],
-        body: [["Total Applications", t.total], ["Approved", t.approved], ["Rejected", t.rejected], ["Pending", t.pending], ["Approval Rate", `${t.total ? ((t.approved / t.total) * 100).toFixed(1) : 0}%`]],
-      });
+      const apps = applications.filter((a) => a.status === "Approved" && inProgram(a.scholarship_id) && within(a.updated_at));
+      return {
+        title: "List of Scholars", filters, count: count(apps), countLabel: "scholars",
+        sections: [{
+          name: "Scholars",
+          head: ["Name", "Email", "Student ID", "School", "Course", "Year Level", "Scholarship", "Approved On"],
+          rows: apps.map((a) => [personName(a.profiles), a.profiles?.email || "—", a.profiles?.student_id_number || "—", a.profiles?.school_name || "—", a.profiles?.course || "—", a.profiles?.year_level || "—", a.scholarships?.name || "—", new Date(a.updated_at).toLocaleDateString()]),
+        }],
+      };
     }
-    doc.save(`${key}-report.pdf`);
+
+    if (key === "funds") {
+      const programs = fundData.byProgram.filter((r) => reportProgram === "all" || r.id === reportProgram);
+      const sections: ReportSection[] = [];
+      if (reportProgram === "all") {
+        sections.push({ name: "Payment Pipeline", head: ["Status", "Payments", "Amount"], rows: fundData.pipeline.map((r) => [r.status, r.count, r.amount]), money: ["Amount"] });
+      }
+      sections.push({ name: "By Scholarship Program", head: ["Scholarship", "Scholars Paid", "Disbursed", "Queued"], rows: programs.map((r) => [r.name, r.scholars, r.disbursed, r.queued]), money: ["Disbursed", "Queued"] });
+      if (reportProgram === "all") {
+        sections.push({ name: "By Payment Method", head: ["Method", "Payments", "Amount", "Share %"], rows: fundData.byMethod.map((r) => [r.method, r.count, r.amount, r.share]), money: ["Amount"] });
+      }
+      return { title: "Fund Utilization Report", filters, count: count(programs), countLabel: "programs", sections };
+    }
+
+    if (key === "disbursements") {
+      const programOf = (p: Tables<"payments">) => applications.find((a) => a.id === p.application_id)?.scholarship_id;
+      const list = payments.filter((p) => {
+        if (!within(p.disbursed_at || p.scheduled_date || p.created_at)) return false;
+        if (!inProgram(programOf(p))) return false;
+        return reportPayStatus === "all" ? p.status !== "Cancelled" : p.status === reportPayStatus;
+      });
+      const totals = (["Pending", "Processing", "Disbursed", "Cancelled"] as const)
+        .map((st) => { const l = list.filter((p) => p.status === st); return [st, l.length, l.reduce((t, p) => t + Number(p.amount || 0), 0)] as (string | number)[]; })
+        .filter((r) => (r[1] as number) > 0);
+      return {
+        title: "Disbursement Summary",
+        filters: [...filters, `Payments: ${reportPayStatus === "all" ? "All except cancelled" : reportPayStatus}`],
+        count: count(list), countLabel: "payments",
+        sections: [
+          {
+            name: "Payments",
+            head: ["Student", "Program", "Reference", "Method", "Status", "Scheduled", "Disbursed", "Amount"],
+            rows: list.map((p) => [payStudent(p), payProgram(p), p.reference || "—", p.method || "—", p.status, p.scheduled_date || "—", p.disbursed_at ? new Date(p.disbursed_at).toLocaleDateString() : "—", Number(p.amount)]),
+            money: ["Amount"],
+          },
+          { name: "Totals by Status", head: ["Status", "Payments", "Amount"], rows: totals, money: ["Amount"] },
+        ],
+      };
+    }
+
+    if (key === "audit") {
+      const logs = auditLogs.filter((l) => within(l.created_at));
+      return { title: "Audit Trail", filters: [`Period: ${periodLabel()}`], count: count(logs), countLabel: "entries", sections: [logsToSection(logs)] };
+    }
+
+    // statistics
+    const apps = applications.filter((a) => inProgram(a.scholarship_id) && within(a.created_at));
+    const by = (st: string) => apps.filter((a) => a.status === st).length;
+    const approved = by("Approved");
+    const group = (label: (a: typeof apps[number]) => string): (string | number)[][] => {
+      const m = new Map<string, { total: number; approved: number }>();
+      apps.forEach((a) => {
+        const k = label(a) || "Not specified";
+        const v = m.get(k) ?? { total: 0, approved: 0 };
+        v.total += 1; if (a.status === "Approved") v.approved += 1;
+        m.set(k, v);
+      });
+      return [...m.entries()].sort((x, y) => y[1].total - x[1].total).map(([k, v]) => [k, v.total, v.approved]);
+    };
+    return {
+      title: "Applicant Statistics", filters, count: count(apps), countLabel: "applications",
+      sections: [
+        { name: "Summary", head: ["Metric", "Value"], rows: [["Total Applications", apps.length], ["Approved", approved], ["Rejected", by("Rejected")], ["Pending", by("Pending")], ["Waitlisted", by("Waitlisted")], ["Approval Rate (of all)", `${apps.length ? ((approved / apps.length) * 100).toFixed(1) : 0}%`]] },
+        { name: "By Scholarship Program", head: ["Scholarship", "Total", "Approved", "Rejected", "Pending", "Waitlisted"], rows: scholarships.filter((sc) => inProgram(sc.id)).map((sc) => { const l = apps.filter((a) => a.scholarship_id === sc.id); const c = (st: string) => l.filter((a) => a.status === st).length; return [sc.name, l.length, c("Approved"), c("Rejected"), c("Pending"), c("Waitlisted")]; }) },
+        { name: "By Sex", head: ["Sex", "Applicants", "Approved"], rows: group((a) => a.profiles?.sex || "") },
+        { name: "By Year Level", head: ["Year Level", "Applicants", "Approved"], rows: group((a) => a.profiles?.year_level || "") },
+        { name: "By School", head: ["School", "Applicants", "Approved"], rows: group((a) => a.profiles?.school_name || "") },
+      ],
+    };
+  };
+
+  const renderPDF = async (def: ReportDef, file: string, landscape = false) => {
+    const { default: jsPDF } = await import("jspdf");
+    const { default: autoTable } = await import("jspdf-autotable");
+    const doc = new jsPDF(landscape ? { orientation: "landscape" } : undefined);
+    const pageH = doc.internal.pageSize.getHeight();
+    doc.setFontSize(16);
+    doc.text("SB San Jose Scholarship Portal", 14, 15);
+    doc.setFontSize(12);
+    doc.text(def.title, 14, 22);
+    doc.setFontSize(9);
+    doc.text(`Generated ${new Date().toLocaleString()}${adminEmail ? ` by ${adminEmail}` : ""}`, 14, 28);
+    doc.text(def.filters.join("   |   "), 14, 33);
+    let y = 40;
+    for (const sec of def.sections) {
+      if (y > pageH - 30) { doc.addPage(); y = 15; }
+      doc.setFontSize(11);
+      doc.text(sec.name, 14, y);
+      autoTable(doc, {
+        startY: y + 3,
+        head: [sec.head],
+        body: sec.rows.map((r) => r.map((c, i) => (sec.money?.includes(sec.head[i]) && typeof c === "number" ? formatPHP(c) : String(c)))),
+        styles: { fontSize: 8 },
+      });
+      y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10;
+    }
+    const pages = doc.getNumberOfPages();
+    for (let i = 1; i <= pages; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.text(`Page ${i} of ${pages}`, doc.internal.pageSize.getWidth() - 30, pageH - 8);
+    }
+    doc.save(file);
     toast.success("PDF downloaded");
   };
 
-  const exportExcel = async (key: string) => {
+  const renderExcel = async (def: ReportDef, file: string) => {
     const XLSX = await import("xlsx");
-    let data: Record<string, string | number>[] = [];
-
-    if (key === "scholars") {
-      data = applications.filter(a => a.status === "Approved").map(a => ({
-        Name: a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}` : "—",
-        School: a.profiles?.school_name || "—", Course: a.profiles?.course || "—",
-        "Year Level": a.profiles?.year_level || "—", Scholarship: a.scholarships?.name || "—", Status: a.status,
-      }));
-    } else if (key === "funds") {
-      data = fundData.byProgram.map((r) => ({ Scholarship: r.name, "Scholars Paid": r.scholars, Disbursed: r.disbursed, Queued: r.queued }));
-    } else if (key === "disbursements") {
-      data = payments.map(p => ({ Reference: p.reference || "—", Amount: p.amount, Method: p.method, Status: p.status, Date: p.scheduled_date || "—" }));
-    } else if (key === "statistics") {
-      const t = { total: applications.length, approved: applications.filter(a => a.status === "Approved").length, rejected: applications.filter(a => a.status === "Rejected").length, pending: applications.filter(a => a.status === "Pending").length };
-      data = [{ Metric: "Total Applications", Value: t.total }, { Metric: "Approved", Value: t.approved }, { Metric: "Rejected", Value: t.rejected }, { Metric: "Pending", Value: t.pending }, { Metric: "Approval Rate", Value: `${t.total ? ((t.approved / t.total) * 100).toFixed(1) : 0}%` }];
-    }
-
-    const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Report");
-    XLSX.writeFile(wb, `${key}-report.xlsx`);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[def.title], [`Generated ${new Date().toLocaleString()}`], ...def.filters.map((f) => [f])]), "About");
+    const used = new Set<string>(["About"]);
+    for (const sec of def.sections) {
+      let name = sec.name.replace(/[\\/?*[\]:]/g, "").slice(0, 31) || "Sheet";
+      let n = 2;
+      while (used.has(name)) name = `${sec.name.slice(0, 28)} ${n++}`;
+      used.add(name);
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([sec.head, ...sec.rows]), name);
+    }
+    XLSX.writeFile(wb, file);
     toast.success("Excel downloaded");
   };
+
+  const exportPDF = (key: string) => renderPDF(buildReport(key), `${key}-report.pdf`, key === "disbursements" || key === "audit");
+  const exportExcel = (key: string) => renderExcel(buildReport(key), `${key}-report.xlsx`);
+
 
   const totals = useMemo(() => {
     const approved = applications.filter(a => a.status === "Approved").length;
@@ -665,12 +835,11 @@ export default function AdminDashboardPage() {
   // ── Fund management (derived from payments + applications) ──
   const fundData = useMemo(() => {
     const payDate = (p: Tables<"payments">) => p.disbursed_at || p.scheduled_date || p.created_at;
-    const now = new Date();
-    const since = fundPeriod === "year" ? new Date(now.getFullYear(), 0, 1)
-      : fundPeriod === "6m" ? new Date(now.getFullYear(), now.getMonth() - 5, 1)
-      : fundPeriod === "30d" ? new Date(now.getTime() - 30 * 86400000)
-      : null;
-    const inRange = payments.filter((p) => !since || new Date(payDate(p)) >= since);
+    const { since, until } = getRange(fundPeriod, fromDate, toDate);
+    const inRange = payments.filter((p) => {
+      const d = new Date(payDate(p));
+      return (!since || d >= since) && (!until || d <= until);
+    });
 
     const sum = (list: Tables<"payments">[]) => list.reduce((t, p) => t + Number(p.amount || 0), 0);
     const pipeline = (["Pending", "Processing", "Disbursed"] as const).map((st) => {
@@ -721,7 +890,7 @@ export default function AdminDashboardPage() {
     const awaiting = applications.filter((a) => a.status === "Approved" && !paidAppIds.has(a.id));
 
     return { pipeline, byProgram, byMethod, monthly, recent, awaiting, disbursedTotal };
-  }, [payments, applications, scholarships, fundPeriod]);
+  }, [payments, applications, scholarships, fundPeriod, fromDate, toDate]);
 
   const applicationsPerMonth = useMemo(() => {
     const months: Record<string, number> = {};
@@ -1418,6 +1587,7 @@ export default function AdminDashboardPage() {
                       <SelectItem value="year">This year</SelectItem>
                       <SelectItem value="6m">Last 6 months</SelectItem>
                       <SelectItem value="30d">Last 30 days</SelectItem>
+                      <SelectItem value="custom">Custom range (Reports)</SelectItem>
                     </SelectContent>
                   </Select>
                   <Button variant="outline" onClick={() => exportPDF("funds")}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
@@ -1771,21 +1941,74 @@ export default function AdminDashboardPage() {
           {activeSection === "reports" && (
             <div className="space-y-4 animate-fade-in">
               <h2 className="text-xl font-display font-bold">Reports & Analytics</h2>
+              <Card>
+                <CardContent className="py-4 flex gap-3 flex-wrap items-end">
+                  <div>
+                    <Label className="text-xs">Period</Label>
+                    <Select value={fundPeriod} onValueChange={setFundPeriod}>
+                      <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All time</SelectItem>
+                        <SelectItem value="year">This year</SelectItem>
+                        <SelectItem value="6m">Last 6 months</SelectItem>
+                        <SelectItem value="30d">Last 30 days</SelectItem>
+                        <SelectItem value="custom">Custom range</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {fundPeriod === "custom" && (<>
+                    <div><Label className="text-xs">From</Label><Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="w-40" /></div>
+                    <div><Label className="text-xs">To</Label><Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="w-40" /></div>
+                  </>)}
+                  <div>
+                    <Label className="text-xs">Program</Label>
+                    <Select value={reportProgram} onValueChange={setReportProgram}>
+                      <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All programs</SelectItem>
+                        {scholarships.map((sc) => <SelectItem key={sc.id} value={sc.id}>{sc.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Payments (disbursement report)</Label>
+                    <Select value={reportPayStatus} onValueChange={setReportPayStatus}>
+                      <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All except cancelled</SelectItem>
+                        <SelectItem value="Pending">Pending</SelectItem>
+                        <SelectItem value="Processing">Processing</SelectItem>
+                        <SelectItem value="Disbursed">Disbursed</SelectItem>
+                        <SelectItem value="Cancelled">Cancelled</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </CardContent>
+              </Card>
+              <p className="text-xs text-muted-foreground -mt-2">Period also applies to Fund Management. Each report shows how many rows your filters will export.</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
-                  { title: "List of Scholars", desc: "Complete roster of active and past scholars", icon: Users, exportKey: "scholars" },
-                  { title: "Fund Utilization Report", desc: "Disbursed and queued funds per scholarship program", icon: Wallet, exportKey: "funds" },
-                  { title: "Disbursement Summary", desc: "All payments by period, status, and program", icon: Banknote, exportKey: "disbursements" },
-                  { title: "Applicant Statistics", desc: "Applications, approval rates, demographics", icon: BarChart3, exportKey: "statistics" },
-                ].map((r, i) => (
-                  <Card key={i}>
-                    <CardHeader><CardTitle className="text-base flex items-center gap-2"><r.icon className="h-4 w-4 text-primary" />{r.title}</CardTitle><CardDescription>{r.desc}</CardDescription></CardHeader>
-                    <CardContent className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => exportPDF(r.exportKey)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
-                      <Button variant="outline" size="sm" onClick={() => exportExcel(r.exportKey)}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
-                    </CardContent>
-                  </Card>
-                ))}
+                  { title: "List of Scholars", desc: "Approved scholars with contact, school and program", icon: Users, exportKey: "scholars" },
+                  { title: "Fund Utilization Report", desc: "Disbursed and queued funds per program, plus payment pipeline and methods", icon: Wallet, exportKey: "funds" },
+                  { title: "Disbursement Summary", desc: "Every payment with student, program, method and status, plus totals", icon: Banknote, exportKey: "disbursements" },
+                  { title: "Applicant Statistics", desc: "Applications and approval rates by program, sex, year level and school", icon: BarChart3, exportKey: "statistics" },
+                  { title: "Audit Trail", desc: "Every recorded admin and student action in the period", icon: ScrollText, exportKey: "audit" },
+                ].map((r) => {
+                  const def = buildReport(r.exportKey);
+                  return (
+                    <Card key={r.exportKey}>
+                      <CardHeader>
+                        <CardTitle className="text-base flex items-center gap-2"><r.icon className="h-4 w-4 text-primary" />{r.title}</CardTitle>
+                        <CardDescription>{r.desc}</CardDescription>
+                      </CardHeader>
+                      <CardContent className="flex items-center gap-2 flex-wrap">
+                        <Button variant="outline" size="sm" disabled={def.count === 0} onClick={() => exportPDF(r.exportKey)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
+                        <Button variant="outline" size="sm" disabled={def.count === 0} onClick={() => exportExcel(r.exportKey)}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
+                        <span className="text-xs text-muted-foreground ml-auto">{def.count} {def.countLabel}</span>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1936,26 +2159,106 @@ export default function AdminDashboardPage() {
           {/* AUDIT LOGS */}
           {activeSection === "audit-logs" && (
             <div className="space-y-4 animate-fade-in">
-              <h2 className="text-xl font-display font-bold">Audit Logs</h2>
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <h2 className="text-xl font-display font-bold">Audit Logs</h2>
+                <div className="flex gap-2 flex-wrap">
+                  <Button variant="outline" onClick={() => renderPDF(auditDef(), "audit-log.pdf", true)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
+                  <Button variant="outline" onClick={() => renderExcel(auditDef(), "audit-log.xlsx")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
+                </div>
+              </div>
+              <div className="flex gap-2 flex-wrap items-center">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input placeholder="User, action, entity, ID..." value={auditSearch} onChange={(e) => { setAuditSearch(e.target.value); setAuditPage(1); }} className="pl-9 w-56" />
+                </div>
+                <Select value={auditAction} onValueChange={(v) => { setAuditAction(v); setAuditPage(1); }}>
+                  <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All actions</SelectItem>
+                    {auditActions.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={auditEntity} onValueChange={(v) => { setAuditEntity(v); setAuditPage(1); }}>
+                  <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All entities</SelectItem>
+                    {auditEntities.map((e) => <SelectItem key={e} value={e}>{e}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Input type="date" value={auditFrom} onChange={(e) => { setAuditFrom(e.target.value); setAuditPage(1); }} className="w-40" aria-label="From date" />
+                <Input type="date" value={auditTo} onChange={(e) => { setAuditTo(e.target.value); setAuditPage(1); }} className="w-40" aria-label="To date" />
+                {(auditSearch || auditAction !== "all" || auditEntity !== "all" || auditFrom || auditTo) && (
+                  <Button variant="ghost" size="sm" onClick={() => { setAuditSearch(""); setAuditAction("all"); setAuditEntity("all"); setAuditFrom(""); setAuditTo(""); setAuditPage(1); }}>Clear</Button>
+                )}
+              </div>
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Date</TableHead><TableHead>User</TableHead><TableHead>Action</TableHead><TableHead>Entity</TableHead><TableHead>Details</TableHead>
+                    <TableHead>Date</TableHead><TableHead>User</TableHead><TableHead>Action</TableHead><TableHead>Entity</TableHead><TableHead>Changed</TableHead><TableHead className="text-right">Details</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {auditLogs.length === 0 && <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">No audit logs yet</TableCell></TableRow>}
-                    {auditLogs.map((log) => (
+                    {pagedLogs.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No audit logs found</TableCell></TableRow>}
+                    {pagedLogs.map((log) => (
                       <TableRow key={log.id}>
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{new Date(log.created_at).toLocaleString()}</TableCell>
                         <TableCell className="text-sm">{log.user_email || "System"}</TableCell>
                         <TableCell><Badge variant="outline">{log.action}</Badge></TableCell>
                         <TableCell className="text-xs">{log.entity_type}</TableCell>
-                        <TableCell className="text-xs font-mono max-w-[200px] truncate">{log.new_value ? JSON.stringify(log.new_value).slice(0, 80) : "—"}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-[220px] truncate">{Object.keys({ ...asObj(log.previous_value), ...asObj(log.new_value) }).join(", ") || "—"}</TableCell>
+                        <TableCell className="text-right"><Button size="icon" variant="ghost" title="View details" onClick={() => setViewLog(log)}><Eye className="h-4 w-4" /></Button></TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               </Card>
+              <div className="flex items-center justify-between text-sm text-muted-foreground">
+                <span>{filteredLogs.length === 0 ? "0 entries" : `Showing ${(currentAuditPage - 1) * AUDIT_PAGE_SIZE + 1}–${Math.min(currentAuditPage * AUDIT_PAGE_SIZE, filteredLogs.length)} of ${filteredLogs.length}`}{auditLogs.length >= 1000 && " (latest 1,000 loaded)"}</span>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" disabled={currentAuditPage <= 1} onClick={() => setAuditPage(currentAuditPage - 1)}><ChevronLeft className="h-4 w-4" /></Button>
+                  <span>Page {currentAuditPage} of {auditPages}</span>
+                  <Button size="sm" variant="outline" disabled={currentAuditPage >= auditPages} onClick={() => setAuditPage(currentAuditPage + 1)}><ChevronRight className="h-4 w-4" /></Button>
+                </div>
+              </div>
+
+              <Dialog open={!!viewLog} onOpenChange={(o) => !o && setViewLog(null)}>
+                <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+                  <DialogHeader><DialogTitle>Audit Entry</DialogTitle></DialogHeader>
+                  {viewLog && (() => {
+                    const prev = asObj(viewLog.previous_value);
+                    const next = asObj(viewLog.new_value);
+                    const keys = [...new Set([...Object.keys(prev), ...Object.keys(next)])];
+                    return (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div><Label className="text-muted-foreground text-xs">When</Label><p className="font-medium">{new Date(viewLog.created_at).toLocaleString()}</p></div>
+                          <div><Label className="text-muted-foreground text-xs">User</Label><p className="font-medium">{viewLog.user_email || "System"}</p></div>
+                          <div><Label className="text-muted-foreground text-xs">Action</Label><p className="font-medium">{viewLog.action}</p></div>
+                          <div><Label className="text-muted-foreground text-xs">Entity</Label><p className="font-medium">{viewLog.entity_type}</p></div>
+                          <div className="col-span-2"><Label className="text-muted-foreground text-xs">Entity ID</Label><p className="font-mono text-xs break-all">{viewLog.entity_id || "—"}</p></div>
+                          {viewLog.user_agent && <div className="col-span-2"><Label className="text-muted-foreground text-xs">Device</Label><p className="text-xs text-muted-foreground break-all">{viewLog.user_agent}</p></div>}
+                        </div>
+                        <div>
+                          <Label className="text-xs">Changes</Label>
+                          {keys.length === 0 ? <p className="text-sm text-muted-foreground">No values recorded</p> : (
+                            <Table>
+                              <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60"><TableHead>Field</TableHead><TableHead>Before</TableHead><TableHead>After</TableHead></TableRow></TableHeader>
+                              <TableBody>
+                                {keys.map((k) => (
+                                  <TableRow key={k}>
+                                    <TableCell className="font-mono text-xs">{k}</TableCell>
+                                    <TableCell className="text-xs text-muted-foreground break-all">{fmtVal(prev[k])}</TableCell>
+                                    <TableCell className={`text-xs break-all ${fmtVal(prev[k]) !== fmtVal(next[k]) ? "font-semibold" : "text-muted-foreground"}`}>{fmtVal(next[k])}</TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </DialogContent>
+              </Dialog>
             </div>
           )}
 
@@ -2049,13 +2352,10 @@ export default function AdminDashboardPage() {
                 <CardHeader><CardTitle className="text-base">Academic Year & Semester</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
                   <div className="grid grid-cols-2 gap-3">
-                    <div><Label>Academic Year</Label><Input defaultValue={String(systemSettings.find(s => s.key === "academic_year")?.value ?? "").replace(/"/g, "") || "2025-2026"} onChange={async (e) => {
-                      await supabase.from("system_settings").update({ value: JSON.stringify(e.target.value) }).eq("key", "academic_year");
-                    }} /></div>
+                    <div><Label>Academic Year</Label><Input defaultValue={String(systemSettings.find(s => s.key === "academic_year")?.value ?? "").replace(/"/g, "") || "2025-2026"} onBlur={(e) => saveSetting("academic_year", e.target.value, JSON.stringify(e.target.value))} /></div>
                     <div><Label>Semester</Label>
                       <Select defaultValue={String(systemSettings.find(s => s.key === "current_semester")?.value ?? "").replace(/"/g, "") || "1st Semester"} onValueChange={async (val) => {
-                        await supabase.from("system_settings").update({ value: JSON.stringify(val) }).eq("key", "current_semester");
-                        toast.success("Semester updated");
+                        await saveSetting("current_semester", val, JSON.stringify(val));
                       }}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
@@ -2071,12 +2371,8 @@ export default function AdminDashboardPage() {
               <Card>
                 <CardHeader><CardTitle className="text-base">Scholarship Criteria</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
-                  <div><Label>Minimum Grade Average</Label><Input type="number" defaultValue={String(systemSettings.find(s => s.key === "min_grade_requirement")?.value ?? 85)} onChange={async (e) => {
-                    await supabase.from("system_settings").update({ value: e.target.value }).eq("key", "min_grade_requirement");
-                  }} /></div>
-                  <div><Label>Max Scholarships Per Student</Label><Input type="number" defaultValue={String(systemSettings.find(s => s.key === "max_scholarships_per_student")?.value ?? 1)} onChange={async (e) => {
-                    await supabase.from("system_settings").update({ value: e.target.value }).eq("key", "max_scholarships_per_student");
-                  }} /></div>
+                  <div><Label>Minimum Grade Average</Label><Input type="number" defaultValue={String(systemSettings.find(s => s.key === "min_grade_requirement")?.value ?? 85)} onBlur={(e) => saveSetting("min_grade_requirement", e.target.value, e.target.value)} /></div>
+                  <div><Label>Max Scholarships Per Student</Label><Input type="number" defaultValue={String(systemSettings.find(s => s.key === "max_scholarships_per_student")?.value ?? 1)} onBlur={(e) => saveSetting("max_scholarships_per_student", e.target.value, e.target.value)} /></div>
                   <Button onClick={() => toast.success("Criteria saved")}>Save Criteria</Button>
                 </CardContent>
               </Card>
