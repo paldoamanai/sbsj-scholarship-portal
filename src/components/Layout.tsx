@@ -71,17 +71,9 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-2">
             {user ? (
-              <>
-                <span className="text-sm text-muted-foreground">
-                  Hi, {user.email?.split("@")[0]}
-                </span>
-                <Link href="/student-dashboard">
-                  <Button size="sm" variant="outline" className="cursor-pointer">
-                    <LayoutDashboard className="mr-1.5 h-3.5 w-3.5" />
-                    Dashboard
-                  </Button>
-                </Link>
-              </>
+              <span className="text-sm text-muted-foreground">
+                Hi, {user.email?.split("@")[0]}
+              </span>
             ) : (
               <>
                 <Link href="/login">
