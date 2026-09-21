@@ -426,6 +426,39 @@ export type Database = {
         }
         Relationships: []
       }
+      announcements: {
+        Row: {
+          id: string
+          title: string
+          message: string
+          audience: string
+          link: string | null
+          recipient_count: number
+          created_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          title: string
+          message: string
+          audience: string
+          link?: string | null
+          recipient_count?: number
+          created_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          title?: string
+          message?: string
+          audience?: string
+          link?: string | null
+          recipient_count?: number
+          created_by?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           id: string
@@ -800,6 +833,31 @@ export type Database = {
           _status: string
           _response: string
         }
+        Returns: undefined
+      }
+      send_announcement: {
+        Args: {
+          _title: string
+          _message: string
+          _audience: string
+          _link?: string | null
+        }
+        Returns: number
+      }
+      notification_jobs_status: {
+        Args: Record<string, never>
+        Returns: {
+          cron_available: boolean
+          scheduled: boolean
+          schedule: string | null
+          last_run_at: string | null
+          last_ok_at: string | null
+          last_error: string | null
+          runs: number
+        }[]
+      }
+      run_notification_jobs_now: {
+        Args: Record<string, never>
         Returns: undefined
       }
       send_test_notification: {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -29,7 +29,11 @@ import { createClient } from "@/lib/supabase/client";
 import { scholarshipSchema } from "@/validations/scholarship";
 import ProfileImage from "@/components/ProfileImage";
 import { YEAR_LEVELS } from "@/lib/scholarships";
-import NotificationInbox from "@/components/notifications/NotificationInbox";
+import NotificationInbox, { NOTIFICATION_PAGE } from "@/components/notifications/NotificationInbox";
+import AnnouncementsPanel from "@/components/admin/AnnouncementsPanel";
+import ReminderJobsCard from "@/components/admin/ReminderJobsCard";
+import { useUnreadTitle } from "@/hooks/use-unread-title";
+import { showDesktopAlert } from "@/lib/desktop-alerts";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
 import OverviewPanel from "@/components/admin/OverviewPanel";
 import AdminProfilePanel from "@/components/admin/AdminProfilePanel";
@@ -191,6 +195,16 @@ export default function AdminDashboardPage() {
   const [verifAction, setVerifAction] = useState<{ v: Tables<"scholar_verifications">; status: "Verified" | "Flagged" | "Cleared" } | null>(null);
   const [verifNotes, setVerifNotes] = useState("");
   const [notifications, setNotifications] = useState<Tables<"notifications">[]>([]);
+  const [unreadTotal, setUnreadTotal] = useState(0);
+  // The realtime handler is created once, so it reads the current section and link handler through refs.
+  const activeSectionRef = useRef("overview");
+  const goToLinkRef = useRef<(link: string) => void>(() => {});
+  const refreshAdminUnread = async () => {
+    if (!adminUserId) return;
+    const { count } = await supabase.from("notifications").select("id", { count: "exact", head: true }).eq("user_id", adminUserId).eq("muted", false).eq("read", false);
+    if (count != null) setUnreadTotal(count);
+  };
+  useUnreadTitle(unreadTotal);
 
   // Disburse dialog state
   const [disbDialog, setDisbDialog] = useState(false);
@@ -226,7 +240,7 @@ export default function AdminDashboardPage() {
     if (!isAdminRole(role)) { router.push("/student-dashboard"); return; }
     setAdminRole(role as string);
 
-    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, docsRes, issuesRes, gradesRes, reqsRes] = await Promise.all([
+    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("scholarships").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
@@ -235,14 +249,15 @@ export default function AdminDashboardPage() {
       supabase.from("scholar_verifications").select("*").order("created_at", { ascending: false }),
       supabase.from("system_settings").select("*"),
       supabase.from("profiles").select("*").eq("id", user.id).single(),
-      supabase.from("notifications").select("*").eq("user_id", user.id).eq("muted", false).order("created_at", { ascending: false }),
+      supabase.from("notifications").select("*").eq("user_id", user.id).eq("muted", false).order("created_at", { ascending: false }).limit(NOTIFICATION_PAGE),
+      supabase.from("notifications").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("muted", false).eq("read", false),
       supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at"),
       supabase.from("payment_issues").select("*").order("created_at", { ascending: false }),
       supabase.from("grade_updates").select("*").order("created_at", { ascending: false }),
       supabase.from("data_requests").select("*").order("created_at", { ascending: false }),
     ]);
 
-    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, docsRes, issuesRes, gradesRes, reqsRes].find((r) => r.error);
+    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes].find((r) => r.error);
     setLoadError(failed?.error ? failed.error.message : null);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (scholsRes.data) setScholarships(scholsRes.data);
@@ -253,6 +268,7 @@ export default function AdminDashboardPage() {
     if (settingsRes.data) setSystemSettings(settingsRes.data);
     if (adminProfRes.data) setAdminProfile(adminProfRes.data);
     if (notifsRes.data) setNotifications(notifsRes.data);
+    if (unreadRes.count != null) setUnreadTotal(unreadRes.count);
     if (docsRes.data) setAllDocs(docsRes.data);
     if (issuesRes.data) setPayIssues(issuesRes.data);
     if (gradesRes.data) setGradeReviews(gradesRes.data);
@@ -310,8 +326,13 @@ export default function AdminDashboardPage() {
           const n = payload.new as Tables<"notifications">;
           if (n.muted) return;
           setNotifications((prev) => (prev.some((x) => x.id === n.id) ? prev : [n, ...prev]));
+          if (!n.read) setUnreadTotal((c) => c + 1);
+          const open = () => (n.link ? goToLinkRef.current(n.link) : setActiveSection("notifications"));
+          showDesktopAlert(n, open);
+          // Already looking at the inbox: the new row appears there, so no popup on top of it.
+          if (activeSectionRef.current === "notifications") return;
           const notify = toast[n.type as "info" | "success" | "warning" | "error"] ?? toast.message;
-          notify(n.title, { description: n.message });
+          notify(n.title, { description: n.message, action: { label: "Open", onClick: open } });
         }
       )
       .on(
@@ -320,6 +341,7 @@ export default function AdminDashboardPage() {
         (payload) => {
           const n = payload.new as Tables<"notifications">;
           setNotifications((prev) => prev.map((x) => (x.id === n.id ? n : x)));
+          refreshAdminUnread();
         }
       )
       .subscribe();
@@ -1022,6 +1044,9 @@ export default function AdminDashboardPage() {
     }
   };
 
+  activeSectionRef.current = activeSection;
+  goToLinkRef.current = goToLink;
+
   useEffect(() => {
     const sec = new URLSearchParams(window.location.search).get("section");
     if (sec && sidebarItems.some((i) => i.key === sec)) setActiveSection(sec);
@@ -1116,7 +1141,7 @@ export default function AdminDashboardPage() {
         </div>
         <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
           {sidebarItems.map((item) => {
-            const unread = item.key === "notifications" ? notifications.filter(n => !n.read).length : 0;
+            const unread = item.key === "notifications" ? unreadTotal : 0;
             return (
               <button key={item.key} onClick={() => { setActiveSection(item.key); setSidebarOpen(false); }}
                 className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeSection === item.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
@@ -2136,11 +2161,13 @@ export default function AdminDashboardPage() {
           {activeSection === "notifications" && (
             <div className="space-y-4 animate-fade-in">
               <h2 className="text-xl font-display font-bold">Notifications</h2>
-              <NotificationInbox notifications={notifications} setNotifications={setNotifications} onNavigate={goToLink} />
+              <NotificationInbox notifications={notifications} setNotifications={setNotifications} onNavigate={goToLink}
+                userId={adminUserId} unreadTotal={unreadTotal} onUnreadChange={refreshAdminUnread} />
+              <AnnouncementsPanel />
               <Card>
                 <CardHeader><CardTitle className="text-base">Notification Preferences</CardTitle><CardDescription>Choose what reaches you in the dashboard and by email.</CardDescription></CardHeader>
                 <CardContent>
-                  <NotificationPreferences userId={adminUserId} categories={[
+                  <NotificationPreferences userId={adminUserId} email={adminEmail} categories={[
                     { key: "application", label: "Applications", hint: "New applications submitted" },
                     { key: "verification", label: "Verification", hint: "Duplicate ID flags" },
                     { key: "payment", label: "Payments", hint: "Receipts, method choices and unpaid approvals" },
@@ -2356,7 +2383,10 @@ export default function AdminDashboardPage() {
 
           {/* SETTINGS */}
           {activeSection === "settings" && (
-            <SettingsPanel rows={systemSettings} auditLogs={auditLogs} onSave={saveSettings} />
+            <div className="space-y-4">
+              <SettingsPanel rows={systemSettings} auditLogs={auditLogs} onSave={saveSettings} />
+              <ReminderJobsCard />
+            </div>
           )}
         </main>
       </div>

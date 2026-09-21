@@ -80,14 +80,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ skipped: "recipient has no email" });
   }
 
-  const site = (process.env.NEXT_PUBLIC_SITE_URL || "").replace(/\/$/, "");
+  // Public address of the site, for links in the email. Falls back to the Vercel deployment URL.
+  const site = (process.env.NEXT_PUBLIC_SITE_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "")).replace(/\/$/, "");
   const url = record.link && site ? `${site}${record.link}` : null;
+
+  // Where this person manages their emails (admins keep them on their profile).
+  const { data: roleRow } = await supabase.from("user_roles").select("role").eq("user_id", record.user_id).maybeSingle();
+  const staff = ["admin", "super_admin"].includes(String(roleRow?.role));
+  const prefsPath = staff ? "/admin?section=profile" : "/student-dashboard?section=settings";
+  const prefsUrl = site ? `${site}${prefsPath}` : null;
+
   const html = `
     <div style="font-family:system-ui,sans-serif;max-width:520px;margin:auto;padding:24px">
       <h2 style="margin:0 0 12px;color:#111">${escapeHtml(record.title)}</h2>
       <p style="margin:0 0 20px;color:#444;line-height:1.5">${escapeHtml(record.message)}</p>
       ${url ? `<a href="${escapeHtml(url)}" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Open in the portal</a>` : ""}
-      <p style="margin:24px 0 0;color:#888;font-size:12px">SB San Jose Scholarship Portal. You can change which emails you receive under Settings.</p>
+      <p style="margin:24px 0 0;color:#888;font-size:12px">SB San Jose Scholarship Portal. ${prefsUrl
+        ? `<a href="${escapeHtml(prefsUrl)}" style="color:#888">Manage which emails you receive</a>.`
+        : "You can change which emails you receive under Settings in the portal."}</p>
     </div>`;
 
   const res = await fetch("https://api.resend.com/emails", {
@@ -98,7 +108,8 @@ export async function POST(request: Request) {
       to,
       subject: record.title,
       html,
-      text: `${record.title}\n\n${record.message}${url ? `\n\n${url}` : ""}`,
+      text: `${record.title}\n\n${record.message}${url ? `\n\n${url}` : ""}${prefsUrl ? `\n\nManage which emails you receive: ${prefsUrl}` : ""}`,
+      headers: prefsUrl ? { "List-Unsubscribe": `<${prefsUrl}>` } : undefined,
     }),
   });
 

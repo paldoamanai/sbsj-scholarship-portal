@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import { useSystemSettings } from "@/hooks/use-system-settings";
+import { desktopAlertsEnabled, desktopAlertsSupported, disableDesktopAlerts, enableDesktopAlerts } from "@/lib/desktop-alerts";
 
 type Category = { key: "application" | "verification" | "payment" | "program"; label: string; hint: string };
 type Pref = { in_app: boolean; email: boolean };
@@ -21,6 +22,22 @@ export default function NotificationPreferences({ userId, categories, email }: {
   const [master, setMaster] = useState<Master>({ email_enabled: true, in_app_enabled: true });
   const [loaded, setLoaded] = useState(false);
   const [testing, setTesting] = useState(false);
+
+  // Desktop alerts are a per-device choice kept in this browser, not part of the account.
+  const [desktop, setDesktop] = useState(false);
+  const [desktopSupported, setDesktopSupported] = useState(true);
+  useEffect(() => { setDesktopSupported(desktopAlertsSupported()); setDesktop(desktopAlertsEnabled()); }, []);
+  const toggleDesktop = async (on: boolean) => {
+    if (!on) { disableDesktopAlerts(); setDesktop(false); saved(); return; }
+    const permission = await enableDesktopAlerts();
+    if (permission !== "granted") {
+      toast.error("Desktop alerts are blocked", { description: "Allow notifications for this site in your browser's site settings, then try again." });
+      setDesktop(false);
+      return;
+    }
+    setDesktop(true);
+    saved();
+  };
 
   useEffect(() => {
     if (!userId) return;
@@ -94,6 +111,16 @@ export default function NotificationPreferences({ userId, categories, email }: {
           <div><p className="text-sm font-medium">In-app notifications</p><p className="text-xs text-muted-foreground">Turn off to stop these appearing in your dashboard. Emails are unaffected.</p></div>
           <Switch disabled={!loaded} checked={master.in_app_enabled} onCheckedChange={(v) => updateMaster({ in_app_enabled: v })} aria-label="All in-app notifications" />
         </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border px-4 py-3">
+        <div>
+          <p className="text-sm font-medium">Desktop alerts on this device</p>
+          <p className="text-xs text-muted-foreground">
+            {desktopSupported ? "Show a browser notification when something arrives while this site is open in a background tab. This doesn't work when the site is closed." : "This browser doesn't support desktop alerts."}
+          </p>
+        </div>
+        <Switch disabled={!desktopSupported} checked={desktop} onCheckedChange={toggleDesktop} aria-label="Desktop alerts on this device" />
       </div>
 
       <div>

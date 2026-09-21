@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -23,14 +23,16 @@ import {
   AlertTriangle, CheckCircle, Clock, XCircle, Pencil, Eye, Trash2, Loader2,
   Camera, ChevronRight, X, MoreVertical, ArrowRight, CalendarDays, Users,
 } from "lucide-react";
-import ApplicationProgressBar from "@/components/student/ApplicationProgressBar";
+import Overview from "@/components/student/Overview";
 import { createClient } from "@/lib/supabase/client";
 import ProfileSection from "@/components/student/ProfileSection";
 import ProfileImage from "@/components/ProfileImage";
 import SecuritySettings from "@/components/account/SecuritySettings";
-import { Panel, SectionTitle } from "@/components/student/ui";
+import { Panel, SectionTitle, StatCard, StatusBadge } from "@/components/student/ui";
 import { profileCompleteness } from "@/lib/profile";
-import NotificationInbox from "@/components/notifications/NotificationInbox";
+import NotificationInbox, { NOTIFICATION_PAGE } from "@/components/notifications/NotificationInbox";
+import { useUnreadTitle } from "@/hooks/use-unread-title";
+import { showDesktopAlert } from "@/lib/desktop-alerts";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
 import type { Tables } from "@/integrations/supabase/types";
 import { profileFromUserMetadata } from "@/lib/registration-profile";
@@ -55,62 +57,6 @@ function DocStatusBadge({ status }: { status: string }) {
     Pending:  "bg-amber-50 text-amber-700 border-amber-200",
   };
   return <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${map[status] ?? map.Pending}`}>{status === "Pending" ? "Pending review" : status}</span>;
-}
-
-// ── Status badge ──────────────────────────────────────────────────────────────
-function StatusBadge({ status }: { status: string | null | undefined }) {
-  if (!status || status === "—") return <span className="text-sm text-muted-foreground">—</span>;
-  const map: Record<string, { icon: typeof CheckCircle; cls: string }> = {
-    Approved:   { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-    Pending:    { icon: Clock,        cls: "bg-amber-50 text-amber-700 border-amber-200" },
-    Rejected:   { icon: XCircle,      cls: "bg-red-50 text-red-700 border-red-200" },
-    Disbursed:  { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-    Processing: { icon: Clock,        cls: "bg-accent text-primary border-primary/20" },
-    Waitlisted: { icon: Clock,        cls: "bg-muted text-muted-foreground border-border" },
-    Withdrawn:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
-    Cancelled:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
-  };
-  const m = map[status];
-  if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{status}</span>;
-  const Icon = m.icon;
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${m.cls}`}>
-      <Icon className="h-3 w-3" />{status}
-    </span>
-  );
-}
-
-// ── Stat card ─────────────────────────────────────────────────────────────────
-function StatCard({ icon: Icon, label, value, sub, subTone = "neutral", accent = false }: {
-  icon: typeof LayoutDashboard;
-  label: string;
-  value: string | number;
-  sub?: string;
-  subTone?: "neutral" | "positive" | "warning";
-  accent?: boolean;
-}) {
-  const subClass = accent
-    ? "text-primary-foreground/80"
-    : subTone === "positive" ? "text-success"
-    : subTone === "warning" ? "text-warning"
-    : "text-muted-foreground";
-  return (
-    <div className={`rounded-2xl p-5 border ${accent ? "bg-primary border-primary text-primary-foreground shadow-primary" : "bg-card border-border shadow-sm"}`}>
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-2.5">
-          <div className={`flex-shrink-0 h-9 w-9 rounded-xl flex items-center justify-center ${accent ? "bg-white/20" : "bg-accent"}`}>
-            <Icon className={`h-4.5 w-4.5 ${accent ? "text-primary-foreground" : "text-accent-foreground"}`} />
-          </div>
-          <p className={`text-xs font-medium ${accent ? "text-primary-foreground/90" : "text-muted-foreground"}`}>{label}</p>
-        </div>
-        <button className={`shrink-0 rounded-lg p-1 -mr-1 -mt-1 cursor-pointer ${accent ? "hover:bg-white/10 text-primary-foreground/70" : "hover:bg-muted text-muted-foreground"}`} aria-label={`${label} options`}>
-          <MoreVertical className="h-3.5 w-3.5" />
-        </button>
-      </div>
-      <p className={`text-2xl font-bold font-display ${accent ? "text-primary-foreground" : "text-foreground"}`}>{value}</p>
-      {sub && <p className={`text-xs mt-1 font-medium ${subClass}`}>{sub}</p>}
-    </div>
-  );
 }
 
 // ── Section heading ────────────────────────────────────────────────────────────
@@ -502,6 +448,10 @@ export default function StudentDashboardPage() {
   const router = useRouter();
   const supabase = createClient();
   const [active, setActive] = useState("overview");
+  // The realtime handler is created once, so it reads the current tab and link handler through refs.
+  const activeRef = useRef("overview");
+  const goToLinkRef = useRef<(link: string) => void>(() => {});
+  const [unreadTotal, setUnreadTotal] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -558,24 +508,44 @@ export default function StudentDashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openApplyOnLoad, loading]);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const loadData = async () => {
+    try {
+      await loadDataInner();
+    } catch {
+      setLoadError("We couldn't reach the server.");
+      setLoading(false);
+    }
+  };
+
+  const loadDataInner = async () => {
     setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push("/login"); return; }
     setUserEmail(user.email || "");
     setUserId(user.id);
 
-    const [profileRes, appsRes, docsRes, paymentsRes, notifsRes, scholsRes, issuesRes, gradesRes, requestsRes] = await Promise.all([
+    const [profileRes, appsRes, docsRes, paymentsRes, notifsRes, scholsRes, issuesRes, gradesRes, requestsRes, unreadRes] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", user.id).single(),
       supabase.from("applications").select("*, scholarships(name)").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("documents").select("*").eq("user_id", user.id),
       supabase.from("payments").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
-      supabase.from("notifications").select("*").eq("user_id", user.id).eq("muted", false).order("created_at", { ascending: false }),
+      supabase.from("notifications").select("*").eq("user_id", user.id).eq("muted", false).order("created_at", { ascending: false }).limit(NOTIFICATION_PAGE),
       supabase.rpc("scholarships_public"),
       supabase.from("payment_issues").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("grade_updates").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("data_requests").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
+      supabase.from("notifications").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("muted", false).eq("read", false),
     ]);
+    if (unreadRes.count != null) setUnreadTotal(unreadRes.count);
+
+    // A missing profile row (PGRST116) is normal for a brand-new account; anything else is a real failure.
+    const failed = [
+      profileRes.error && profileRes.error.code !== "PGRST116" ? profileRes : null,
+      appsRes, docsRes, paymentsRes, notifsRes, scholsRes, issuesRes, gradesRes, requestsRes,
+    ].find((r) => r && r.error);
+    setLoadError(failed?.error ? failed.error.message : null);
 
     let profileRow = profileRes.data;
     if (!profileRow?.first_name || !profileRow?.last_name) {
@@ -616,6 +586,11 @@ export default function StudentDashboardPage() {
   };
 
   // A grade verification changes the profile itself; a deletion response changes the requests list.
+  const refreshUnread = async (uid: string) => {
+    const { count } = await supabase.from("notifications").select("id", { count: "exact", head: true }).eq("user_id", uid).eq("muted", false).eq("read", false);
+    if (count != null) setUnreadTotal(count);
+  };
+
   const refreshProfile = async (uid: string) => {
     const [p, g, r] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", uid).single(),
@@ -654,8 +629,13 @@ export default function StudentDashboardPage() {
           if (n.entity_type === "payments" || n.entity_type === "payment_issues") silentRefresh(userId);
           if (n.entity_type === "grade_updates" || n.entity_type === "data_requests") refreshProfile(userId);
           if (n.muted) return;
+          if (!n.read) setUnreadTotal((c) => c + 1);
+          const open = () => (n.link ? goToLinkRef.current(n.link) : setActive("notifications"));
+          showDesktopAlert(n, open);
+          // Already looking at the inbox: the new row appears there, so no popup on top of it.
+          if (activeRef.current === "notifications") return;
           const notify = toast[n.type as "info" | "success" | "warning" | "error"] ?? toast.message;
-          notify(n.title, { description: n.message });
+          notify(n.title, { description: n.message, action: { label: "Open", onClick: open } });
         }
       )
       .on(
@@ -664,6 +644,7 @@ export default function StudentDashboardPage() {
         (payload) => {
           const n = payload.new as Tables<"notifications">;
           setNotifications((prev) => prev.map((x) => (x.id === n.id ? n : x)));
+          refreshUnread(userId);
         }
       )
       .on(
@@ -701,7 +682,8 @@ export default function StudentDashboardPage() {
     ? `${profile.first_name || ""} ${profile.last_name || ""}`.trim()
     : userEmail.split("@")[0];
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const unreadCount = unreadTotal;
+  useUnreadTitle(unreadTotal);
   const requiredDocTypes = settings.required_documents;
   // Documents that count for the application in progress: filed with it, or still unattached
   // (uploaded ahead of applying). Documents tied to older applications don't count. Latest wins.
@@ -887,197 +869,6 @@ export default function StudentDashboardPage() {
       setWithdrawing(false);
     }
   };
-
-  // ── Section: Overview ──────────────────────────────────────────────────────
-  const Overview = () => (
-    <div className="space-y-6">
-      {/* Gradient hero banner */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-hero p-6 sm:p-7">
-        <div className="absolute inset-0 opacity-10 pointer-events-none" style={{
-          backgroundImage: "repeating-linear-gradient(135deg, #fff 0, #fff 1px, transparent 1px, transparent 14px)",
-        }} />
-        <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-display font-bold text-white">Dashboard</h1>
-            <p className="text-sm text-white/80 mt-1">
-              Welcome back, {displayName.split(" ")[0] || "Student"}! Here&apos;s what&apos;s happening today.
-            </p>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <button
-              onClick={() => setActive("notifications")}
-              className="relative h-10 w-10 rounded-xl bg-white/15 hover:bg-white/25 flex items-center justify-center transition-colors cursor-pointer"
-              aria-label="Notifications"
-            >
-              <Bell className="h-4.5 w-4.5 text-white" />
-              {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-white text-primary text-[9px] font-bold flex items-center justify-center">
-                  {unreadCount > 9 ? "9+" : unreadCount}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setActive(currentApp ? "application" : "application")}
-              className="inline-flex items-center gap-2 rounded-xl bg-white text-primary text-sm font-semibold px-4 py-2.5 hover:bg-white/90 transition-colors cursor-pointer shadow-sm"
-            >
-              {currentApp ? <Eye className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
-              {currentApp ? "View Application" : "Apply for Scholarship"}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          icon={FileText}
-          label="Application Status"
-          value={currentApp?.status || "None"}
-          sub={currentApp ? `Submitted ${new Date(currentApp.created_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}` : `No application for ${currentYear}`}
-          subTone={currentApp?.status === "Approved" ? "positive" : "neutral"}
-          accent={!!currentApp && currentApp.status === "Approved"}
-        />
-        <StatCard
-          icon={Upload}
-          label="Documents"
-          value={`${docsUploaded} / ${requiredDocTypes.length}`}
-          sub={rejectedDocs > 0 ? `${rejectedDocs} need${rejectedDocs === 1 ? "s" : ""} a new copy` : docsUploaded === requiredDocTypes.length ? "All complete" : `${requiredDocTypes.length - docsUploaded} remaining`}
-          subTone={rejectedDocs === 0 && docsUploaded === requiredDocTypes.length ? "positive" : "warning"}
-        />
-        <StatCard
-          icon={Banknote}
-          label="Disbursed"
-          value={`₱${payments.filter(p => p.status === "Disbursed").reduce((s, p) => s + p.amount, 0).toLocaleString("en-PH", { minimumFractionDigits: 0 })}`}
-          sub={currentApp?.disbursement_status || "Not yet disbursed"}
-        />
-        <StatCard
-          icon={Bell}
-          label="Notifications"
-          value={unreadCount}
-          sub={unreadCount === 0 ? "All caught up" : `${unreadCount} unread`}
-          subTone={unreadCount === 0 ? "positive" : "warning"}
-        />
-      </div>
-
-      {/* Two-column body */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        {/* Left: profile + progress + available scholarships */}
-        <div className="lg:col-span-2 space-y-5">
-          <Panel className="p-5">
-            <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
-              <div className="relative shrink-0">
-                <ProfileImage value={profile?.profile_picture_url} alt="Profile" className="h-16 w-16 rounded-2xl object-cover"
-                  fallback={<div className="h-16 w-16 rounded-2xl bg-accent flex items-center justify-center"><User className="h-7 w-7 text-accent-foreground" /></div>} />
-              </div>
-              <div className="flex-1 text-center sm:text-left min-w-0">
-                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                  <h2 className="text-lg font-display font-bold text-foreground">{displayName || "Student"}</h2>
-                  {locked && (
-                    <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${isDisbursed ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-accent text-accent-foreground border-primary/20"}`}>
-                      <Lock className="h-3 w-3" />{isDisbursed ? "Disbursed" : "Approved — Locked"}
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm text-muted-foreground mt-0.5">
-                  {profile?.course || "—"}{profile?.year_level ? ` · ${profile.year_level}` : ""}
-                </p>
-                <p className="text-sm text-muted-foreground">{profile?.school_name || "—"}</p>
-              </div>
-              <button
-                onClick={() => setActive("profile")}
-                className="flex items-center gap-1.5 text-xs text-primary font-semibold hover:text-primary/80 transition-colors shrink-0 cursor-pointer"
-              >
-                Edit Profile <ChevronRight className="h-3 w-3" />
-              </button>
-            </div>
-          </Panel>
-
-          <Panel className="p-5">
-            <SectionTitle>Application Progress</SectionTitle>
-            <ApplicationProgressBar currentStep={isDisbursed ? 2 : currentApp?.status === "Approved" ? 1 : 0} />
-          </Panel>
-
-          <Panel>
-            <div className="px-5 py-4 border-b border-border flex items-center justify-between">
-              <SectionTitle>Available Scholarships</SectionTitle>
-              <button onClick={() => setActive("application")} className="text-xs text-primary font-semibold hover:text-primary/80 cursor-pointer">
-                View All
-              </button>
-            </div>
-            <div className="divide-y divide-border">
-              {scholarships.length === 0 && (
-                <div className="text-center py-10">
-                  <GraduationCap className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">No active scholarships right now.</p>
-                </div>
-              )}
-              {scholarships.slice(0, 3).map((s) => (
-                <div key={s.id} className="p-5 hover:bg-muted/40 transition-colors">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-foreground truncate">{s.name}</p>
-                      {s.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{s.description}</p>}
-                    </div>
-                    <button
-                      onClick={guard(() => { setApplyScholarshipId(s.id); setApplyDialogOpen(true); setActive("application"); })}
-                      disabled={!!currentApp || !availabilityInfo(s).canApply}
-                      className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-primary/30 text-primary text-xs font-semibold px-3 py-1.5 hover:bg-accent transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-                    >
-                      View <ArrowRight className="h-3 w-3" />
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-4 mt-3 text-xs text-muted-foreground">
-                    {s.deadline && <span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {new Date(s.deadline).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</span>}
-                    <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" /> {slotsLabel(s)}</span>
-                    {Number(s.amount) > 0 && <span>{pesoFmt(s.amount)} per scholar</span>}
-                    {!availabilityInfo(s).canApply && <span className="font-semibold text-destructive">{availabilityInfo(s).label}</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Panel>
-        </div>
-
-        {/* Right: recent notifications panel */}
-        <div className="space-y-5">
-          <Panel>
-            <div className="px-5 py-4 border-b border-border flex items-center justify-between">
-              <SectionTitle>Recent Notifications</SectionTitle>
-              {notifications.length > 4 && (
-                <button onClick={() => setActive("notifications")} className="text-xs text-primary font-semibold hover:text-primary/80 cursor-pointer">
-                  View all
-                </button>
-              )}
-            </div>
-            <div className="divide-y divide-border">
-              {notifications.length === 0 && (
-                <div className="text-center py-10 px-4">
-                  <Bell className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">No notifications yet.</p>
-                </div>
-              )}
-              {notifications.slice(0, 4).map((n) => (
-                <div key={n.id} className={`flex items-start gap-3 px-5 py-4 ${!n.read ? "bg-accent/50" : ""}`}>
-                  <div className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
-                    n.type === "success" ? "bg-emerald-100" : n.type === "warning" ? "bg-amber-100" : "bg-accent"
-                  }`}>
-                    <Bell className={`h-4 w-4 ${
-                      n.type === "success" ? "text-emerald-600" : n.type === "warning" ? "text-amber-600" : "text-accent-foreground"
-                    }`} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-foreground truncate">{n.title}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed line-clamp-2">{n.message}</p>
-                    <p className="text-[11px] text-muted-foreground/70 mt-1">{new Date(n.created_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Panel>
-        </div>
-      </div>
-    </div>
-  );
 
   // ── Section: Application ───────────────────────────────────────────────────
   const Application = () => (
@@ -1539,7 +1330,8 @@ export default function StudentDashboardPage() {
 
   // ── Section: Notifications ─────────────────────────────────────────────────
   const Notifications = () => (
-    <NotificationInbox notifications={notifications} setNotifications={setNotifications} onNavigate={goToLink} />
+    <NotificationInbox notifications={notifications} setNotifications={setNotifications} onNavigate={goToLink}
+      userId={userId} unreadTotal={unreadTotal} onUnreadChange={() => refreshUnread(userId)} />
   );
 
   // ── Section: Settings ──────────────────────────────────────────────────────
@@ -1579,20 +1371,58 @@ export default function StudentDashboardPage() {
     </div>
   );
 
+  const openNotification = async (n: Tables<"notifications">) => {
+    if (!n.read) {
+      setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, read: true } : x)));
+      const { error } = await supabase.from("notifications").update({ read: true }).eq("id", n.id);
+      if (error) setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, read: false } : x)));
+      refreshUnread(userId);
+    }
+    if (n.link) goToLink(n.link);
+    else setActive("notifications");
+  };
+
+  const markAllRead = async () => {
+    if (unreadTotal === 0) return;
+    setNotifications((prev) => prev.map((x) => ({ ...x, read: true })));
+    setUnreadTotal(0);
+    // Every unread notification, not only the ones on this page.
+    const { error } = await supabase.from("notifications").update({ read: true }).eq("user_id", userId).eq("read", false);
+    if (error) { toast.error("Could not mark them as read"); loadData(); }
+  };
+
   // Notification deep links look like /student-dashboard?section=payments
   const goToLink = (link: string) => {
     const u = new URL(link, window.location.origin);
     if (u.pathname === "/student-dashboard") {
       const sec = u.searchParams.get("section");
       if (sec) { const key = sec === "payments" ? "disbursement" : sec; if (sidebarItems.some((i) => i.key === key)) setActive(key); }
+      // Reminder links carry the program to apply for.
+      const apply = u.searchParams.get("apply");
+      if (apply && !currentApp && !applyBlocked) { setApplyScholarshipId(apply); setApplyDialogOpen(true); }
     } else {
       router.push(link);
     }
   };
 
+  activeRef.current = active;
+  goToLinkRef.current = goToLink;
+
   const renderActive = () => {
     switch (active) {
-      case "overview":      return <Overview />;
+      case "overview":
+      default:              return (
+        <Overview displayName={displayName} profile={profile} applications={applications} currentApp={currentApp} payments={payments}
+          issues={issues} gradeUpdates={gradeUpdates} scholarships={scholarships} notifications={notifications} settings={settings}
+          applyBlocked={applyBlocked} approvedTotal={approvedTotal} locked={locked} isDisbursed={isDisbursed} currentYear={currentYear}
+          docStatus={{
+            uploaded: docsUploaded, required: requiredDocTypes.length, missing: missingDocs,
+            rejected: requiredDocTypes.filter((t) => docByType.get(t)?.status === "Rejected").map((t) => ({ type: t, note: docByType.get(t)?.review_note ?? null })),
+          }}
+          onNavigate={setActive}
+          onApply={(id) => { setApplyScholarshipId(id); setApplyDialogOpen(true); setActive("application"); }}
+          unreadCount={unreadTotal} onOpenNotification={openNotification} onMarkAllRead={markAllRead} />
+      );
       case "application":   return Application(); // called, not rendered: inputs inside must keep focus
       case "documents":     return Documents();
       case "scholarship":   return <Scholarship />;
@@ -1604,7 +1434,6 @@ export default function StudentDashboardPage() {
           gradeUpdates={gradeUpdates} dataRequests={dataRequests} onChanged={() => refreshProfile(userId)} />
       );
       case "settings":      return SettingsView(); // called, not rendered: its children keep their state
-      default:              return <Overview />;
     }
   };
 
@@ -1718,6 +1547,16 @@ export default function StudentDashboardPage() {
 
         {/* Page content */}
         <main className="flex-1 p-5 md:p-7 overflow-auto">
+          {loadError && (
+            <div className="mb-5 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="font-semibold">Some of your information didn&apos;t load</p>
+                <p className="text-xs mt-0.5">What you see may be incomplete or out of date. {loadError}</p>
+              </div>
+              <Button size="sm" variant="outline" className="rounded-lg shrink-0 bg-white/70" onClick={loadData}>Try again</Button>
+            </div>
+          )}
           {renderActive()}
         </main>
       </div>
