@@ -2,16 +2,16 @@
 
 import { useMemo, useState } from "react";
 import {
-  AlertTriangle, ArrowRight, Banknote, Bell, CalendarDays, Check, CheckCircle, ChevronRight, Circle, Eye, FileText,
+  AlertTriangle, ArrowRight, Banknote, Bell, CalendarDays, CheckCircle, Eye, FileText,
   GraduationCap, Info, Lock, Upload, User, Users, XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import ProfileImage from "@/components/ProfileImage";
-import ApplicationTimeline from "@/components/student/ApplicationTimeline";
-import { Panel, SectionTitle, StatCard, StatusBadge } from "@/components/student/ui";
+import { Panel, SectionTitle, StatCard } from "@/components/student/ui";
 import { profileCompleteness } from "@/lib/profile";
-import { availabilityInfo, deadlineLabel, peso, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
+import { availabilityInfo, deadlineLabel, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
+import { daysUntil, formatDate, peso } from "@/lib/format";
 import type { AppSettings } from "@/lib/settings";
 import type { Tables } from "@/integrations/supabase/types";
 
@@ -44,8 +44,7 @@ export type OverviewProps = {
 
 type Action = { id: string; tone: "red" | "amber" | "blue" | "green"; title: string; detail?: string; tab: string; cta: string };
 
-const short = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
-const daysUntil = (d: string) => Math.ceil((new Date(`${d}T23:59:59`).getTime() - Date.now()) / 86_400_000);
+const short = (d: string) => formatDate(d);
 
 const toneCls: Record<Action["tone"], string> = {
   red: "border-red-200 bg-red-50 text-red-800",
@@ -62,7 +61,6 @@ export default function Overview(p: OverviewProps) {
   const firstName = p.displayName.split(" ")[0] || "Student";
   const unread = p.unreadCount;
   const completeness = useMemo(() => profileCompleteness(profile), [profile]);
-  const isNew = applications.length === 0;
 
   // ── money ──
   const live = payments.filter((x) => x.status !== "Cancelled");
@@ -106,36 +104,24 @@ export default function Overview(p: OverviewProps) {
       out.push({ id: "grade", tone: "red", title: "Your grade update was not accepted", detail: lastGrade.review_note ?? undefined, tab: "profile", cta: "Fix it" });
     }
 
-    if (!isNew) {
-      if (completeness.missing.length > 0) {
-        out.push({ id: "profile", tone: "amber", title: `Complete your profile (${completeness.percent}%)`, detail: `Still needed: ${completeness.missing.map((m) => m.label).join(", ")}.`, tab: "profile", cta: "Complete" });
-      }
-      const rejectedTypes = new Set(p.docStatus.rejected.map((d) => d.type));
-      const gone = p.docStatus.missing.filter((m) => !rejectedTypes.has(m));
-      if (gone.length > 0 && (!currentApp || currentApp.status === "Pending")) {
-        out.push({ id: "docs", tone: "amber", title: `Upload ${gone.length} required document${gone.length === 1 ? "" : "s"}`, detail: gone.join(", "), tab: "documents", cta: "Upload" });
-      }
+    if (completeness.missing.length > 0) {
+      out.push({ id: "profile", tone: "amber", title: `Complete your profile (${completeness.percent}%)`, detail: `Still needed: ${completeness.missing.map((m) => m.label).join(", ")}.`, tab: "profile", cta: "Complete" });
+    }
+    const rejectedTypes = new Set(p.docStatus.rejected.map((d) => d.type));
+    const gone = p.docStatus.missing.filter((m) => !rejectedTypes.has(m));
+    if (gone.length > 0 && (!currentApp || currentApp.status === "Pending")) {
+      out.push({ id: "docs", tone: "amber", title: `Upload ${gone.length} required document${gone.length === 1 ? "" : "s"}`, detail: gone.join(", "), tab: "documents", cta: "Upload" });
+    }
+    if (profile?.average_grade != null && !profile.grade_verified_at && !p.gradeUpdates.some((g) => g.status === "Pending" || g.status === "Rejected")) {
+      out.push({ id: "verify-grade", tone: "blue", title: "Get your grade verified", detail: "Submit your grade report in your profile. Programs and renewals check it.", tab: "profile", cta: "Verify" });
     }
 
     p.issues.filter((i) => i.status === "Open").forEach((i) =>
       out.push({ id: `issue-${i.id}`, tone: "blue", title: "Waiting for the office to reply to your payment report", tab: "disbursement", cta: "View" }));
 
-    if (!currentApp && !applyBlocked && !isNew) {
-      out.push({ id: "apply", tone: "blue", title: "You can apply for a scholarship", detail: "Applications are open.", tab: "application", cta: "Apply" });
-    }
-
     const order = { red: 0, amber: 1, blue: 2, green: 3 } as const;
     return out.sort((a, b) => order[a.tone] - order[b.tone]);
-  }, [p.docStatus, p.gradeUpdates, p.issues, live, isNew, completeness, currentApp, applyBlocked]);
-
-  // ── getting started (students who haven't applied yet) ──
-  const checklist = [
-    { label: "Complete your profile", done: completeness.missing.length === 0, tab: "profile", hint: completeness.missing.length ? `${completeness.missing.length} item${completeness.missing.length === 1 ? "" : "s"} left` : undefined },
-    { label: "Get your grade verified", done: !!profile?.grade_verified_at, tab: "profile", hint: profile?.grade_verified_at ? undefined : "Submit your grade report in your profile" },
-    { label: "Upload your required documents", done: p.docStatus.required > 0 && p.docStatus.missing.length === 0, tab: "documents", hint: p.docStatus.missing.length ? `${p.docStatus.missing.length} left` : undefined },
-    { label: "Apply for a scholarship", done: !isNew, tab: "application", hint: applyBlocked ?? undefined },
-  ];
-  const checklistDone = checklist.filter((c) => c.done).length;
+  }, [p.docStatus, p.gradeUpdates, p.issues, live, completeness, currentApp, profile]);
 
   // ── programs ──
   const shownPrograms = showAllPrograms ? scholarships : scholarships.slice(0, 3);
@@ -164,10 +150,6 @@ export default function Overview(p: OverviewProps) {
             <p className="text-sm text-white/80 mt-1">Welcome back, {firstName}! {actions.some((a) => a.tone !== "green" && a.tone !== "blue") ? "There are a few things that need your attention." : "Here's where things stand."}</p>
           </div>
           <div className="flex items-center gap-3 sm:shrink-0">
-            <button onClick={() => p.onNavigate("notifications")} className="relative h-11 w-11 sm:h-10 sm:w-10 shrink-0 rounded-xl bg-white/15 hover:bg-white/25 flex items-center justify-center transition-colors cursor-pointer" aria-label="Notifications">
-              <Bell className="h-4.5 w-4.5 text-white" />
-              {unread > 0 && <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-white text-primary text-[9px] font-bold flex items-center justify-center">{unread > 9 ? "9+" : unread}</span>}
-            </button>
             <button onClick={() => p.onNavigate("application")}
               className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl bg-white text-primary text-sm font-semibold px-4 py-3 sm:py-2.5 hover:bg-white/90 transition-colors cursor-pointer shadow-sm">
               {currentApp ? <Eye className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
@@ -185,39 +167,17 @@ export default function Overview(p: OverviewProps) {
         </div>
       ))}
 
-      {/* Getting started (new students) */}
-      {isNew && (
-        <Panel className="p-5">
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <SectionTitle>Getting started</SectionTitle>
-            <span className="text-xs font-semibold text-primary -mt-3">{checklistDone} of {checklist.length} done</span>
-          </div>
-          <ul className="space-y-1">
-            {checklist.map((c) => (
-              <li key={c.label}>
-                <button type="button" onClick={() => p.onNavigate(c.tab)} className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-muted/60 transition-colors cursor-pointer">
-                  <span className={`h-6 w-6 rounded-full flex items-center justify-center shrink-0 ${c.done ? "bg-emerald-500 text-white" : "bg-muted text-muted-foreground"}`}>
-                    {c.done ? <Check className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5" />}
-                  </span>
-                  <span className="flex-1 min-w-0">
-                    <span className={`text-sm font-medium ${c.done ? "text-muted-foreground line-through" : "text-foreground"}`}>{c.label}</span>
-                    {!c.done && c.hint && <span className="block text-xs text-muted-foreground">{c.hint}</span>}
-                  </span>
-                  {!c.done && <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </Panel>
-      )}
-
       {/* Action needed */}
       <Panel className="p-5">
         <SectionTitle>Action needed</SectionTitle>
         {actions.length === 0 ? (
           <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-sm ${toneCls.green}`}>
             <CheckCircle className="h-4 w-4 shrink-0" />
-            <span>You&apos;re all set. Nothing needs your attention right now.</span>
+            <span>
+              {currentApp ? "You're all set. Nothing needs your attention right now."
+                : applyBlocked ? "You're all set. Applications aren't open right now."
+                : "Your profile and documents are ready. Use the button above to apply for a scholarship."}
+            </span>
           </div>
         ) : (
           <ul className="space-y-2">
@@ -242,10 +202,12 @@ export default function Overview(p: OverviewProps) {
         <StatCard icon={Upload} label="Documents" value={`${p.docStatus.uploaded} / ${p.docStatus.required}`}
           sub={p.docStatus.rejected.length > 0 ? `${p.docStatus.rejected.length} need${p.docStatus.rejected.length === 1 ? "s" : ""} a new copy` : p.docStatus.uploaded === p.docStatus.required ? "All complete" : `${p.docStatus.required - p.docStatus.uploaded} remaining`}
           subTone={p.docStatus.rejected.length === 0 && p.docStatus.uploaded === p.docStatus.required ? "positive" : "warning"} onClick={() => p.onNavigate("documents")} />
-        <StatCard icon={Banknote} label="Payments" value={peso(disbursedTotal)}
+        <StatCard icon={Banknote} label="Payouts" value={peso(disbursedTotal)}
           sub={nextPayment ? `Next: ${peso(nextPayment.amount)}${nextPayment.scheduled_date ? ` on ${short(nextPayment.scheduled_date)}` : ""}` : p.approvedTotal > 0 ? `of ${peso(p.approvedTotal)} approved` : "No payments yet"}
           onClick={() => p.onNavigate("disbursement")} />
-        <StatCard icon={Bell} label="Notifications" value={unread} sub={unread === 0 ? "All caught up" : `${unread} unread`} subTone={unread === 0 ? "positive" : "warning"} onClick={() => p.onNavigate("notifications")} />
+        <StatCard icon={GraduationCap} label="Average Grade" value={profile?.average_grade ?? "—"}
+          sub={profile?.average_grade == null ? "Not set yet" : profile.grade_verified_at ? `Verified${profile.grade_term ? ` · ${profile.grade_term}` : ""}` : "Self-declared · not verified"}
+          subTone={profile?.grade_verified_at ? "positive" : "warning"} onClick={() => p.onNavigate("profile")} />
       </div>
 
       {/* Body */}
@@ -267,50 +229,8 @@ export default function Overview(p: OverviewProps) {
                 <p className="text-sm text-muted-foreground mt-0.5">{profile?.course || "—"}{profile?.year_level ? ` · ${profile.year_level}` : ""}</p>
                 <p className="text-sm text-muted-foreground">{profile?.school_name || "—"}</p>
               </div>
-              <button onClick={() => p.onNavigate("profile")} className="flex items-center gap-1.5 text-xs text-primary font-semibold hover:text-primary/80 transition-colors shrink-0 cursor-pointer">
-                Edit Profile <ChevronRight className="h-3 w-3" />
-              </button>
             </div>
           </Panel>
-
-          <Panel className="p-5">
-            <div className="flex items-center justify-between gap-3">
-              <SectionTitle>{currentApp ? `${currentApp.scholarships?.name ?? "Your application"}` : "Application Progress"}</SectionTitle>
-              {currentApp && <div className="-mt-3"><StatusBadge status={currentApp.status} /></div>}
-            </div>
-            {currentApp ? (
-              <ApplicationTimeline app={currentApp} payments={payments} />
-            ) : (
-              <div className="text-center py-6">
-                <GraduationCap className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
-                <p className="text-sm text-muted-foreground mb-3">{applyBlocked ?? `You haven't applied for ${p.currentYear} yet.`}</p>
-                {!applyBlocked && <Button className="bg-primary hover:bg-primary text-white rounded-xl" onClick={() => p.onNavigate("application")}>Apply for a scholarship</Button>}
-              </div>
-            )}
-          </Panel>
-
-          {applications.length > 0 && (
-            <Panel>
-              <div className="px-5 py-4 border-b border-border"><SectionTitle>My Applications</SectionTitle></div>
-              <ul className="divide-y divide-border">
-                {applications.map((a) => (
-                  <li key={a.id} className="px-5 py-3.5 flex items-center justify-between gap-3 flex-wrap">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-foreground truncate">
-                        {a.scholarships?.name ?? "Scholarship"}
-                        {a.is_renewal && <span className="ml-2 rounded-full border border-primary/20 bg-accent px-2 py-0.5 text-[10px] font-semibold text-primary">Renewal</span>}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {[a.academic_year, a.semester].filter(Boolean).join(" · ") || new Date(a.created_at).getFullYear()} · Submitted {new Date(a.created_at).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}
-                        {a.status === "Approved" && a.amount_approved != null ? ` · Award ${peso(a.amount_approved)}` : ""}
-                      </p>
-                    </div>
-                    <StatusBadge status={a.status} />
-                  </li>
-                ))}
-              </ul>
-            </Panel>
-          )}
 
           <Panel>
             <div className="px-5 py-4 border-b border-border flex items-center justify-between">

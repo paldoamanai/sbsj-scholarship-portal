@@ -1,13 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,14 +18,15 @@ import { toast } from "sonner";
 import {
   LayoutDashboard, FileText, Upload, GraduationCap, Banknote, Receipt,
   Bell, User, Settings as SettingsIcon, LogOut, Menu, Lock, Download,
-  AlertTriangle, CheckCircle, Clock, XCircle, Pencil, Eye, Trash2, Loader2,
-  Camera, ChevronRight, X, MoreVertical, ArrowRight, CalendarDays, Users,
+  AlertTriangle, CheckCircle, Clock, Pencil, Eye, Trash2, Loader2,
+  X,
 } from "lucide-react";
 import Overview from "@/components/student/Overview";
 import { createClient } from "@/lib/supabase/client";
 import ProfileSection from "@/components/student/ProfileSection";
 import ProfileImage from "@/components/ProfileImage";
 import SecuritySettings from "@/components/account/SecuritySettings";
+import AccountSettings from "@/components/student/AccountSettings";
 import { Panel, SectionTitle, StatCard, StatusBadge } from "@/components/student/ui";
 import { profileCompleteness } from "@/lib/profile";
 import NotificationInbox, { NOTIFICATION_PAGE } from "@/components/notifications/NotificationInbox";
@@ -40,14 +39,14 @@ import { useSystemSettings } from "@/hooks/use-system-settings";
 import { applicationsBlockedReason } from "@/lib/settings";
 import { STATEMENT_MIN, STATEMENT_MAX } from "@/validations/application";
 import { DOC_MIME, documentPath, safeFileName, uploadUserDocument } from "@/lib/documents";
-import { availabilityInfo, peso as pesoFmt, requirementLines, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
+import { availabilityInfo, requirementLines, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
+import { formatDate, peso, pesoFixed } from "@/lib/format";
+import ApplicationTimeline from "@/components/student/ApplicationTimeline";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Payment = Tables<"payments">;
 
 const numOrNull = (v: string) => (v.trim() === "" ? null : Number(v));
-const peso = (n: number | null | undefined) => (n == null ? "—" : `₱${Number(n).toLocaleString("en-PH")}`);
-
 const fmtSize = (n: number | null | undefined) => (n == null ? "" : n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 function DocStatusBadge({ status }: { status: string }) {
@@ -161,10 +160,6 @@ const ISSUE_KINDS: Record<string, string> = {
   other: "Something else",
 };
 
-const fmtMoney = (n: number) => `₱${Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
-const fmtDay = (d: string | null | undefined) =>
-  d ? new Date(d.length <= 10 ? `${d}T00:00:00` : d).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "—";
-
 // Everything a student sees to acknowledge a disbursed payment. Cash: file OR a confirmation; Cheque: file.
 // A submitted receipt is final unless the office rejected it, in which case a new one can be sent.
 function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl }) {
@@ -178,11 +173,11 @@ function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl 
       <div className="space-y-1">
         {p.student_receipt_path ? (
           <button type="button" onClick={() => view(p.student_receipt_path)} className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium hover:underline cursor-pointer">
-            <CheckCircle className="h-3.5 w-3.5" /> Submitted {fmtDay(p.student_receipt_at)} · View
+            <CheckCircle className="h-3.5 w-3.5" /> Submitted {formatDate(p.student_receipt_at)} · View
           </button>
         ) : (
           <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
-            <CheckCircle className="h-3.5 w-3.5" /> Cash receipt confirmed {fmtDay(p.student_receipt_at)}
+            <CheckCircle className="h-3.5 w-3.5" /> Cash receipt confirmed {formatDate(p.student_receipt_at)}
           </span>
         )}
         <p className={`text-[11px] font-semibold ${accepted ? "text-emerald-700" : "text-amber-700"}`}>{accepted ? "Accepted by the office" : "Waiting for the office to review"}</p>
@@ -226,7 +221,7 @@ function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl 
         <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
           <input type="checkbox" className="mt-0.5" checked={checked}
             onChange={(e) => setConfirmed((prev) => ({ ...prev, [p.id]: e.target.checked }))} />
-          <span>I confirm I received {fmtMoney(p.amount)} in cash.</span>
+          <span>I confirm I received {pesoFixed(p.amount)} in cash.</span>
         </label>
       )}
     </div>
@@ -282,7 +277,7 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
-    a.href = url; a.download = `payment-history-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.href = url; a.download = `payout-history-${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   };
 
@@ -291,10 +286,10 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {approvedTotal > 0 && <StatCard icon={GraduationCap} label="Approved award" value={fmtMoney(approvedTotal)} />}
-        <StatCard icon={Banknote} label="Disbursed" value={fmtMoney(disbursed)} accent />
-        <StatCard icon={Clock} label="Scheduled" value={fmtMoney(scheduled)} sub={next ? `Next: ${fmtDay(next.scheduled_date)}` : "Nothing scheduled"} />
-        {approvedTotal > 0 && <StatCard icon={Receipt} label="Not yet scheduled" value={fmtMoney(remaining)} sub={remaining === 0 ? "Fully scheduled" : "The office will schedule this"} subTone={remaining === 0 ? "positive" : "neutral"} />}
+        {approvedTotal > 0 && <StatCard icon={GraduationCap} label="Approved award" value={pesoFixed(approvedTotal)} />}
+        <StatCard icon={Banknote} label="Disbursed" value={pesoFixed(disbursed)} accent />
+        <StatCard icon={Clock} label="Scheduled" value={pesoFixed(scheduled)} sub={next ? `Next: ${formatDate(next.scheduled_date)}` : "Nothing scheduled"} />
+        {approvedTotal > 0 && <StatCard icon={Receipt} label="Not yet scheduled" value={pesoFixed(remaining)} sub={remaining === 0 ? "Fully scheduled" : "The office will schedule this"} subTone={remaining === 0 ? "positive" : "neutral"} />}
         {approvedTotal === 0 && (
           <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
             <p className="text-xs font-medium text-muted-foreground mb-2">Disbursement status</p>
@@ -309,8 +304,8 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-primary">Next payment</p>
-                <p className="text-2xl font-bold text-sidebar-accent mt-1">{fmtMoney(next.amount)}</p>
-                <p className="text-sm text-muted-foreground">{next.scheduled_date ? `Scheduled ${fmtDay(next.scheduled_date)}` : "Date to be announced"} · via {next.method || "—"}</p>
+                <p className="text-2xl font-bold text-sidebar-accent mt-1">{pesoFixed(next.amount)}</p>
+                <p className="text-sm text-muted-foreground">{next.scheduled_date ? `Scheduled ${formatDate(next.scheduled_date)}` : "Date to be announced"} · via {next.method || "—"}</p>
               </div>
               <StatusBadge status={next.status} />
             </div>
@@ -336,7 +331,7 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
 
       <Panel>
         <div className="px-6 py-4 border-b border-muted flex items-center justify-between gap-2">
-          <SectionTitle>Payment History</SectionTitle>
+          <SectionTitle>Payout History</SectionTitle>
           <Button size="sm" variant="outline" className="text-xs border-border text-muted-foreground hover:bg-muted rounded-lg" disabled={payments.length === 0} onClick={downloadCsv}>
             <Download className="mr-1 h-3 w-3" /> Download CSV
           </Button>
@@ -358,12 +353,12 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
                     <p className="text-sm font-semibold text-sidebar-accent">
-                      {fmtMoney(p.amount)}
+                      {pesoFixed(p.amount)}
                       <span className="ml-2 text-xs font-normal text-muted-foreground">via {p.method || "—"}</span>
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {p.reference ? `${p.method === "Cheque" ? "Cheque no." : "Ref"}: ${p.reference}` : "No reference yet"}
-                      {" · "}{isDisbursedPay ? `Disbursed ${fmtDay(p.disbursed_at)}` : p.scheduled_date ? `Scheduled ${fmtDay(p.scheduled_date)}` : "Date to be announced"}
+                      {" · "}{isDisbursedPay ? `Disbursed ${formatDate(p.disbursed_at)}` : p.scheduled_date ? `Scheduled ${formatDate(p.scheduled_date)}` : "Date to be announced"}
                     </p>
                   </div>
                   <StatusBadge status={p.status} />
@@ -381,7 +376,7 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
 
                 {list.map((i) => (
                   <div key={i.id} className={`rounded-lg border px-3 py-2 text-xs ${i.status === "Open" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-muted bg-muted/40 text-muted-foreground"}`}>
-                    <p className="font-semibold">{ISSUE_KINDS[i.kind] ?? i.kind} · {i.status === "Open" ? "Waiting for the office" : `Resolved ${fmtDay(i.resolved_at)}`}</p>
+                    <p className="font-semibold">{ISSUE_KINDS[i.kind] ?? i.kind} · {i.status === "Open" ? "Waiting for the office" : `Resolved ${formatDate(i.resolved_at)}`}</p>
                     <p className="mt-0.5 whitespace-pre-wrap">{i.message}</p>
                     {i.response && <p className="mt-1 whitespace-pre-wrap text-foreground"><span className="font-semibold">Office: </span>{i.response}</p>}
                   </div>
@@ -402,7 +397,7 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
       <Dialog open={!!issueFor} onOpenChange={(o) => { if (!o) setIssueFor(null); }}>
         <DialogContent className="rounded-2xl">
           <DialogHeader><DialogTitle className="font-display">Report a problem</DialogTitle></DialogHeader>
-          {issueFor && <p className="text-sm text-muted-foreground">Payment of {fmtMoney(issueFor.amount)} · {issueFor.status}</p>}
+          {issueFor && <p className="text-sm text-muted-foreground">Payment of {pesoFixed(issueFor.amount)} · {issueFor.status}</p>}
           <div>
             <Label className="text-sm font-medium mb-1.5 block">What&apos;s wrong?</Label>
             <Select value={issueKind} onValueChange={setIssueKind}>
@@ -430,13 +425,15 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
   );
 }
 
+// Links in older notifications point at tabs that were merged into others.
+const SECTION_ALIASES: Record<string, string> = { payments: "disbursement", scholarship: "application" };
+
 // ── Sidebar items ──────────────────────────────────────────────────────────────
 const sidebarItems = [
   { icon: LayoutDashboard, label: "Dashboard",      key: "overview" },
   { icon: FileText,        label: "Application",    key: "application" },
   { icon: Upload,          label: "Documents",      key: "documents" },
-  { icon: GraduationCap,  label: "Scholarship",    key: "scholarship" },
-  { icon: Banknote,        label: "Payments",       key: "disbursement" },
+  { icon: Banknote,        label: "Payouts",        key: "disbursement" },
   { icon: Bell,            label: "Notifications",  key: "notifications" },
   { icon: User,            label: "Profile",        key: "profile" },
   { icon: SettingsIcon,    label: "Settings",       key: "settings" },
@@ -503,7 +500,7 @@ export default function StudentDashboardPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sec = params.get("section");
-    if (sec) { const key = sec === "payments" ? "disbursement" : sec; if (sidebarItems.some((i) => i.key === key)) setActive(key); }
+    if (sec) { const key = SECTION_ALIASES[sec] ?? sec; if (sidebarItems.some((i) => i.key === key)) setActive(key); }
     // Coming from registration with a program already chosen: open the apply form once data has loaded.
     const apply = params.get("apply");
     if (apply) { setApplyScholarshipId(apply); setActive("application"); setOpenApplyOnLoad(true); }
@@ -705,7 +702,6 @@ export default function StudentDashboardPage() {
   const docOk = (t: string) => { const d = docByType.get(t); return !!d && d.status !== "Rejected"; };
   const docsUploaded = requiredDocTypes.filter(docOk).length;
   const missingDocs = requiredDocTypes.filter(t => !docOk(t));
-  const rejectedDocs = requiredDocTypes.filter(t => docByType.get(t)?.status === "Rejected").length;
 
   // Renewal: an earlier approved application means this one would be a renewal.
   const approvedBefore = applications.filter((a) => a.status === "Approved").length;
@@ -732,6 +728,13 @@ export default function StudentDashboardPage() {
     if (applyProgram.year_levels?.length && !applyProgram.year_levels.includes(profile?.year_level ?? "")) applyIssues.push(`${applyProgram.name} is open to ${applyProgram.year_levels.join(", ")} students only.`);
     if (applyProgram.municipality?.trim() && (profile?.municipality ?? "").trim().toLowerCase() !== applyProgram.municipality.trim().toLowerCase()) applyIssues.push(`${applyProgram.name} is for residents of ${applyProgram.municipality.trim()} only.`);
   }
+
+  // The program behind the current application (shown on the Application tab).
+  const appProgram = scholarships.find((sc) => sc.id === currentApp?.scholarship_id);
+  const appRenewal = currentApp?.is_renewal ?? isRenewing;
+  const appMinGrade = Math.max(appRenewal ? settings.renewal_min_grade : settings.min_grade_requirement, Number(appProgram?.min_grade ?? 0));
+  const appReqLines = appProgram ? requirementLines(appProgram, appRenewal ? settings.renewal_min_grade : settings.min_grade_requirement) : appMinGrade > 0 ? [`Average grade of at least ${appMinGrade}`] : [];
+  const appAward = currentApp?.amount_approved ?? appProgram?.amount;
 
   // Everything awarded to this student: approved awards, using the program amount where none was set.
   const approvedTotal = applications
@@ -904,40 +907,7 @@ export default function StudentDashboardPage() {
             </div>
           </div>
           <div className="p-4 sm:p-6">
-            <div className="grid grid-cols-2 gap-4 text-sm mb-5">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Submitted</p>
-                <p className="font-semibold text-sidebar-accent">{new Date(currentApp.created_at).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Term</p>
-                <p className="font-semibold text-sidebar-accent">{[currentApp.academic_year, currentApp.semester].filter(Boolean).join(" · ") || "—"}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Year Level</p>
-                <p className="font-semibold text-sidebar-accent">{currentApp.year_level || profile?.year_level || "—"}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">School</p>
-                <p className="font-semibold text-sidebar-accent">{currentApp.school_name || profile?.school_name || "—"}</p>
-              </div>
-              <div className="col-span-2">
-                <p className="text-xs text-muted-foreground mb-1">Course</p>
-                <p className="font-semibold text-sidebar-accent">{currentApp.course || profile?.course || "—"}</p>
-              </div>
-            </div>
-            {currentApp.notes && (
-              <div className={`rounded-xl border px-4 py-3 mb-5 text-sm ${
-                currentApp.status === "Rejected" ? "bg-red-50 border-red-200 text-red-800"
-                : currentApp.status === "Approved" ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                : "bg-amber-50 border-amber-200 text-amber-800"}`}>
-                <p className="text-xs font-semibold uppercase tracking-wide mb-1">Remarks from the scholarship office</p>
-                <p className="whitespace-pre-wrap">{currentApp.notes}</p>
-              </div>
-            )}
-            {currentApp.status === "Waitlisted" && !currentApp.notes && (
-              <p className="text-sm text-muted-foreground mb-5">You are on the waitlist. We will notify you if a slot opens.</p>
-            )}
+            <div className="mb-5"><ApplicationTimeline app={currentApp} payments={payments} /></div>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" className="text-xs border-border rounded-xl hover:bg-muted"
                 disabled={locked || currentApp.status !== "Pending"}
@@ -958,6 +928,57 @@ export default function StudentDashboardPage() {
               <Button size="sm" variant="outline" className="text-xs border-border rounded-xl hover:bg-muted" onClick={() => setViewOpen(true)}>
                 <Eye className="mr-1 h-3 w-3" /> View
               </Button>
+            </div>
+          </div>
+        </Panel>
+
+        {/* Program details (was the separate Scholarship tab) */}
+        <Panel>
+          <div className="px-4 py-4 sm:px-6 sm:py-5 border-b border-muted">
+            <SectionTitle>About this program</SectionTitle>
+            <p className="text-sm text-muted-foreground -mt-3">{currentApp.scholarships?.name} · conditions and requirements</p>
+          </div>
+          <div className="p-4 sm:p-6 space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="rounded-xl bg-muted border border-muted p-4">
+                <p className="text-xs text-muted-foreground mb-1">{currentApp.status === "Approved" ? "Approved award" : "Award per scholar"}</p>
+                <p className="text-xl font-bold text-sidebar-accent">{Number(appAward) > 0 ? peso(appAward) : "To be announced"}</p>
+              </div>
+              <div className="rounded-xl bg-muted border border-muted p-4">
+                <p className="text-xs text-muted-foreground mb-1">Required grade</p>
+                <p className="text-xl font-bold text-sidebar-accent">{appMinGrade > 0 ? `${appMinGrade} and above` : "No minimum"}</p>
+              </div>
+              {appProgram && (
+                <>
+                  <div className="rounded-xl bg-muted border border-muted p-4">
+                    <p className="text-xs text-muted-foreground mb-1">Application deadline</p>
+                    <p className="text-sm font-semibold text-sidebar-accent">{appProgram.deadline ? `${formatDate(appProgram.deadline)} (${deadlineLabel(appProgram.deadline)})` : "No closing date"}</p>
+                  </div>
+                  <div className="rounded-xl bg-muted border border-muted p-4">
+                    <p className="text-xs text-muted-foreground mb-1">Slots</p>
+                    <p className="text-sm font-semibold text-sidebar-accent">{slotsLabel(appProgram)}</p>
+                  </div>
+                </>
+              )}
+            </div>
+            {appProgram?.description && <p className="text-sm text-muted-foreground leading-relaxed">{appProgram.description}</p>}
+            <div>
+              <p className="text-sm font-semibold text-foreground mb-3">Eligibility &amp; conditions</p>
+              <div className="space-y-2">
+                {[
+                  ...appReqLines,
+                  ...(appProgram?.eligibility ? [appProgram.eligibility] : []),
+                  `Keep these documents on file: ${requiredDocTypes.join(", ") || "none required"}.`,
+                  ...(settings.renewal_enabled ? [`You may renew up to ${settings.max_renewals} time(s)${settings.renewal_min_grade > 0 ? `, with an average grade of at least ${settings.renewal_min_grade}` : ""}.`] : []),
+                ].map((c, i) => (
+                  <div key={i} className="flex items-start gap-3">
+                    <div className="h-5 w-5 rounded-full bg-accent flex items-center justify-center shrink-0 mt-0.5">
+                      <CheckCircle className="h-3 w-3 text-primary" />
+                    </div>
+                    <p className="text-sm text-muted-foreground">{c}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </Panel>
@@ -1114,7 +1135,7 @@ export default function StudentDashboardPage() {
                   <SelectContent>
                     {scholarships.filter((s) => availabilityInfo(s).canApply || s.id === applyScholarshipId).map((s) => (
                       <SelectItem key={s.id} value={s.id} disabled={!availabilityInfo(s).canApply}>
-                        {s.name}{Number(s.amount) > 0 ? ` · ${pesoFmt(s.amount)}` : ""}{!availabilityInfo(s).canApply ? ` (${availabilityInfo(s).label})` : ""}
+                        {s.name}{Number(s.amount) > 0 ? ` · ${peso(s.amount)}` : ""}{!availabilityInfo(s).canApply ? ` (${availabilityInfo(s).label})` : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1152,6 +1173,29 @@ export default function StudentDashboardPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+        </Panel>
+      )}
+
+      {applications.length > 0 && (
+        <Panel>
+          <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>All my applications</SectionTitle></div>
+          <ul className="divide-y divide-border">
+            {applications.map((a) => (
+              <li key={a.id} className="px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3 flex-wrap">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground">
+                    {a.scholarships?.name ?? "Scholarship"}
+                    {a.is_renewal && <span className="ml-2 rounded-full border border-primary/20 bg-accent px-2 py-0.5 text-[10px] font-semibold text-primary">Renewal</span>}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {[a.academic_year, a.semester].filter(Boolean).join(" · ") || new Date(a.created_at).getFullYear()} · Submitted {formatDate(a.created_at)}
+                    {a.status === "Approved" && a.amount_approved != null ? ` · Award ${peso(a.amount_approved)}` : ""}
+                  </p>
+                </div>
+                <StatusBadge status={a.status} />
+              </li>
+            ))}
+          </ul>
         </Panel>
       )}
     </div>
@@ -1274,73 +1318,11 @@ export default function StudentDashboardPage() {
     </div>
   );
 
-  // ── Section: Scholarship ───────────────────────────────────────────────────
-  const Scholarship = () => {
-    const program = scholarships.find((p) => p.id === currentApp?.scholarship_id);
-    const grade = isRenewing ? settings.renewal_min_grade : settings.min_grade_requirement;
-    const reqLines = program ? requirementLines(program, grade) : grade > 0 ? [`Average grade of at least ${grade}`] : [];
-    const award = currentApp?.amount_approved ?? program?.amount;
-    return (
-      <Panel>
-        <div className="px-4 py-4 sm:px-6 sm:py-5 border-b border-muted">
-          <SectionTitle>{currentApp?.scholarships?.name || "No Active Scholarship"}</SectionTitle>
-          <p className="text-sm text-muted-foreground -mt-3">Program details and conditions</p>
-        </div>
-        {!currentApp ? (
-          <div className="p-4 sm:p-6 text-sm text-muted-foreground">You haven&apos;t applied to a scholarship yet. Apply from the Application tab to see your program&apos;s details here.</div>
-        ) : (
-          <div className="p-4 sm:p-6 space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="rounded-xl bg-muted border border-muted p-4">
-                <p className="text-xs text-muted-foreground mb-1">{currentApp.status === "Approved" ? "Approved award" : "Award per scholar"}</p>
-                <p className="text-xl font-bold text-sidebar-accent">{Number(award) > 0 ? pesoFmt(award) : "To be announced"}</p>
-              </div>
-              <div className="rounded-xl bg-muted border border-muted p-4">
-                <p className="text-xs text-muted-foreground mb-1">Required grade</p>
-                <p className="text-xl font-bold text-sidebar-accent">{Math.max(grade, Number(program?.min_grade ?? 0)) > 0 ? `${Math.max(grade, Number(program?.min_grade ?? 0))} and above` : "No minimum"}</p>
-              </div>
-              {program && (
-                <>
-                  <div className="rounded-xl bg-muted border border-muted p-4">
-                    <p className="text-xs text-muted-foreground mb-1">Application deadline</p>
-                    <p className="text-sm font-semibold text-sidebar-accent">{program.deadline ? `${new Date(`${program.deadline}T00:00:00`).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" })} (${deadlineLabel(program.deadline)})` : "No closing date"}</p>
-                  </div>
-                  <div className="rounded-xl bg-muted border border-muted p-4">
-                    <p className="text-xs text-muted-foreground mb-1">Slots</p>
-                    <p className="text-sm font-semibold text-sidebar-accent">{slotsLabel(program)}</p>
-                  </div>
-                </>
-              )}
-            </div>
-            {program?.description && <p className="text-sm text-muted-foreground leading-relaxed">{program.description}</p>}
-            <div>
-              <p className="text-sm font-semibold text-foreground mb-3">Eligibility &amp; conditions</p>
-              <div className="space-y-2">
-                {[
-                  ...reqLines,
-                  ...(program?.eligibility ? [program.eligibility] : []),
-                  `Keep these documents on file: ${requiredDocTypes.join(", ") || "none required"}.`,
-                  ...(settings.renewal_enabled ? [`You may renew up to ${settings.max_renewals} time(s)${settings.renewal_min_grade > 0 ? `, with an average grade of at least ${settings.renewal_min_grade}` : ""}.`] : []),
-                ].map((c, i) => (
-                  <div key={i} className="flex items-start gap-3">
-                    <div className="h-5 w-5 rounded-full bg-accent flex items-center justify-center shrink-0 mt-0.5">
-                      <CheckCircle className="h-3 w-3 text-primary" />
-                    </div>
-                    <p className="text-sm text-muted-foreground">{c}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </Panel>
-    );
-  };
-
   // ── Section: Notifications ─────────────────────────────────────────────────
   const Notifications = () => (
     <NotificationInbox notifications={notifications} setNotifications={setNotifications} onNavigate={goToLink}
-      userId={userId} unreadTotal={unreadTotal} onUnreadChange={() => refreshUnread(userId)} />
+      userId={userId} unreadTotal={unreadTotal} onUnreadChange={() => refreshUnread(userId)}
+      categoryLabels={{ payment: "Payouts" }} />
   );
 
   // ── Section: Settings ──────────────────────────────────────────────────────
@@ -1348,7 +1330,7 @@ export default function StudentDashboardPage() {
     <div className="space-y-5">
       <div>
         <h2 className="font-display text-lg font-bold text-foreground">Settings</h2>
-        <p className="text-sm text-muted-foreground">Choose how we contact you and keep your account secure.</p>
+        <p className="text-sm text-muted-foreground">How we contact you, how you sign in, and your data. Your personal details are on the Profile tab.</p>
       </div>
 
       <Panel>
@@ -1357,7 +1339,7 @@ export default function StudentDashboardPage() {
           <NotificationPreferences userId={userId} email={userEmail} categories={[
             { key: "application", label: "Application updates", hint: "Submitted, decisions, and reviews of your documents" },
             { key: "verification", label: "Verification", hint: "Identity checks and grade verification" },
-            { key: "payment", label: "Payments", hint: "Scheduled, disbursed, receipt reviews and replies to your reports" },
+            { key: "payment", label: "Payouts", hint: "Scheduled, released, receipt reviews and replies to your reports" },
             { key: "program", label: "Announcements & deadlines", hint: "New programs and closing dates" },
           ]} />
         </div>
@@ -1368,15 +1350,7 @@ export default function StudentDashboardPage() {
         <div className="p-4 sm:p-6"><SecuritySettings userId={userId} /></div>
       </Panel>
 
-      <Panel>
-        <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Account</SectionTitle></div>
-        <div className="p-4 sm:p-6 space-y-3">
-          <p className="text-sm text-muted-foreground">Your details, email, password, and your data and privacy options are on your Profile.</p>
-          <Button variant="outline" className="rounded-xl" onClick={() => setActive("profile")}>
-            <User className="mr-2 h-4 w-4" />Go to Profile
-          </Button>
-        </div>
-      </Panel>
+      <AccountSettings userId={userId} userEmail={userEmail} profile={profile} dataRequests={dataRequests} onChanged={() => refreshProfile(userId)} />
     </div>
   );
 
@@ -1405,7 +1379,7 @@ export default function StudentDashboardPage() {
     const u = new URL(link, window.location.origin);
     if (u.pathname === "/student-dashboard") {
       const sec = u.searchParams.get("section");
-      if (sec) { const key = sec === "payments" ? "disbursement" : sec; if (sidebarItems.some((i) => i.key === key)) setActive(key); }
+      if (sec) { const key = SECTION_ALIASES[sec] ?? sec; if (sidebarItems.some((i) => i.key === key)) setActive(key); }
       // Reminder links carry the program to apply for.
       const apply = u.searchParams.get("apply");
       if (apply && !currentApp && !applyBlocked) { setApplyScholarshipId(apply); setApplyDialogOpen(true); }
@@ -1434,13 +1408,11 @@ export default function StudentDashboardPage() {
       );
       case "application":   return Application(); // called, not rendered: inputs inside must keep focus
       case "documents":     return Documents();
-      case "scholarship":   return <Scholarship />;
-      case "payments":      // old deep links (?section=payments) land on the merged tab
       case "disbursement":  return <DisbursementSection payments={payments} issues={issues} disbursementStatus={currentApp?.disbursement_status} approvedTotal={approvedTotal} onChanged={refreshPayments} />;
-      case "notifications": return <Notifications />;
+      case "notifications": return Notifications(); // called, not rendered: the inbox keeps its search and selection
       case "profile":       return (
         <ProfileSection profile={profile} userId={userId} userEmail={userEmail} applications={applications} locked={locked}
-          gradeUpdates={gradeUpdates} dataRequests={dataRequests} onChanged={() => refreshProfile(userId)} />
+          gradeUpdates={gradeUpdates} onChanged={() => refreshProfile(userId)} />
       );
       case "settings":      return SettingsView(); // called, not rendered: its children keep their state
     }
@@ -1529,9 +1501,6 @@ export default function StudentDashboardPage() {
             </button>
             <div className="min-w-0">
               <h1 className="font-display font-bold text-foreground text-base leading-tight truncate">{activeItem?.label ?? "Dashboard"}</h1>
-              <p className="text-xs text-muted-foreground hidden sm:block">
-                Welcome back, {displayName.split(" ")[0] || "Student"}
-              </p>
             </div>
           </div>
           <div className="flex items-center gap-1 sm:gap-3 shrink-0">
@@ -1546,10 +1515,6 @@ export default function StudentDashboardPage() {
                   {unreadCount > 9 ? "9+" : unreadCount}
                 </span>
               )}
-            </button>
-            <button onClick={() => setActive("profile")} className="h-10 w-10 rounded-xl overflow-hidden border-2 border-accent hover:border-primary transition-colors cursor-pointer" aria-label="Profile">
-              <ProfileImage value={profile?.profile_picture_url} className="h-full w-full object-cover"
-                fallback={<div className="h-full w-full bg-accent flex items-center justify-center"><User className="h-4 w-4 text-accent-foreground" /></div>} />
             </button>
           </div>
         </header>

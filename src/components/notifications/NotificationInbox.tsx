@@ -69,6 +69,7 @@ export default function NotificationInbox({
   userId,
   unreadTotal,
   onUnreadChange,
+  categoryLabels,
 }: {
   notifications: Notification[];
   setNotifications: Dispatch<SetStateAction<Notification[]>>;
@@ -78,8 +79,11 @@ export default function NotificationInbox({
   unreadTotal: number;
   /** Called after a change that affects the unread count so the parent can refresh it. */
   onUnreadChange: () => void;
+  /** Rename categories for this audience, e.g. { payment: "Payouts" }. */
+  categoryLabels?: Record<string, string>;
 }) {
   const supabase = useMemo(() => createClient(), []);
+  const labels = useMemo(() => ({ ...CATEGORY_LABELS, ...categoryLabels }), [categoryLabels]);
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [category, setCategory] = useState("all");
   const [visible, setVisible] = useState(NOTIFICATION_PAGE);
@@ -244,7 +248,7 @@ export default function NotificationInbox({
             <SelectTrigger className="w-40 h-8 text-xs"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All categories</SelectItem>
-              {Object.entries(CATEGORY_LABELS).map(([k, label]) => <SelectItem key={k} value={k}>{label}</SelectItem>)}
+              {Object.entries(labels).map(([k, label]) => <SelectItem key={k} value={k}>{label}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
@@ -295,7 +299,7 @@ export default function NotificationInbox({
                         <div className="flex items-center gap-2 flex-wrap">
                           <p className="text-sm font-semibold">{n.title}</p>
                           {!n.read && <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-label="Unread" />}
-                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground border border-border rounded px-1.5 py-0.5">{CATEGORY_LABELS[n.category] ?? n.category}</span>
+                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground border border-border rounded px-1.5 py-0.5">{labels[n.category] ?? n.category}</span>
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{n.message}</p>
                         {n.link && !selecting && <p className="text-xs text-primary mt-1">Open →</p>}
