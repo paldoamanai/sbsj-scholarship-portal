@@ -7,7 +7,6 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -20,6 +19,8 @@ import {
 } from "lucide-react";
 import ApplicationProgressBar from "@/components/student/ApplicationProgressBar";
 import { createClient } from "@/lib/supabase/client";
+import NotificationInbox from "@/components/notifications/NotificationInbox";
+import NotificationPreferences from "@/components/notifications/NotificationPreferences";
 import type { Tables } from "@/integrations/supabase/types";
 import { profileFromUserMetadata } from "@/lib/registration-profile";
 
@@ -424,6 +425,11 @@ export default function StudentDashboardPage() {
 
   useEffect(() => { loadData(); }, []);
 
+  useEffect(() => {
+    const sec = new URLSearchParams(window.location.search).get("section");
+    if (sec && sidebarItems.some((i) => i.key === sec)) setActive(sec);
+  }, []);
+
   const loadData = async () => {
     setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
@@ -499,7 +505,7 @@ export default function StudentDashboardPage() {
         { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
         (payload) => {
           const n = payload.new as Tables<"notifications">;
-          setNotifications((prev) => [n, ...prev]);
+          setNotifications((prev) => (prev.some((x) => x.id === n.id) ? prev : [n, ...prev]));
           const notify = toast[n.type as "info" | "success" | "warning" | "error"] ?? toast.message;
           notify(n.title, { description: n.message });
         }
@@ -1000,49 +1006,7 @@ export default function StudentDashboardPage() {
 
   // ── Section: Notifications ─────────────────────────────────────────────────
   const Notifications = () => (
-    <Panel>
-      <div className="px-6 py-4 border-b border-muted flex items-center justify-between">
-        <SectionTitle>All Notifications</SectionTitle>
-        {notifications.some(n => !n.read) && (
-          <Button variant="ghost" size="sm" className="text-xs text-primary hover:text-primary hover:bg-accent rounded-lg"
-            onClick={async () => {
-              const { data: { user } } = await supabase.auth.getUser();
-              if (!user) return;
-              await supabase.from("notifications").update({ read: true }).eq("user_id", user.id).eq("read", false);
-              loadData();
-            }}>
-            Mark all read
-          </Button>
-        )}
-      </div>
-      <div className="divide-y divide-muted">
-        {notifications.length === 0 && (
-          <div className="text-center py-12">
-            <Bell className="h-8 w-8 text-border mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">No notifications yet.</p>
-          </div>
-        )}
-        {notifications.map((n) => (
-          <div key={n.id} className={`flex items-start gap-3 px-6 py-4 transition-colors ${!n.read ? "bg-accent/60" : "hover:bg-muted/50"}`}>
-            <div className={`h-9 w-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
-              n.type === "success" ? "bg-emerald-100" : n.type === "warning" ? "bg-amber-100" : "bg-accent"
-            }`}>
-              <Bell className={`h-4 w-4 ${
-                n.type === "success" ? "text-emerald-600" : n.type === "warning" ? "text-amber-600" : "text-primary"
-              }`} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-semibold text-sidebar-accent">{n.title}</p>
-                {!n.read && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{n.message}</p>
-            </div>
-            <span className="text-xs text-muted-foreground shrink-0">{new Date(n.created_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}</span>
-          </div>
-        ))}
-      </div>
-    </Panel>
+    <NotificationInbox notifications={notifications} setNotifications={setNotifications} onNavigate={goToLink} />
   );
 
   // ── Section: Profile ───────────────────────────────────────────────────────
@@ -1232,16 +1196,27 @@ export default function StudentDashboardPage() {
       <div className="px-6 py-4 border-b border-muted">
         <SectionTitle>Notification Preferences</SectionTitle>
       </div>
-      <div className="p-6 divide-y divide-muted">
-        {["Application updates", "Payment notifications", "General announcements"].map((p) => (
-          <div key={p} className="flex items-center justify-between py-4 first:pt-0 last:pb-0">
-            <p className="text-sm font-medium text-foreground">{p}</p>
-            <Switch defaultChecked className="data-[state=checked]:bg-primary" />
-          </div>
-        ))}
+      <div className="p-6">
+        <NotificationPreferences userId={userId} categories={[
+          { key: "application", label: "Application updates", hint: "Submitted, approved, rejected, waitlisted" },
+          { key: "verification", label: "Verification", hint: "Identity verification results" },
+          { key: "payment", label: "Payment notifications", hint: "Scheduled, disbursed, receipt reminders" },
+          { key: "program", label: "Announcements & deadlines", hint: "New programs and closing dates" },
+        ]} />
       </div>
     </Panel>
   );
+
+  // Notification deep links look like /student-dashboard?section=payments
+  const goToLink = (link: string) => {
+    const u = new URL(link, window.location.origin);
+    if (u.pathname === "/student-dashboard") {
+      const sec = u.searchParams.get("section");
+      if (sec && sidebarItems.some((i) => i.key === sec)) setActive(sec);
+    } else {
+      router.push(link);
+    }
+  };
 
   const renderActive = () => {
     switch (active) {

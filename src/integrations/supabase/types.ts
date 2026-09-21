@@ -91,6 +91,27 @@ export type Database = {
           },
         ]
       }
+      notification_preferences: {
+        Row: {
+          user_id: string
+          category: string
+          in_app: boolean
+          email: boolean
+        }
+        Insert: {
+          user_id: string
+          category: string
+          in_app?: boolean
+          email?: boolean
+        }
+        Update: {
+          user_id?: string
+          category?: string
+          in_app?: boolean
+          email?: boolean
+        }
+        Relationships: []
+      }
       notifications: {
         Row: {
           id: string
@@ -100,6 +121,11 @@ export type Database = {
           type: string
           read: boolean
           created_at: string
+          category: string
+          link: string | null
+          entity_type: string | null
+          entity_id: string | null
+          dedupe_key: string | null
         }
         Insert: {
           id?: string
@@ -109,6 +135,11 @@ export type Database = {
           type?: string
           read?: boolean
           created_at?: string
+          category?: string
+          link?: string | null
+          entity_type?: string | null
+          entity_id?: string | null
+          dedupe_key?: string | null
         }
         Update: {
           id?: string
@@ -118,6 +149,11 @@ export type Database = {
           type?: string
           read?: boolean
           created_at?: string
+          category?: string
+          link?: string | null
+          entity_type?: string | null
+          entity_id?: string | null
+          dedupe_key?: string | null
         }
         Relationships: []
       }

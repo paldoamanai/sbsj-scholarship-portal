@@ -29,6 +29,8 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import { createClient } from "@/lib/supabase/client";
+import NotificationInbox from "@/components/notifications/NotificationInbox";
+import NotificationPreferences from "@/components/notifications/NotificationPreferences";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
 const sidebarItems = [
@@ -271,7 +273,7 @@ export default function AdminDashboardPage() {
         { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${adminUserId}` },
         (payload) => {
           const n = payload.new as Tables<"notifications">;
-          setNotifications((prev) => [n, ...prev]);
+          setNotifications((prev) => (prev.some((x) => x.id === n.id) ? prev : [n, ...prev]));
           const notify = toast[n.type as "info" | "success" | "warning" | "error"] ?? toast.message;
           notify(n.title, { description: n.message });
         }
@@ -427,7 +429,6 @@ export default function AdminDashboardPage() {
       const { data, error } = await supabase.from("payments").insert({ ...fields, application_id: app.id, user_id: app.user_id, status: "Pending" }).select().single();
       if (error) { toast.error(error.message); return; }
       await logAudit("create_payment", "payments", data.id, null, fields);
-      await notifyUser(app.user_id, "Payment Scheduled", `A payment of ${formatPHP(amount)} for ${app.scholarships?.name || "your scholarship"} has been scheduled${fields.scheduled_date ? ` for ${fields.scheduled_date}` : ""}.`, "info");
       toast.success("Payment scheduled");
     }
     setPayDialog(null); loadData();
@@ -437,7 +438,6 @@ export default function AdminDashboardPage() {
     const { error } = await supabase.from("payments").update({ status }).eq("id", p.id);
     if (error) { toast.error(error.message); return false; }
     await logAudit(status === "Cancelled" ? "cancel_payment" : "process_payment", "payments", p.id, { status: p.status }, { status });
-    if (status === "Cancelled") await notifyUser(p.user_id, "Payment Cancelled", `Your scheduled payment of ${formatPHP(p.amount)} has been cancelled.`, "warning");
     toast.success(status === "Cancelled" ? "Payment cancelled" : "Marked as processing");
     loadData();
     return true;
@@ -474,7 +474,6 @@ export default function AdminDashboardPage() {
         return;
       }
       await logAudit("disburse_payment", "payments", payment.id, { status: payment.status }, { status: "Disbursed", method: disbMethod, reference: update.reference });
-      await notifyUser(payment.user_id, "Payment Disbursed", `Your scholarship payment of ${formatPHP(payment.amount)} has been disbursed by ${disbMethod}.`, "success");
       toast.success("Payment marked as disbursed");
       setDisbDialog(false);
       loadData();
@@ -577,15 +576,7 @@ export default function AdminDashboardPage() {
     if (error) { toast.error(error.message); return false; }
     const auditAction = { Approved: "approve_application", Rejected: "reject_application", Waitlisted: "waitlist_application", Pending: "reopen_application" }[status];
     await logAudit(auditAction, "applications", a.id, { status: a.status }, update);
-    const scholarship = a.scholarships?.name || "the scholarship";
-    const remarksText = notes ? ` Remarks: ${notes}` : "";
-    const msg = {
-      Approved: [`Your application for ${scholarship} has been approved.${remarksText}`, "success"],
-      Rejected: [`Your application for ${scholarship} was not approved this time.${remarksText}`, "error"],
-      Waitlisted: [`Your application for ${scholarship} has been placed on the waitlist. We'll notify you if a slot opens.${remarksText}`, "warning"],
-      Pending: [`Your application for ${scholarship} has been reopened for review.${remarksText}`, "info"],
-    }[status] as [string, "success" | "error" | "warning" | "info"];
-    await notifyUser(a.user_id, `Application ${status === "Pending" ? "Reopened" : status}`, msg[0], msg[1]);
+    // The student is notified by a database trigger (see migration 018).
     return true;
   };
   const submitVerification = async () => {
@@ -804,15 +795,21 @@ export default function AdminDashboardPage() {
 
   const disbStatusBadge = (status: string) => <StatusBadge status={status} />;
 
-  const notifyUser = async (
-    userId: string | null | undefined,
-    title: string,
-    message: string,
-    type: "info" | "success" | "warning" | "error" = "info"
-  ) => {
-    if (!userId) return;
-    await supabase.from("notifications").insert({ user_id: userId, title, message, type });
+  // Notification deep links look like /admin?section=disbursement
+  const goToLink = (link: string) => {
+    const u = new URL(link, window.location.origin);
+    if (u.pathname === "/admin") {
+      const sec = u.searchParams.get("section");
+      if (sec && sidebarItems.some((i) => i.key === sec)) setActiveSection(sec);
+    } else {
+      router.push(link);
+    }
   };
+
+  useEffect(() => {
+    const sec = new URLSearchParams(window.location.search).get("section");
+    if (sec && sidebarItems.some((i) => i.key === sec)) setActiveSection(sec);
+  }, []);
 
   const APP_PAGE_SIZE = 10;
   const filteredApps = applications.filter((a) => {
@@ -2016,56 +2013,16 @@ export default function AdminDashboardPage() {
           {/* NOTIFICATIONS */}
           {activeSection === "notifications" && (
             <div className="space-y-4 animate-fade-in">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-display font-bold">Notifications</h2>
-                {notifications.some(n => !n.read) && (
-                  <Button variant="ghost" size="sm" className="text-xs text-primary hover:text-primary hover:bg-accent cursor-pointer"
-                    onClick={async () => {
-                      if (!adminUserId) return;
-                      await supabase.from("notifications").update({ read: true }).eq("user_id", adminUserId).eq("read", false);
-                      loadData();
-                    }}>
-                    Mark all read
-                  </Button>
-                )}
-              </div>
+              <h2 className="text-xl font-display font-bold">Notifications</h2>
+              <NotificationInbox notifications={notifications} setNotifications={setNotifications} onNavigate={goToLink} />
               <Card>
-                <CardContent className="p-0 divide-y divide-border">
-                  {notifications.length === 0 && (
-                    <div className="text-center py-12">
-                      <Bell className="h-8 w-8 text-border mx-auto mb-2" />
-                      <p className="text-sm text-muted-foreground">No notifications yet.</p>
-                    </div>
-                  )}
-                  {notifications.map((n) => (
-                    <div key={n.id} className={`flex items-start gap-3 px-6 py-4 transition-colors ${!n.read ? "bg-accent/60" : "hover:bg-muted/50"}`}>
-                      <div className={`h-9 w-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
-                        n.type === "success" ? "bg-emerald-100" : n.type === "warning" ? "bg-amber-100" : n.type === "error" ? "bg-red-100" : "bg-accent"
-                      }`}>
-                        <Bell className={`h-4 w-4 ${
-                          n.type === "success" ? "text-emerald-600" : n.type === "warning" ? "text-amber-600" : n.type === "error" ? "text-red-600" : "text-primary"
-                        }`} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-semibold">{n.title}</p>
-                          {!n.read && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{n.message}</p>
-                      </div>
-                      <span className="text-xs text-muted-foreground shrink-0">{new Date(n.created_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}</span>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader><CardTitle className="text-base">Notification Settings</CardTitle></CardHeader>
-                <CardContent className="space-y-3">
-                  {["Auto-send application status updates", "Auto-send approval notices", "Auto-send disbursement notifications"].map((label, i) => (
-                    <div key={i} className="flex items-center justify-between border-b last:border-0 pb-3 last:pb-0">
-                      <span className="text-sm">{label}</span><Switch defaultChecked />
-                    </div>
-                  ))}
+                <CardHeader><CardTitle className="text-base">Notification Preferences</CardTitle><CardDescription>Choose what reaches you in the dashboard and by email.</CardDescription></CardHeader>
+                <CardContent>
+                  <NotificationPreferences userId={adminUserId} categories={[
+                    { key: "application", label: "Applications", hint: "New applications submitted" },
+                    { key: "verification", label: "Verification", hint: "Duplicate ID flags" },
+                    { key: "payment", label: "Payments", hint: "Receipts, method choices and unpaid approvals" },
+                  ]} />
                 </CardContent>
               </Card>
             </div>
@@ -2390,17 +2347,12 @@ export default function AdminDashboardPage() {
                 <CardHeader><CardTitle className="text-base">Notifications</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <div><p className="text-sm font-medium">Email Notifications</p><p className="text-xs text-muted-foreground">Send email for application updates</p></div>
+                    <div><p className="text-sm font-medium">Email Notifications</p><p className="text-xs text-muted-foreground">Master switch for all emails (applications, payments, reminders)</p></div>
                     <Switch defaultChecked={systemSettings.find(s => s.key === "email_notifications")?.value === true || systemSettings.find(s => s.key === "email_notifications")?.value === "true"} onCheckedChange={async (val) => {
                       await supabase.from("system_settings").update({ value: val }).eq("key", "email_notifications");
                     }} />
                   </div>
-                  <div className="flex items-center justify-between">
-                    <div><p className="text-sm font-medium">SMS Notifications</p><p className="text-xs text-muted-foreground">Send SMS for disbursement updates</p></div>
-                    <Switch defaultChecked={systemSettings.find(s => s.key === "sms_notifications")?.value === true || systemSettings.find(s => s.key === "sms_notifications")?.value === "true"} onCheckedChange={async (val) => {
-                      await supabase.from("system_settings").update({ value: val }).eq("key", "sms_notifications");
-                    }} />
-                  </div>
+                  <p className="text-xs text-muted-foreground">Emails are sent through Resend. SMS is not available. Each person can also turn categories on or off under Notifications.</p>
                 </CardContent>
               </Card>
             </div>
