@@ -3,13 +3,9 @@
 import Layout from "@/components/Layout";
 import LandingFooter from "@/components/LandingFooter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { toast } from "sonner";
+import ContactForm from "@/components/ContactForm";
 import { useSystemSettings } from "@/hooks/use-system-settings";
-import { Mail, Phone, MapPin, Send, Clock } from "lucide-react";
+import { Mail, Phone, MapPin, Clock } from "lucide-react";
 
 
 export default function ContactPage() {
@@ -20,11 +16,6 @@ export default function ContactPage() {
     { icon: MapPin, label: "Address", value: settings.contact_address },
     { icon: Clock, label: "Office Hours", value: settings.office_hours },
   ].filter((c) => c.value);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    toast.success("Message sent successfully!", { description: "We'll get back to you within 1-2 business days." });
-  };
 
   return (
     <Layout>
@@ -62,17 +53,7 @@ export default function ContactPage() {
               <CardTitle className="font-display">Send us a Message</CardTitle>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div><Label>Full Name</Label><Input required placeholder="Your name" /></div>
-                  <div><Label>Email</Label><Input type="email" required placeholder="you@email.com" /></div>
-                </div>
-                <div><Label>Subject</Label><Input required placeholder="Inquiry about..." /></div>
-                <div><Label>Message</Label><Textarea required placeholder="Your message..." rows={5} /></div>
-                <Button type="submit" className="w-full bg-gradient-primary shadow-primary cursor-pointer">
-                  Send Message <Send className="ml-2 h-4 w-4" />
-                </Button>
-              </form>
+              <ContactForm withSubject />
             </CardContent>
           </Card>
         </div>

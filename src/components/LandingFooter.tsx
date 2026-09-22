@@ -32,18 +32,20 @@ const LandingFooter = () => {
             <p className="text-sm text-white/65 leading-relaxed max-w-xs">
               Empowering the youth of San Jose, Occidental Mindoro through transparent, accessible, and merit-based scholarships.
             </p>
-            <div className="pt-1">
-              <Link
-                href="https://www.facebook.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 text-xs text-white/50 hover:text-orange-300 transition-colors"
-              >
-                <Facebook className="h-4 w-4" />
-                Follow us on Facebook
-                <ExternalLink className="h-3 w-3" />
-              </Link>
-            </div>
+            {settings.facebook_url && (
+              <div className="pt-1">
+                <Link
+                  href={settings.facebook_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-xs text-white/50 hover:text-orange-300 transition-colors"
+                >
+                  <Facebook className="h-4 w-4" />
+                  Follow us on Facebook
+                  <ExternalLink className="h-3 w-3" />
+                </Link>
+              </div>
+            )}
           </div>
 
           {/* Navigation columns */}
@@ -53,6 +55,8 @@ const LandingFooter = () => {
               <li><Link href="/" className="hover:text-orange-300 transition-colors duration-150">Home</Link></li>
               <li><Link href="/about" className="hover:text-orange-300 transition-colors duration-150">About</Link></li>
               <li><Link href="/#scholarships" className="hover:text-orange-300 transition-colors duration-150">Scholarships</Link></li>
+              <li><Link href="/#requirements" className="hover:text-orange-300 transition-colors duration-150">Requirements</Link></li>
+              <li><Link href="/#faq" className="hover:text-orange-300 transition-colors duration-150">FAQ</Link></li>
               <li><Link href="/#contact" className="hover:text-orange-300 transition-colors duration-150">Contact</Link></li>
             </ul>
           </div>
@@ -97,9 +101,13 @@ const LandingFooter = () => {
             <p className="text-xs text-white/40">
               &copy; {new Date().getFullYear()} Sangguniang Bayan ng San Jose Scholarship Portal. All rights reserved.
             </p>
-            <div className="flex items-center gap-1.5 text-xs text-orange-300 font-medium">
-              <GraduationCap className="h-3.5 w-3.5" />
-              <span>LGU SB San Jose Scholarship Portal</span>
+            <div className="flex items-center gap-4 text-xs text-white/50">
+              <Link href="/privacy" className="hover:text-orange-300 transition-colors">Privacy Policy</Link>
+              <Link href="/terms" className="hover:text-orange-300 transition-colors">Terms of Use</Link>
+              <span className="hidden sm:flex items-center gap-1.5 text-orange-300 font-medium">
+                <GraduationCap className="h-3.5 w-3.5" />
+                LGU SB San Jose
+              </span>
             </div>
           </div>
         </div>

@@ -33,7 +33,7 @@ const LABELS: Record<SettingKey, string> = {
   application_open_date: "Opening date", application_close_date: "Closing date",
   maintenance_mode: "Maintenance mode", maintenance_message: "Maintenance message",
   max_upload_mb: "Max upload size", program_name: "Program name", contact_email: "Contact email",
-  contact_phone: "Contact phone", contact_address: "Contact address", office_hours: "Office hours",
+  contact_phone: "Contact phone", contact_address: "Contact address", office_hours: "Office hours", facebook_url: "Facebook page link",
   required_documents: "Required documents", default_payment_method: "Default payment method",
   default_payment_lead_days: "Default payment lead time", renewal_enabled: "Renewals open",
   renewal_min_grade: "Renewal minimum grade", max_renewals: "Max renewals",
@@ -281,7 +281,7 @@ export default function SettingsPanel({ rows, auditLogs, onSave }: Props) {
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Public Contact Info</CardTitle><CardDescription>Shown in the site footer and on the Contact page.</CardDescription></CardHeader>
+        <CardHeader><CardTitle className="text-base">Public Contact Info</CardTitle><CardDescription>Shown in the site footer, on the Contact page, and the contact form sends messages to the email below.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           <div><Label>Program name</Label><Input maxLength={300} value={draft.program_name} onChange={(e) => set("program_name", e.target.value)} /><Err k="program_name" /></div>
           <div className="grid grid-cols-2 gap-3">
@@ -290,7 +290,8 @@ export default function SettingsPanel({ rows, auditLogs, onSave }: Props) {
           </div>
           <div><Label>Address</Label><Input value={draft.contact_address} onChange={(e) => set("contact_address", e.target.value)} /></div>
           <div><Label>Office hours</Label><Input value={draft.office_hours} onChange={(e) => set("office_hours", e.target.value)} /></div>
-          <SaveBar id="contact" keys={["program_name", "contact_email", "contact_phone", "contact_address", "office_hours"]} />
+          <div><Label>Facebook page link</Label><Input placeholder="https://www.facebook.com/your-lgu-page" value={draft.facebook_url} onChange={(e) => set("facebook_url", e.target.value)} /><Err k="facebook_url" /></div>
+          <SaveBar id="contact" keys={["program_name", "contact_email", "contact_phone", "contact_address", "office_hours", "facebook_url"]} />
         </CardContent>
       </Card>
 

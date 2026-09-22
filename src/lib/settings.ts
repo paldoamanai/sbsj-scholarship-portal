@@ -22,6 +22,7 @@ export interface AppSettings {
   contact_phone: string;
   contact_address: string;
   office_hours: string;
+  facebook_url: string;
   required_documents: string[];
   default_payment_method: PaymentMethod;
   default_payment_lead_days: number;
@@ -50,6 +51,7 @@ export const SETTING_DEFAULTS: AppSettings = {
   contact_phone: "(043) 457-0001",
   contact_address: "Sangguniang Bayan Building, San Jose, Occidental Mindoro, Philippines 5100",
   office_hours: "Monday to Friday, 8:00 AM – 5:00 PM",
+  facebook_url: "",
   required_documents: ["Valid ID", "Grades", "Certificate of Registration", "Barangay Indigency", "Birth Certificate"],
   default_payment_method: "Cash",
   default_payment_lead_days: 7,
@@ -106,6 +108,7 @@ export function parseSettings(rows: { key: string; value: Json }[] | null | unde
     contact_phone: str(raw.contact_phone, d.contact_phone),
     contact_address: str(raw.contact_address, d.contact_address),
     office_hours: str(raw.office_hours, d.office_hours),
+    facebook_url: str(raw.facebook_url, d.facebook_url),
     payment_pickup_location: str(raw.payment_pickup_location, d.payment_pickup_location),
     payment_pickup_instructions: str(raw.payment_pickup_instructions, d.payment_pickup_instructions),
   };
@@ -161,6 +164,10 @@ export function validateSetting(key: SettingKey, value: unknown): string | null 
     case "payment_pickup_location":
     case "payment_pickup_instructions":
       return String(value).length <= 500 ? null : "Keep this under 500 characters";
+    case "facebook_url": {
+      const v = String(value).trim();
+      return v === "" || /^https?:\/\/\S+$/i.test(v) ? null : "Enter a full link starting with https://";
+    }
     case "program_name":
     case "contact_email":
       return String(value).trim() ? null : "This field cannot be blank";

@@ -1,5 +1,6 @@
 "use client";
 
+import { useHistorySync } from "@/hooks/use-history-sync";
 import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -445,6 +446,7 @@ export default function StudentDashboardPage() {
   const router = useRouter();
   const supabase = createClient();
   const [active, setActive] = useState("overview");
+  useHistorySync("sbsjSection", active, setActive);
   // The realtime handler is created once, so it reads the current tab and link handler through refs.
   const activeRef = useRef("overview");
   const goToLinkRef = useRef<(link: string) => void>(() => {});

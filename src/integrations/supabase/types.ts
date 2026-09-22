@@ -749,6 +749,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      public_stats: {
+        Args: Record<string, never>
+        Returns: {
+          scholars: number
+          active_programs: number
+          total_disbursed: number
+        }[]
+      }
       scholarships_public: {
         Args: Record<string, never>
         Returns: {

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useHistorySync } from "@/hooks/use-history-sync";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Layout from "@/components/Layout";
@@ -40,6 +41,10 @@ const requiredDocuments = [
 export default function RegisterPage() {
   const router = useRouter();
   const [step, setStep] = useState(0);
+  const maxStep = useRef(0);
+  maxStep.current = Math.max(maxStep.current, step);
+  // Swipe/browser back and forward move between steps, but only to steps already completed.
+  useHistorySync("sbsjStep", step, setStep, (s) => s <= maxStep.current);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -137,7 +142,7 @@ export default function RegisterPage() {
   };
 
   const next = () => { if (validateStep()) setStep((s) => s + 1); };
-  const back = () => setStep((s) => s - 1);
+  const back = () => { if (step > 0) window.history.back(); };
 
   const handleSubmit = async () => {
     setLoading(true);

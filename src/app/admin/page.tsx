@@ -1,5 +1,6 @@
 "use client";
 
+import { useHistorySync } from "@/hooks/use-history-sync";
 import { useState, useEffect, useMemo, useRef } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -118,6 +119,7 @@ export default function AdminDashboardPage() {
   const router = useRouter();
   const supabase = createClient();
   const [activeSection, setActiveSection] = useState("overview");
+  useHistorySync("sbsjSection", activeSection, setActiveSection);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("all");
