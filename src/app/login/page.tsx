@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { LogIn, ShieldCheck, Loader2, Eye, EyeOff, GraduationCap } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { rememberCredential } from "@/lib/credentials";
 import { isAdminRole } from "@/lib/settings";
 
 export default function LoginPage() {
@@ -101,6 +102,10 @@ export default function LoginPage() {
       setLoading(false);
       return;
     }
+
+    // Credentials are confirmed valid at this point (before any 2FA step, which
+    // doesn't involve the password), so update/save them now.
+    rememberCredential(email, password);
 
     if (await needsSecondStep()) {
       setLoading(false);

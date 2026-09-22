@@ -182,6 +182,11 @@ export default function ProfileSection({ profile, userId, userEmail, application
           </div>
           <h3 className="font-display font-bold text-sidebar-accent">{displayName}</h3>
           <p className="text-sm text-muted-foreground mt-0.5 break-all">{userEmail}</p>
+          {profile?.student_id_number && (
+            <p className="text-xs font-mono text-muted-foreground mt-1 bg-muted rounded-full px-2.5 py-0.5">
+              ID: {profile.student_id_number}
+            </p>
+          )}
           <p className="text-[11px] text-muted-foreground mt-1">JPG, PNG or WebP · up to 2 MB</p>
 
           <div className="w-full mt-5 text-left">

@@ -21,6 +21,7 @@ import {
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import { rememberCredential } from "@/lib/credentials";
 import { DOC_MIME, uploadUserDocument } from "@/lib/documents";
 import { YEAR_LEVEL_OPTIONS, coursesFor, isCollege, isSHS, schoolsFor } from "@/lib/academics";
 import { availabilityInfo, peso, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
@@ -186,6 +187,9 @@ export default function RegisterPage() {
     }
 
     const userId = authData.user.id;
+    // Ask the browser to remember these credentials, in addition to the native
+    // save-password prompt the <form> submit below already triggers.
+    rememberCredential(email, password);
 
     // Email confirmation is enabled — user is not authenticated yet, so RLS-protected
     // writes would fail. The auth trigger still inserts the profile from metadata.
@@ -240,6 +244,12 @@ export default function RegisterPage() {
     setLoading(false);
   };
 
+  const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (step === 4) handleSubmit();
+    else next();
+  };
+
   const gradeWarning = academic.averageGrade && parseFloat(academic.averageGrade) < 85;
 
   const FieldError = ({ field }: { field: string }) =>
@@ -286,6 +296,16 @@ export default function RegisterPage() {
             <CardDescription>Fill in all required fields to proceed.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 px-4 pb-0 sm:px-6 sm:pb-6">
+            <form onSubmit={handleFormSubmit} noValidate>
+            {/* Kept mounted across all steps so the browser has a username+password
+                pair present in the form at final submit, even though the real fields
+                above are only rendered during Step 0. Visually hidden, not display:none,
+                so password managers still recognize and offer to save them. */}
+            <div aria-hidden="true" className="absolute h-px w-px overflow-hidden" style={{ clip: "rect(0,0,0,0)" }}>
+              <input type="email" autoComplete="username" readOnly tabIndex={-1} value={email} onChange={() => {}} />
+              <input type="password" autoComplete="new-password" readOnly tabIndex={-1} value={password} onChange={() => {}} />
+            </div>
+
             {/* STEP 0: Account */}
             {step === 0 && (
               <>
@@ -338,6 +358,11 @@ export default function RegisterPage() {
             {/* STEP 1: Personal */}
             {step === 1 && (
               <>
+                <div>
+                  <Label>Student ID Number *</Label>
+                  <Input autoComplete="off" value={form.studentIdNumber} onChange={(e) => update("studentIdNumber", e.target.value)} />
+                  <FieldError field="studentIdNumber" />
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div><Label>Last Name *</Label><Input autoComplete="family-name" value={form.lastName} onChange={(e) => update("lastName", e.target.value)} /><FieldError field="lastName" /></div>
                   <div><Label>First Name *</Label><Input autoComplete="given-name" value={form.firstName} onChange={(e) => update("firstName", e.target.value)} /><FieldError field="firstName" /></div>
@@ -434,11 +459,6 @@ export default function RegisterPage() {
                   <div><Label>Barangay *</Label><Input autoComplete="address-level3" value={form.barangay} onChange={(e) => update("barangay", e.target.value)} /><FieldError field="barangay" /></div>
                 </div>
                 <div><Label>Municipality *</Label><Input autoComplete="address-level2" value={form.municipality} onChange={(e) => update("municipality", e.target.value)} /><FieldError field="municipality" /></div>
-                <div>
-                  <Label>Student ID Number *</Label>
-                  <Input autoComplete="off" value={form.studentIdNumber} onChange={(e) => update("studentIdNumber", e.target.value)} />
-                  <FieldError field="studentIdNumber" />
-                </div>
               </>
             )}
 
@@ -740,18 +760,18 @@ export default function RegisterPage() {
             {/* Navigation */}
             <div className="sticky bottom-0 z-10 -mx-4 flex justify-between gap-3 border-t bg-card/95 px-4 pt-3 pb-safe backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:pt-4 sm:pb-0 sm:backdrop-blur-none">
               {step > 0 ? (
-                <Button variant="outline" onClick={back} className="flex-1 sm:flex-none">
+                <Button type="button" variant="outline" onClick={back} className="flex-1 sm:flex-none">
                   <ChevronLeft className="mr-1 h-4 w-4" /> Back
                 </Button>
               ) : (
                 <div />
               )}
               {step < 4 ? (
-                <Button onClick={next} className="flex-1 sm:flex-none bg-gradient-primary shadow-primary">
+                <Button type="button" onClick={next} className="flex-1 sm:flex-none bg-gradient-primary shadow-primary">
                   Next <ChevronRight className="ml-1 h-4 w-4" />
                 </Button>
               ) : (
-                <Button onClick={handleSubmit} className="flex-1 sm:flex-none bg-gradient-primary shadow-primary" disabled={loading}>
+                <Button type="submit" className="flex-1 sm:flex-none bg-gradient-primary shadow-primary" disabled={loading}>
                   {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Submit Registration
                 </Button>
@@ -764,6 +784,7 @@ export default function RegisterPage() {
                 <Link href="/login" className="text-primary hover:underline">Login here</Link>
               </p>
             )}
+            </form>
           </CardContent>
         </Card>
       </div>
