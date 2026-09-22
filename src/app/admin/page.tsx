@@ -46,8 +46,8 @@ const sidebarItems = [
   { icon: LayoutDashboard, label: "Dashboard", key: "overview" },
   { icon: FileText, label: "Applicants", key: "applications" },
   { icon: ShieldCheck, label: "Verification", key: "verification" },
-  { icon: GraduationCap, label: "Scholarships", key: "scholarships" },
   { icon: Users, label: "Students", key: "students" },
+  { icon: GraduationCap, label: "Scholarships", key: "scholarships" },
   { icon: Wallet, label: "Funds", key: "funds" },
   { icon: Banknote, label: "Disbursement", key: "disbursement" },
   { icon: BarChart3, label: "Reports", key: "reports" },
@@ -712,9 +712,15 @@ export default function AdminDashboardPage() {
 
   const STUDENT_PAGE_SIZE = 10;
   const verificationForUser = (userId: string) => verifications.find((v) => v.user_id === userId);
+  // The Students section lists scholars only: accounts with at least one approved application.
+  // Everyone else is reached through Applicants.
+  const scholars = useMemo(() => {
+    const ids = new Set(applications.filter((a) => a.status === "Approved").map((a) => a.user_id));
+    return profiles.filter((p) => ids.has(p.id));
+  }, [profiles, applications]);
   const filteredStudents = useMemo(() => {
     const q = studentSearch.trim().toLowerCase();
-    const list = profiles.filter((p) => {
+    const list = scholars.filter((p) => {
       if (studentFilter === "active" && !p.is_active) return false;
       if (studentFilter === "inactive" && p.is_active) return false;
       if (!q) return true;
@@ -724,7 +730,7 @@ export default function AdminDashboardPage() {
     return list.sort((x, y) => studentSort === "grade"
       ? (y.average_grade ?? -1) - (x.average_grade ?? -1)
       : `${x.last_name} ${x.first_name}`.localeCompare(`${y.last_name} ${y.first_name}`));
-  }, [profiles, studentSearch, studentFilter, studentSort]);
+  }, [scholars, studentSearch, studentFilter, studentSort]);
   const studentPages = Math.max(1, Math.ceil(filteredStudents.length / STUDENT_PAGE_SIZE));
   const pagedStudents = filteredStudents.slice((studentPage - 1) * STUDENT_PAGE_SIZE, studentPage * STUDENT_PAGE_SIZE);
 
@@ -1188,7 +1194,7 @@ export default function AdminDashboardPage() {
             <OverviewPanel
               applications={applications}
               scholarships={scholarships}
-              profiles={profiles}
+              profiles={scholars}
               payments={payments}
               verifications={verifications}
               auditLogs={auditLogs}
@@ -1240,7 +1246,13 @@ export default function AdminDashboardPage() {
                       const name = a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "—";
                       return (
                         <TableRow key={a.id}>
-                          <TableCell className="font-medium">{name}</TableCell>
+                          <TableCell>
+                            <p className="font-medium">{name}</p>
+                            <div className="mt-1 flex gap-1 flex-wrap empty:hidden">
+                              {gradeReviews.some((g) => g.user_id === a.user_id && g.status === "Pending") && <Badge variant="secondary" className="text-[10px]">Grade to review</Badge>}
+                              {dataReqs.some((r) => r.user_id === a.user_id && r.status === "Pending") && <Badge variant="destructive" className="text-[10px]">Deletion requested</Badge>}
+                            </div>
+                          </TableCell>
                           <TableCell>{a.scholarships?.name || "—"}</TableCell>
                           <TableCell>{a.profiles?.average_grade || "—"}</TableCell>
                           <TableCell>{new Date(a.created_at).toLocaleDateString()}</TableCell>
@@ -1287,7 +1299,13 @@ export default function AdminDashboardPage() {
                   {viewApp && (
                     <div className="space-y-4">
                       <div className="grid grid-cols-2 gap-3">
-                        <div><Label className="text-muted-foreground text-xs">Applicant</Label><p className="font-medium">{viewApp.profiles ? `${viewApp.profiles.first_name} ${viewApp.profiles.last_name}` : "—"}</p></div>
+                        <div>
+                          <Label className="text-muted-foreground text-xs">Applicant</Label>
+                          <p className="font-medium">{viewApp.profiles ? `${viewApp.profiles.first_name} ${viewApp.profiles.last_name}` : "—"}</p>
+                          {profiles.some((p) => p.id === viewApp.user_id) && (
+                            <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => setViewStudent(profiles.find((p) => p.id === viewApp.user_id) ?? null)}>View full profile</button>
+                          )}
+                        </div>
                         <div><Label className="text-muted-foreground text-xs">Email</Label><p className="font-medium">{viewApp.profiles?.email || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">School</Label><p className="font-medium">{viewApp.profiles?.school_name || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Course</Label><p className="font-medium">{viewApp.profiles?.course || "—"}</p></div>
@@ -1512,7 +1530,7 @@ export default function AdminDashboardPage() {
                   <Select value={studentFilter} onValueChange={(v) => { setStudentFilter(v); setStudentPage(1); }}>
                     <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All students</SelectItem>
+                      <SelectItem value="all">All scholars</SelectItem>
                       <SelectItem value="active">Active</SelectItem>
                       <SelectItem value="inactive">Inactive</SelectItem>
                     </SelectContent>
@@ -1533,7 +1551,7 @@ export default function AdminDashboardPage() {
                     <TableHead>Name</TableHead><TableHead>Student ID</TableHead><TableHead>School / Course</TableHead><TableHead>Year</TableHead><TableHead>Grade</TableHead><TableHead>Apps</TableHead><TableHead>Verification</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No students found</TableCell></TableRow>}
+                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">{scholars.length === 0 ? "No scholars yet. Applicants appear here once approved." : "No scholars match your search"}</TableCell></TableRow>}
                     {pagedStudents.map((p) => {
                       const ver = verificationForUser(p.id);
                       return (
@@ -1574,122 +1592,6 @@ export default function AdminDashboardPage() {
                   <Button size="sm" variant="outline" disabled={studentPage >= studentPages} onClick={() => setStudentPage((n) => n + 1)}><ChevronRight className="h-4 w-4" /></Button>
                 </div>
               </div>
-
-              <Dialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)}>
-                <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-                  <DialogHeader><DialogTitle>Student Details</DialogTitle></DialogHeader>
-                  {viewStudent && (() => {
-                    const stuApps = applications.filter((a) => a.user_id === viewStudent.id);
-                    const ver = verificationForUser(viewStudent.id);
-                    const field = (label: string, value: React.ReactNode) => (
-                      <div><Label className="text-muted-foreground text-xs">{label}</Label><div className="font-medium">{value || "—"}</div></div>
-                    );
-                    return (
-                      <div className="space-y-5">
-                        <div className="grid grid-cols-2 gap-3">
-                          {field("Name", `${viewStudent.first_name || ""} ${viewStudent.middle_name || ""} ${viewStudent.last_name || ""}`.replace(/\s+/g, " ").trim())}
-                          {field("Email", viewStudent.email)}
-                          {field("Phone", viewStudent.phone)}
-                          {field("Sex · Civil status", [viewStudent.sex, viewStudent.civil_status].filter(Boolean).join(" · "))}
-                          {field("Date of birth", viewStudent.dob)}
-                          {field("Nationality", viewStudent.nationality)}
-                          {field("Address", [viewStudent.street_address, viewStudent.barangay, viewStudent.municipality, viewStudent.province, viewStudent.zip_code].filter(Boolean).join(", "))}
-                          {field("Guardian", [viewStudent.guardian_name, viewStudent.guardian_relationship && `(${viewStudent.guardian_relationship})`].filter(Boolean).join(" "))}
-                          {field("Guardian phone", viewStudent.guardian_phone)}
-                          {field("Student ID", viewStudent.student_id_number)}
-                          {field("School", viewStudent.school_name)}
-                          {field("Course", viewStudent.course)}
-                          {field("Year Level", viewStudent.year_level)}
-                          {field("Average Grade", viewStudent.average_grade != null ? (
-                            <span className="inline-flex items-center gap-2">{viewStudent.average_grade}
-                              <Badge variant={viewStudent.grade_verified_at ? "default" : "secondary"}>{viewStudent.grade_verified_at ? `Verified${viewStudent.grade_term ? ` · ${viewStudent.grade_term}` : ""}` : "Self-declared"}</Badge>
-                            </span>) : null)}
-                          {field("Account", <Badge variant={viewStudent.is_active ? "default" : "secondary"}>{viewStudent.is_active ? "Active" : "Inactive"}</Badge>)}
-                          {field("Verification", ver ? <Badge variant={ver.verification_status === "Verified" ? "default" : ver.verification_status === "Flagged" ? "destructive" : "secondary"}>{ver.verification_status}</Badge> : null)}
-                        </div>
-                        <div>
-                          <Label className="text-xs">Applications ({stuApps.length})</Label>
-                          {stuApps.length === 0 ? <p className="text-sm text-muted-foreground">No applications</p> : (
-                            <ul className="mt-1 space-y-1">
-                              {stuApps.map((a) => (
-                                <li key={a.id} className="flex items-center justify-between rounded-md border px-3 py-1.5 text-sm">
-                                  <span>{a.scholarships?.name || "—"} <span className="text-xs text-muted-foreground">· {new Date(a.created_at).toLocaleDateString()}</span></span>
-                                  {statusBadge(a.status)}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                        {(() => {
-                          const grades = gradeReviews.filter((g) => g.user_id === viewStudent.id);
-                          if (grades.length === 0) return null;
-                          return (
-                            <div>
-                              <Label className="text-xs">Grade submissions</Label>
-                              <ul className="mt-1 space-y-1.5">
-                                {grades.map((g) => (
-                                  <li key={g.id} className="rounded-md border px-3 py-2 text-sm">
-                                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                                      <span><span className="font-medium">{g.grade}</span> · {g.term} · {new Date(g.created_at).toLocaleDateString()}</span>
-                                      <span className="flex items-center gap-1.5">
-                                        <Badge variant={g.status === "Verified" ? "default" : "secondary"} className={g.status === "Rejected" ? "text-destructive" : undefined}>{g.status}</Badge>
-                                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openStoredFile(g.file_path, "No grade report on file")}>View report</Button>
-                                        {g.status === "Pending" && (<>
-                                          <Button size="sm" className="h-7 text-xs" disabled={payBusy} onClick={() => reviewGrade(g, "Verified")}>Verify</Button>
-                                          <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={payBusy} onClick={() => { setGradeNote(""); setRejectGrade(g); }}>Reject</Button>
-                                        </>)}
-                                      </span>
-                                    </div>
-                                    {g.status === "Rejected" && g.review_note && <p className="mt-1 text-xs text-destructive">Reason: {g.review_note}</p>}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          );
-                        })()}
-                        {(() => {
-                          const reqs = dataReqs.filter((r) => r.user_id === viewStudent.id);
-                          if (reqs.length === 0) return null;
-                          return (
-                            <div>
-                              <Label className="text-xs">Privacy requests</Label>
-                              <ul className="mt-1 space-y-1.5">
-                                {reqs.map((r) => (
-                                  <li key={r.id} className={`rounded-md border px-3 py-2 text-sm ${r.status === "Pending" ? "border-warning/40 bg-warning/5" : ""}`}>
-                                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                                      <span className="font-medium">Account deletion · {r.status} <span className="font-normal text-muted-foreground">· {new Date(r.created_at).toLocaleDateString()}</span></span>
-                                      {r.status === "Pending" && (
-                                        <span className="flex gap-1.5">
-                                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setReqResponse(""); setHandleReq({ req: r, status: "Declined" }); }}>Decline</Button>
-                                          <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => { setReqResponse("Your account and data have been deleted."); setHandleReq({ req: r, status: "Completed" }); }}>Mark completed</Button>
-                                        </span>
-                                      )}
-                                    </div>
-                                    {r.reason && <p className="mt-1 text-xs text-muted-foreground">Student&apos;s reason: {r.reason}</p>}
-                                    {r.response && <p className="mt-1 text-xs"><span className="font-medium">Response: </span>{r.response}</p>}
-                                  </li>
-                                ))}
-                              </ul>
-                              {reqs.some((r) => r.status === "Pending") && (
-                                <p className="mt-1 text-xs text-muted-foreground">Deleting the account itself is done in the Supabase dashboard (Authentication → Users), then remove their files from Storage. Mark it completed afterwards.</p>
-                              )}
-                            </div>
-                          );
-                        })()}
-                        <div>
-                          <Label className="text-xs">Documents</Label>
-                          {docList(studentDocs, studentDocsLoading)}
-                        </div>
-                        <DialogFooter>
-                          <Button variant={viewStudent.is_active ? "destructive" : "default"} onClick={() => toggleStudentActive(viewStudent)}>
-                            <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
-                          </Button>
-                        </DialogFooter>
-                      </div>
-                    );
-                  })()}
-                </DialogContent>
-              </Dialog>
             </div>
           )}
 
@@ -2390,6 +2292,121 @@ export default function AdminDashboardPage() {
         </main>
       </div>
 
+      <Dialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Student Details</DialogTitle></DialogHeader>
+          {viewStudent && (() => {
+            const stuApps = applications.filter((a) => a.user_id === viewStudent.id);
+            const ver = verificationForUser(viewStudent.id);
+            const field = (label: string, value: React.ReactNode) => (
+              <div><Label className="text-muted-foreground text-xs">{label}</Label><div className="font-medium">{value || "—"}</div></div>
+            );
+            return (
+              <div className="space-y-5">
+                <div className="grid grid-cols-2 gap-3">
+                  {field("Name", `${viewStudent.first_name || ""} ${viewStudent.middle_name || ""} ${viewStudent.last_name || ""}`.replace(/\s+/g, " ").trim())}
+                  {field("Email", viewStudent.email)}
+                  {field("Phone", viewStudent.phone)}
+                  {field("Sex · Civil status", [viewStudent.sex, viewStudent.civil_status].filter(Boolean).join(" · "))}
+                  {field("Date of birth", viewStudent.dob)}
+                  {field("Nationality", viewStudent.nationality)}
+                  {field("Address", [viewStudent.street_address, viewStudent.barangay, viewStudent.municipality, viewStudent.province, viewStudent.zip_code].filter(Boolean).join(", "))}
+                  {field("Guardian", [viewStudent.guardian_name, viewStudent.guardian_relationship && `(${viewStudent.guardian_relationship})`].filter(Boolean).join(" "))}
+                  {field("Guardian phone", viewStudent.guardian_phone)}
+                  {field("Student ID", viewStudent.student_id_number)}
+                  {field("School", viewStudent.school_name)}
+                  {field("Course", viewStudent.course)}
+                  {field("Year Level", viewStudent.year_level)}
+                  {field("Average Grade", viewStudent.average_grade != null ? (
+                    <span className="inline-flex items-center gap-2">{viewStudent.average_grade}
+                      <Badge variant={viewStudent.grade_verified_at ? "default" : "secondary"}>{viewStudent.grade_verified_at ? `Verified${viewStudent.grade_term ? ` · ${viewStudent.grade_term}` : ""}` : "Self-declared"}</Badge>
+                    </span>) : null)}
+                  {field("Account", <Badge variant={viewStudent.is_active ? "default" : "secondary"}>{viewStudent.is_active ? "Active" : "Inactive"}</Badge>)}
+                  {field("Verification", ver ? <Badge variant={ver.verification_status === "Verified" ? "default" : ver.verification_status === "Flagged" ? "destructive" : "secondary"}>{ver.verification_status}</Badge> : null)}
+                </div>
+                <div>
+                  <Label className="text-xs">Applications ({stuApps.length})</Label>
+                  {stuApps.length === 0 ? <p className="text-sm text-muted-foreground">No applications</p> : (
+                    <ul className="mt-1 space-y-1">
+                      {stuApps.map((a) => (
+                        <li key={a.id} className="flex items-center justify-between rounded-md border px-3 py-1.5 text-sm">
+                          <span>{a.scholarships?.name || "—"} <span className="text-xs text-muted-foreground">· {new Date(a.created_at).toLocaleDateString()}</span></span>
+                          {statusBadge(a.status)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                {(() => {
+                  const grades = gradeReviews.filter((g) => g.user_id === viewStudent.id);
+                  if (grades.length === 0) return null;
+                  return (
+                    <div>
+                      <Label className="text-xs">Grade submissions</Label>
+                      <ul className="mt-1 space-y-1.5">
+                        {grades.map((g) => (
+                          <li key={g.id} className="rounded-md border px-3 py-2 text-sm">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span><span className="font-medium">{g.grade}</span> · {g.term} · {new Date(g.created_at).toLocaleDateString()}</span>
+                              <span className="flex items-center gap-1.5">
+                                <Badge variant={g.status === "Verified" ? "default" : "secondary"} className={g.status === "Rejected" ? "text-destructive" : undefined}>{g.status}</Badge>
+                                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openStoredFile(g.file_path, "No grade report on file")}>View report</Button>
+                                {g.status === "Pending" && (<>
+                                  <Button size="sm" className="h-7 text-xs" disabled={payBusy} onClick={() => reviewGrade(g, "Verified")}>Verify</Button>
+                                  <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={payBusy} onClick={() => { setGradeNote(""); setRejectGrade(g); }}>Reject</Button>
+                                </>)}
+                              </span>
+                            </div>
+                            {g.status === "Rejected" && g.review_note && <p className="mt-1 text-xs text-destructive">Reason: {g.review_note}</p>}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })()}
+                {(() => {
+                  const reqs = dataReqs.filter((r) => r.user_id === viewStudent.id);
+                  if (reqs.length === 0) return null;
+                  return (
+                    <div>
+                      <Label className="text-xs">Privacy requests</Label>
+                      <ul className="mt-1 space-y-1.5">
+                        {reqs.map((r) => (
+                          <li key={r.id} className={`rounded-md border px-3 py-2 text-sm ${r.status === "Pending" ? "border-warning/40 bg-warning/5" : ""}`}>
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className="font-medium">Account deletion · {r.status} <span className="font-normal text-muted-foreground">· {new Date(r.created_at).toLocaleDateString()}</span></span>
+                              {r.status === "Pending" && (
+                                <span className="flex gap-1.5">
+                                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setReqResponse(""); setHandleReq({ req: r, status: "Declined" }); }}>Decline</Button>
+                                  <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => { setReqResponse("Your account and data have been deleted."); setHandleReq({ req: r, status: "Completed" }); }}>Mark completed</Button>
+                                </span>
+                              )}
+                            </div>
+                            {r.reason && <p className="mt-1 text-xs text-muted-foreground">Student&apos;s reason: {r.reason}</p>}
+                            {r.response && <p className="mt-1 text-xs"><span className="font-medium">Response: </span>{r.response}</p>}
+                          </li>
+                        ))}
+                      </ul>
+                      {reqs.some((r) => r.status === "Pending") && (
+                        <p className="mt-1 text-xs text-muted-foreground">Deleting the account itself is done in the Supabase dashboard (Authentication → Users), then remove their files from Storage. Mark it completed afterwards.</p>
+                      )}
+                    </div>
+                  );
+                })()}
+                <div>
+                  <Label className="text-xs">Documents</Label>
+                  {docList(studentDocs, studentDocsLoading)}
+                </div>
+                <DialogFooter>
+                  <Button variant={viewStudent.is_active ? "destructive" : "default"} onClick={() => toggleStudentActive(viewStudent)}>
+                    <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
+                  </Button>
+                </DialogFooter>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
       <Dialog open={!!rejectGrade} onOpenChange={(o) => { if (!o) setRejectGrade(null); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Reject the grade submission</DialogTitle></DialogHeader>
