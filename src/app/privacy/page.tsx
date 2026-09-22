@@ -1,3 +1,4 @@
+import Link from "next/link";
 import Layout from "@/components/Layout";
 import LandingFooter from "@/components/LandingFooter";
 
@@ -66,7 +67,7 @@ export default function PrivacyPage() {
         <section>
           <h2 className="text-xl font-display font-bold text-foreground mb-3">Contact</h2>
           <p className="text-muted-foreground leading-relaxed">
-            For privacy questions or requests, use the contact form on the <a href="/#contact" className="text-primary underline">home page</a> or the Contact page.
+            For privacy questions or requests, use the contact form on the <Link href="/#contact" className="text-primary underline">home page</Link> or the Contact page.
           </p>
         </section>
       </div>

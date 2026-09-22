@@ -1,3 +1,4 @@
+import Link from "next/link";
 import Layout from "@/components/Layout";
 import LandingFooter from "@/components/LandingFooter";
 
@@ -54,7 +55,7 @@ export default function TermsPage() {
           </section>
         ))}
         <p className="text-sm text-muted-foreground">
-          See also our <a href="/privacy" className="text-primary underline">Privacy Policy</a>.
+          See also our <Link href="/privacy" className="text-primary underline">Privacy Policy</Link>.
         </p>
       </div>
       <LandingFooter />
