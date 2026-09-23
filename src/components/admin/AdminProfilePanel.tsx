@@ -16,6 +16,7 @@ import ProfileImage from "@/components/ProfileImage";
 import SecuritySettings from "@/components/account/SecuritySettings";
 import { adminProfileSchema, passwordSchema } from "@/validations/profile";
 import type { Tables, Json } from "@/integrations/supabase/types";
+import { STAFF_ROLE_LABELS, type StaffRole } from "@/lib/settings";
 
 type Props = {
   profile: Tables<"profiles"> | null;
@@ -28,7 +29,6 @@ type Props = {
 };
 
 const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
-const ROLE_LABEL: Record<string, string> = { super_admin: "Super Admin", admin: "Admin" };
 const fmt = (d?: string | null) => (d ? new Date(d).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "—");
 
 const strength = (pw: string) => {
@@ -170,7 +170,7 @@ export default function AdminProfilePanel({ profile, email, userId, role, auditL
               <p className="text-lg font-semibold truncate">{fullName}</p>
               <p className="text-sm text-muted-foreground truncate">{email}</p>
               <div className="mt-1 flex gap-2">
-                <Badge>{ROLE_LABEL[role] ?? role ?? "Admin"}</Badge>
+                <Badge>{STAFF_ROLE_LABELS[role as StaffRole] ?? role ?? "Admin"}</Badge>
                 <Badge variant={profile?.is_active === false ? "destructive" : "secondary"}>{profile?.is_active === false ? "Inactive" : "Active"}</Badge>
               </div>
             </div>

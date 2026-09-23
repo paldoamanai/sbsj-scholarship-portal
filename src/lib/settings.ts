@@ -177,4 +177,23 @@ export function validateSetting(key: SettingKey, value: unknown): string | null 
 }
 
 /** Roles that can open the admin area. */
-export const isAdminRole = (role: string | null | undefined) => role === "admin" || role === "super_admin";
+export const STAFF_ROLES = ["super_admin", "admin", "reviewer", "finance_admin"] as const;
+export type StaffRole = (typeof STAFF_ROLES)[number];
+export const isAdminRole = (role: string | null | undefined): role is StaffRole =>
+  (STAFF_ROLES as readonly string[]).includes(role ?? "");
+
+export const STAFF_ROLE_LABELS: Record<StaffRole, string> = {
+  super_admin: "Super admin",
+  admin: "Admin",
+  reviewer: "Reviewer",
+  finance_admin: "Finance",
+};
+
+/** What each staff role may change. The database enforces the same split (migration 033). */
+export type StaffArea = "review" | "finance" | "manage";
+export const staffCan = (role: string | null | undefined, area: StaffArea) => {
+  if (role === "admin" || role === "super_admin") return true;
+  if (area === "review") return role === "reviewer";
+  if (area === "finance") return role === "finance_admin";
+  return false;
+};

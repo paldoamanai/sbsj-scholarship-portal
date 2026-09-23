@@ -36,7 +36,7 @@ export async function updateSession(request: NextRequest) {
   const protectedRoutes = ["/student-dashboard", "/admin"];
   const authRoutes = ["/login", "/register"];
   // Endpoints that return or change the signed-in person's data.
-  const protectedApis = ["/api/applications", "/api/notifications", "/api/payments"];
+  const protectedApis = ["/api/applications", "/api/notifications", "/api/payments", "/api/admin"];
 
   // Two-factor: a password-only session for an account with a verified factor may not go past the
   // login page until the code is entered.

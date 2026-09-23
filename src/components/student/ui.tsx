@@ -30,6 +30,7 @@ export function StatusBadge({ status }: { status: string | null | undefined }) {
     Processing: { icon: Clock,        cls: "bg-accent text-primary border-primary/20" },
     Waitlisted: { icon: Clock,        cls: "bg-muted text-muted-foreground border-border" },
     Withdrawn:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
+    Revoked:    { icon: XCircle,      cls: "bg-red-50 text-red-700 border-red-200" },
     Cancelled:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
   };
   const m = map[status];

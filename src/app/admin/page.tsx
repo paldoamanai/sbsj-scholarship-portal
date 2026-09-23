@@ -22,6 +22,7 @@ import {
   Bell, ScrollText, Settings as SettingsIcon, Lock, Download,
   FileDown, Receipt, Loader2, User, Upload, ArrowRight,
    ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle,
+  ClipboardCheck, UserCog, Send, Undo2, Ban, History,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -39,22 +40,29 @@ import NotificationPreferences from "@/components/notifications/NotificationPref
 import OverviewPanel from "@/components/admin/OverviewPanel";
 import AdminProfilePanel from "@/components/admin/AdminProfilePanel";
 import SettingsPanel from "@/components/admin/SettingsPanel";
-import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
+import StaffPanel from "@/components/admin/StaffPanel";
+import { Checkbox } from "@/components/ui/checkbox";
+import { parseSettings, isAdminRole, staffCan, type AppSettings, type StaffArea } from "@/lib/settings";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
-const sidebarItems = [
-  { icon: LayoutDashboard, label: "Dashboard", key: "overview" },
-  { icon: FileText, label: "Applicants", key: "applications" },
-  { icon: ShieldCheck, label: "Verification", key: "verification" },
-  { icon: Users, label: "Students", key: "students" },
-  { icon: GraduationCap, label: "Scholarships", key: "scholarships" },
-  { icon: Wallet, label: "Funds", key: "funds" },
-  { icon: Banknote, label: "Disbursement", key: "disbursement" },
-  { icon: BarChart3, label: "Reports", key: "reports" },
-  { icon: ScrollText, label: "Audit Logs", key: "audit-logs" },
-  { icon: Bell, label: "Notifications", key: "notifications" },
-  { icon: SettingsIcon, label: "Settings", key: "settings" },
-  { icon: User, label: "Profile", key: "profile" },
+// Ordered like the scholarship process: set up a program, take in and screen applicants, keep the
+// scholars, pay them, then report. `group` is the heading shown above each step in the sidebar.
+// `area` limits a section to the staff roles that work in it (see staffCan); no area = every role.
+const sidebarItems: { icon: typeof LayoutDashboard; label: string; key: string; group: string; area?: StaffArea }[] = [
+  { icon: LayoutDashboard, label: "Dashboard", key: "overview", group: "Overview" },
+  { icon: ClipboardCheck, label: "Review Queue", key: "queue", group: "Overview" },
+  { icon: GraduationCap, label: "Scholarships", key: "scholarships", group: "1 · Programs" },
+  { icon: FileText, label: "Applicants", key: "applications", group: "2 · Screening", area: "review" },
+  { icon: ShieldCheck, label: "Verification", key: "verification", group: "2 · Screening", area: "review" },
+  { icon: Users, label: "Students", key: "students", group: "3 · Scholars" },
+  { icon: Wallet, label: "Funds", key: "funds", group: "4 · Payment", area: "finance" },
+  { icon: Banknote, label: "Disbursement", key: "disbursement", group: "4 · Payment", area: "finance" },
+  { icon: BarChart3, label: "Reports", key: "reports", group: "5 · Records" },
+  { icon: ScrollText, label: "Audit Logs", key: "audit-logs", group: "5 · Records", area: "manage" },
+  { icon: Bell, label: "Notifications", key: "notifications", group: "Account & system" },
+  { icon: UserCog, label: "Staff", key: "staff", group: "Account & system", area: "manage" },
+  { icon: SettingsIcon, label: "Settings", key: "settings", group: "Account & system", area: "manage" },
+  { icon: User, label: "Profile", key: "profile", group: "Account & system" },
 ];
 
 const formatPHP = (n: number) => `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -71,6 +79,7 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
     Waitlisted: { icon: Clock,        cls: "bg-muted text-muted-foreground border-border" },
     Cancelled:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
     Withdrawn:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
+    Revoked:    { icon: XCircle,      cls: "bg-red-50 text-red-700 border-red-200" },
   };
   const m = map[status];
   if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{status}</span>;
@@ -169,6 +178,31 @@ export default function AdminDashboardPage() {
   const [viewStudent, setViewStudent] = useState<Tables<"profiles"> | null>(null);
   const [studentDocs, setStudentDocs] = useState<AdminDoc[]>([]);
   const [studentDocsLoading, setStudentDocsLoading] = useState(false);
+  const [appProgram, setAppProgram] = useState("all");
+  const [appTerm, setAppTerm] = useState("all");
+  const [appSort, setAppSort] = useState("newest");
+  // Applicant rows ticked for a bulk action: application ids, and "none-<profile id>" for students who haven't applied.
+  const [selectedApps, setSelectedApps] = useState<Set<string>>(new Set());
+  // Reject and revoke always ask for a reason, which the student sees.
+  const [decisionDialog, setDecisionDialog] = useState<{ ids: string[]; status: "Rejected" | "Revoked" } | null>(null);
+  const [decisionNote, setDecisionNote] = useState("");
+  const [remindDialog, setRemindDialog] = useState<string[] | null>(null);
+  const [remindMsg, setRemindMsg] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [closeCycle, setCloseCycle] = useState<Tables<"scholarships"> | null>(null);
+  const [closeNote, setCloseNote] = useState("");
+  const [reversePay, setReversePay] = useState<Tables<"payments"> | null>(null);
+  const [reverseReason, setReverseReason] = useState("");
+  const [bulkSchedule, setBulkSchedule] = useState(false);
+  const [bulkScheduleDate, setBulkScheduleDate] = useState("");
+  const [selectedPays, setSelectedPays] = useState<Set<string>>(new Set());
+  const [verifSearch, setVerifSearch] = useState("");
+  const [verifPage, setVerifPage] = useState(1);
+  const [selectedVerifs, setSelectedVerifs] = useState<Set<string>>(new Set());
+  const [queueTab, setQueueTab] = useState("");
+  const [auditExhausted, setAuditExhausted] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   const [applications, setApplications] = useState<(Tables<"applications"> & { scholarships: { name: string } | null, profiles?: Tables<"profiles"> | null })[]>([]);
   const [scholarships, setScholarships] = useState<Tables<"scholarships">[]>([]);
@@ -207,6 +241,16 @@ export default function AdminDashboardPage() {
     if (count != null) setUnreadTotal(count);
   };
   useUnreadTitle(unreadTotal);
+
+  // What this staff member may do. The database enforces the same split (migration 033).
+  const canReview = staffCan(adminRole, "review");
+  const canManage = staffCan(adminRole, "manage");
+  const canOpen = (key: string) => {
+    if (key === "scholarships:edit") return canManage;
+    if (key.startsWith("queue:")) return staffCan(adminRole, key.slice(6) as StaffArea);
+    const item = sidebarItems.find((i) => i.key === key);
+    return !!item && (!item.area || staffCan(adminRole, item.area));
+  };
 
   // Disburse dialog state
   const [disbDialog, setDisbDialog] = useState(false);
@@ -265,7 +309,7 @@ export default function AdminDashboardPage() {
     if (scholsRes.data) setScholarships(scholsRes.data);
     if (profilesRes.data) setProfiles(await withoutStaff(profilesRes.data));
     if (paymentsRes.data) setPayments(paymentsRes.data);
-    if (logsRes.data) setAuditLogs(logsRes.data);
+    if (logsRes.data) { setAuditLogs(logsRes.data); setAuditExhausted(logsRes.data.length < 1000); }
     if (verifRes.data) setVerifications(verifRes.data);
     if (settingsRes.data) setSystemSettings(settingsRes.data);
     if (adminProfRes.data) setAdminProfile(adminProfRes.data);
@@ -403,7 +447,7 @@ export default function AdminDashboardPage() {
                 {d.size != null && `${d.size < 1048576 ? `${Math.max(1, Math.round(d.size / 1024))} KB` : `${(d.size / 1048576).toFixed(1)} MB`} · `}
                 {new Date(d.uploadedAt).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}
               </span>
-              <span className="flex gap-1.5">
+              <span className={`flex gap-1.5 ${canReview ? "" : "hidden"}`}>
                 {d.status !== "Verified" && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={reviewingDoc} onClick={() => reviewDocument(d, "Verified")}>Verify</Button>}
                 {d.status !== "Rejected" && <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={reviewingDoc} onClick={() => { setRejectNote(""); setRejectDoc(d); }}>Reject</Button>}
                 {d.status !== "Pending" && <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={reviewingDoc} onClick={() => reviewDocument(d, "Pending")}>Reset</Button>}
@@ -441,12 +485,19 @@ export default function AdminDashboardPage() {
   const committedFor = (sch: Tables<"scholarships">) =>
     applications.filter((a) => a.scholarship_id === sch.id && a.status === "Approved")
       .reduce((t, a) => t + Number(a.amount_approved ?? sch.amount ?? 0), 0);
-  // Default payment amount for an application: its approved award, else the program's award.
-  const awardFor = (appId: string) => {
-    const a = applications.find((x) => x.id === appId);
-    const v = Number(a?.amount_approved ?? scholarships.find((x) => x.id === a?.scholarship_id)?.amount ?? 0);
-    return v > 0 ? v : "";
+  // An application's award: its approved amount, else the program's award (0 = none set).
+  const awardOf = (a: { amount_approved: number | null; scholarship_id: string | null } | undefined) =>
+    Number(a?.amount_approved ?? scholarships.find((x) => x.id === a?.scholarship_id)?.amount ?? 0);
+  // Scheduled or paid so far; cancelled payments don't count.
+  const liveTotal = (appId: string) =>
+    payments.filter((p) => p.application_id === appId && p.status !== "Cancelled").reduce((t, p) => t + Number(p.amount || 0), 0);
+  // What's left of the award to schedule (instalments), or null when the award has no amount.
+  const remainingFor = (appId: string) => {
+    const award = awardOf(applications.find((x) => x.id === appId));
+    return award > 0 ? Math.max(Math.round((award - liveTotal(appId)) * 100) / 100, 0) : null;
   };
+  // Default amount for a new payment: the rest of the award.
+  const awardFor = (appId: string) => { const left = remainingFor(appId); return left ? left : ""; };
   const applicantCount = (schId: string) => applications.filter((a) => a.scholarship_id === schId).length;
   const filteredScholarships = scholarships.filter((sch) => {
     const q = schSearch.trim().toLowerCase();
@@ -487,14 +538,10 @@ export default function AdminDashboardPage() {
     if (editing) {
       const { error } = await supabase.from("scholarships").update(payload).eq("id", editing.id);
       if (error) { toast.error(error.message); return; }
-      // Log every field that can change, not just a few.
-      const before = Object.fromEntries(Object.keys(payload).map((k) => [k, editing[k as keyof typeof editing] ?? null]));
-      await logAudit("update_scholarship", "scholarships", editing.id, before as Json, payload as unknown as Json);
       toast.success("Scholarship updated");
     } else {
-      const { data, error } = await supabase.from("scholarships").insert(payload).select().single();
+      const { error } = await supabase.from("scholarships").insert(payload);
       if (error) { toast.error(error.message); return; }
-      await logAudit("create_scholarship", "scholarships", data.id, null, payload as unknown as Json);
       toast.success("Scholarship added");
     }
     setSchDialog(null); loadData();
@@ -507,9 +554,8 @@ export default function AdminDashboardPage() {
       amount: sch.amount, total_budget: sch.total_budget, slots: sch.slots, min_grade: sch.min_grade,
       year_levels: sch.year_levels, municipality: sch.municipality, open_date: null, deadline: null, is_active: false,
     };
-    const { data, error } = await supabase.from("scholarships").insert(copy).select().single();
+    const { error } = await supabase.from("scholarships").insert(copy);
     if (error) { toast.error(error.message); return; }
-    await logAudit("duplicate_scholarship", "scholarships", data.id, { source: sch.id } as Json, copy as unknown as Json);
     toast.success(`Created "${copy.name}"`, { description: "It's disabled and has no dates yet. Edit it to set them and enable it." });
     loadData();
   };
@@ -517,7 +563,6 @@ export default function AdminDashboardPage() {
   const toggleScholarship = async (sch: Tables<"scholarships">) => {
     const { error } = await supabase.from("scholarships").update({ is_active: !sch.is_active }).eq("id", sch.id);
     if (error) { toast.error(error.message); return; }
-    await logAudit(sch.is_active ? "disable_scholarship" : "enable_scholarship", "scholarships", sch.id, { is_active: sch.is_active }, { is_active: !sch.is_active });
     toast.success(`${sch.name} ${sch.is_active ? "disabled" : "enabled"}`); loadData();
   };
 
@@ -530,9 +575,19 @@ export default function AdminDashboardPage() {
       });
       return;
     }
-    await logAudit("delete_scholarship", "scholarships", deleteSch.id, { name: deleteSch.name }, null);
     toast.success("Scholarship deleted");
     setDeleteSch(null); loadData();
+  };
+
+  // End of cycle: disable the program and reject whoever is still pending or waitlisted.
+  const confirmCloseCycle = async () => {
+    if (!closeCycle) return;
+    setBulkBusy(true);
+    const { data, error } = await supabase.rpc("close_scholarship_cycle", { _id: closeCycle.id, _note: closeNote.trim() || null });
+    setBulkBusy(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`${closeCycle.name} closed`, { description: `${data ?? 0} remaining application${data === 1 ? "" : "s"} rejected and notified.` });
+    setCloseCycle(null); setCloseNote(""); loadData();
   };
 
   // ── Disbursement management ──
@@ -572,14 +627,12 @@ export default function AdminDashboardPage() {
     if (payDialog && payDialog !== "new") {
       const { error } = await supabase.from("payments").update(fields).eq("id", payDialog.id);
       if (error) { toast.error(error.message); return; }
-      await logAudit("update_payment", "payments", payDialog.id, { amount: payDialog.amount, method: payDialog.method, reference: payDialog.reference, scheduled_date: payDialog.scheduled_date }, fields);
       toast.success("Payment updated");
     } else {
       const app = applications.find((a) => a.id === payAppId);
       if (!app) { toast.error("Select an approved applicant"); return; }
-      const { data, error } = await supabase.from("payments").insert({ ...fields, application_id: app.id, user_id: app.user_id, status: "Pending" }).select().single();
+      const { error } = await supabase.from("payments").insert({ ...fields, application_id: app.id, user_id: app.user_id, status: "Pending" });
       if (error) { toast.error(error.message); return; }
-      await logAudit("create_payment", "payments", data.id, null, fields);
       toast.success("Payment scheduled");
     }
     setPayDialog(null); loadData();
@@ -589,10 +642,55 @@ export default function AdminDashboardPage() {
     const cancel_reason = status === "Cancelled" ? reason?.trim() || null : null;
     const { error } = await supabase.from("payments").update(status === "Cancelled" ? { status, cancel_reason } : { status }).eq("id", p.id);
     if (error) { toast.error(error.message); return false; }
-    await logAudit(status === "Cancelled" ? "cancel_payment" : "process_payment", "payments", p.id, { status: p.status }, { status, ...(cancel_reason ? { cancel_reason } : {}) });
     toast.success(status === "Cancelled" ? "Payment cancelled" : "Marked as processing");
     loadData();
     return true;
+  };
+
+  // Undo a disbursement recorded by mistake. The payment is kept as Cancelled with who, when and why.
+  const confirmReverse = async () => {
+    if (!reversePay) return;
+    setPayBusy(true);
+    const { error } = await supabase.rpc("reverse_disbursement", { _payment_id: reversePay.id, _reason: reverseReason });
+    setPayBusy(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Disbursement reversed");
+    setReversePay(null); setReverseReason(""); loadData();
+  };
+
+  // Schedule the remaining balance of every awaiting award at once.
+  const scheduleAllAwaiting = async (scheduled: string) => {
+    setBulkBusy(true);
+    let ok = 0;
+    const failures: string[] = [];
+    for (const a of fundData.awaiting) {
+      const amount = remainingFor(a.id);
+      if (!amount) { failures.push(`${personName(a.profiles)}: no award amount set`); continue; }
+      const { error } = await supabase.from("payments").insert({
+        application_id: a.id, user_id: a.user_id, amount, status: "Pending",
+        method: parseSettings(systemSettings).default_payment_method, scheduled_date: scheduled || null,
+      });
+      if (error) failures.push(`${personName(a.profiles)}: ${error.message}`); else ok++;
+    }
+    setBulkBusy(false);
+    setBulkSchedule(false);
+    if (ok) toast.success(`${ok} payment${ok === 1 ? "" : "s"} scheduled`);
+    if (failures.length) toast.error(`${failures.length} not scheduled`, { description: failures.slice(0, 3).join(" · ") });
+    loadData();
+  };
+
+  const processSelectedPayments = async () => {
+    setBulkBusy(true);
+    const list = payments.filter((p) => selectedPays.has(p.id) && p.status === "Pending");
+    let ok = 0;
+    for (const p of list) {
+      const { error } = await supabase.from("payments").update({ status: "Processing" }).eq("id", p.id);
+      if (!error) ok++;
+    }
+    setBulkBusy(false);
+    setSelectedPays(new Set());
+    toast.success(`${ok} of ${list.length} marked as processing`);
+    loadData();
   };
 
   const openStoredFile = async (path: string | null, missingMsg: string) => {
@@ -674,7 +772,6 @@ export default function AdminDashboardPage() {
         toast.error(error.message);
         return;
       }
-      await logAudit("disburse_payment", "payments", payment.id, { status: payment.status }, { status: "Disbursed", method: disbMethod, reference: update.reference });
       toast.success("Payment marked as disbursed");
       setDisbDialog(false);
       loadData();
@@ -738,7 +835,6 @@ export default function AdminDashboardPage() {
     const next = !p.is_active;
     const { error } = await supabase.rpc("set_student_active", { _user_id: p.id, _active: next });
     if (error) { toast.error(error.message); return; }
-    await logAudit(next ? "activate_student" : "deactivate_student", "profiles", p.id, { is_active: p.is_active }, { is_active: next });
     toast.success(`${p.first_name || "Student"} ${next ? "activated" : "deactivated"}`);
     setViewStudent((cur) => (cur && cur.id === p.id ? { ...cur, is_active: next } : cur));
     loadData();
@@ -780,20 +876,94 @@ export default function AdminDashboardPage() {
   };
   type AppRow = typeof applications[number];
   type AppDecision = "Approved" | "Rejected" | "Waitlisted" | "Pending";
-  const decideApplication = async (a: AppRow, status: AppDecision, note?: string) => {
-    const blocker = status === "Approved" ? approveBlocker(a) : null;
-    if (blocker) {
-      toast.error("Can't approve yet", { description: blocker });
-      return false;
+  // Returns why the change failed, or null. The database notifies the student (migration 018) and
+  // writes the audit entry (migration 033).
+  const applyDecision = async (a: AppRow, status: AppDecision | "Revoked", note?: string): Promise<string | null> => {
+    if (status === "Approved") {
+      const blocker = approveBlocker(a);
+      if (blocker) return blocker;
+    }
+    if (status === "Revoked") {
+      const { error } = await supabase.rpc("revoke_application", { _id: a.id, _reason: note ?? "" });
+      return error?.message ?? null;
     }
     const notes = note !== undefined ? note.trim() || null : a.notes ?? null;
-    const update = { status, notes };
-    const { error } = await supabase.from("applications").update(update).eq("id", a.id);
-    if (error) { toast.error(error.message); return false; }
-    const auditAction = { Approved: "approve_application", Rejected: "reject_application", Waitlisted: "waitlist_application", Pending: "reopen_application" }[status];
-    await logAudit(auditAction, "applications", a.id, { status: a.status }, update);
-    // The student is notified by a database trigger (see migration 018).
+    const { error } = await supabase.from("applications").update({ status, notes }).eq("id", a.id);
+    return error?.message ?? null;
+  };
+  const decideApplication = async (a: AppRow, status: AppDecision, note?: string) => {
+    const err = await applyDecision(a, status, note);
+    if (err) { toast.error(status === "Approved" ? "Can't approve yet" : "Couldn't update the application", { description: err }); return false; }
     return true;
+  };
+  const DECISION_VERB: Record<AppDecision | "Revoked", string> = {
+    Approved: "approved", Rejected: "rejected", Waitlisted: "waitlisted", Pending: "reopened", Revoked: "revoked",
+  };
+  // One application at a time, so each gets the same checks (verification, documents, slots, budget).
+  const decideMany = async (ids: string[], status: AppDecision | "Revoked", note?: string) => {
+    setBulkBusy(true);
+    let ok = 0;
+    const failed: string[] = [];
+    for (const id of ids) {
+      const a = applications.find((x) => x.id === id);
+      if (!a) continue;
+      const err = await applyDecision(a, status, note);
+      if (err) failed.push(`${personName(a.profiles)}: ${err}`); else ok++;
+    }
+    setBulkBusy(false);
+    setSelectedApps(new Set());
+    const verb = DECISION_VERB[status];
+    if (ok) toast.success(`${ok} application${ok === 1 ? "" : "s"} ${verb}`);
+    if (failed.length) toast.error(`${failed.length} not ${verb}`, { description: failed.slice(0, 3).join(" · ") });
+    loadData();
+    return failed.length === 0;
+  };
+  const openDecision = (ids: string[], status: "Rejected" | "Revoked", note = "") => {
+    setDecisionNote(note); setDecisionDialog({ ids, status });
+  };
+  const confirmDecision = async () => {
+    if (!decisionDialog || !decisionNote.trim()) return;
+    if (await decideMany(decisionDialog.ids, decisionDialog.status, decisionNote)) {
+      setDecisionDialog(null);
+      if (viewApp && decisionDialog.ids.includes(viewApp.id)) setViewApp(null);
+    }
+  };
+
+  const DEFAULT_REMINDER = "You registered for the scholarship but haven't submitted an application yet. Upload your required documents and apply before the deadline.";
+  const openReminder = (userIds: string[]) => { setRemindMsg(DEFAULT_REMINDER); setRemindDialog(userIds); };
+  const sendReminders = async () => {
+    if (!remindDialog) return;
+    setBulkBusy(true);
+    const { data, error } = await supabase.rpc("remind_students", { _user_ids: remindDialog, _message: remindMsg });
+    setBulkBusy(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`Reminder sent to ${data ?? 0} student${data === 1 ? "" : "s"}`, { description: "Each student gets at most one reminder a day." });
+    setRemindDialog(null); setSelectedApps(new Set());
+  };
+
+  // Deletes the student's files and account on the server, then records it in the audit log.
+  const deleteAccount = async (req: Tables<"data_requests">) => {
+    setDeletingAccount(true);
+    const res = await fetch("/api/admin/delete-account", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId: req.id }),
+    }).catch(() => null);
+    const body = await res?.json().catch(() => ({})) ?? {};
+    setDeletingAccount(false);
+    if (!res?.ok) { toast.error("Account not deleted", { description: body.error ?? "Network error" }); return; }
+    toast.success("Account and files deleted", { description: `${body.filesRemoved ?? 0} file(s) removed.` });
+    setHandleReq(null); setViewStudent(null); loadData();
+  };
+
+  const loadOlderLogs = async () => {
+    const oldest = auditLogs[auditLogs.length - 1];
+    if (!oldest) return;
+    setLoadingOlder(true);
+    const { data, error } = await supabase.from("audit_logs").select("*")
+      .lt("created_at", oldest.created_at).order("created_at", { ascending: false }).limit(1000);
+    setLoadingOlder(false);
+    if (error) { toast.error(error.message); return; }
+    setAuditLogs((prev) => [...prev, ...(data ?? [])]);
+    if ((data?.length ?? 0) < 1000) setAuditExhausted(true);
   };
   const submitVerification = async () => {
     if (!verifAction) return;
@@ -806,9 +976,22 @@ export default function AdminDashboardPage() {
       notes: note ? (v.notes ? `${v.notes}\n${note}` : note) : v.notes,
     }).eq("id", v.id);
     if (error) { toast.error(error.message); return; }
-    await logAudit(`${status === "Verified" ? "verify" : status === "Flagged" ? "flag" : "clear"}_scholar`, "scholar_verifications", v.id, { status: v.verification_status }, { status, notes: note || null });
     toast.success(`Marked ${status}`);
     setVerifAction(null); setVerifNotes(""); loadData();
+  };
+  const verifySelected = async () => {
+    setBulkBusy(true);
+    const list = verifications.filter((v) => selectedVerifs.has(v.id) && v.verification_status === "Pending");
+    let ok = 0;
+    for (const v of list) {
+      const { error } = await supabase.from("scholar_verifications")
+        .update({ verification_status: "Verified", verified_by: adminUserId || null, verified_at: new Date().toISOString() }).eq("id", v.id);
+      if (!error) ok++;
+    }
+    setBulkBusy(false);
+    setSelectedVerifs(new Set());
+    toast.success(`${ok} of ${list.length} verified`);
+    loadData();
   };
 
   const logAudit = async (action: string, entityType: string, entityId?: string, prev?: Json | null, next?: Json | null) => {
@@ -1054,6 +1237,11 @@ export default function AdminDashboardPage() {
   activeSectionRef.current = activeSection;
   goToLinkRef.current = goToLink;
 
+  // A deep link or history entry can point at a section this role can't open.
+  useEffect(() => {
+    if (!loading && !canOpen(activeSection)) setActiveSection("overview");
+  }, [loading, activeSection, adminRole]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const sec = new URLSearchParams(window.location.search).get("section");
     if (sec && sidebarItems.some((i) => i.key === sec)) setActiveSection(sec);
@@ -1093,7 +1281,52 @@ export default function AdminDashboardPage() {
     };
   }, [applications, payments, notApplied, scholars]);
 
-  const showApplicants = (status: string) => { setStatusFilter(status); setAppPage(1); setActiveSection("applications"); };
+  // ── Review queue: work waiting on staff, whoever it belongs to ──
+  const pendingDocsByStudent = useMemo(() => {
+    // Only the latest upload of each document type counts; older copies were replaced.
+    const latest = new Map<string, DocSummary>();
+    for (const d of allDocs) {
+      const k = `${d.user_id}|${d.document_type}`;
+      const cur = latest.get(k);
+      if (!cur || d.uploaded_at > cur.uploaded_at) latest.set(k, d);
+    }
+    const byStudent = new Map<string, DocSummary[]>();
+    for (const d of latest.values()) {
+      if (d.status !== "Pending" || !profiles.some((p) => p.id === d.user_id)) continue;
+      byStudent.set(d.user_id, [...(byStudent.get(d.user_id) ?? []), d]);
+    }
+    return [...byStudent.entries()]
+      .map(([userId, docs]) => ({ userId, docs, oldest: docs.reduce((m, d) => (d.uploaded_at < m ? d.uploaded_at : m), docs[0].uploaded_at) }))
+      .sort((x, y) => x.oldest.localeCompare(y.oldest));
+  }, [allDocs, profiles]);
+  const pendingGrades = gradeReviews.filter((g) => g.status === "Pending");
+  const pendingDeletions = dataReqs.filter((r) => r.status === "Pending");
+  const receiptsToReview = payments.filter((p) => p.student_receipt_at && p.receipt_review_status === "Pending");
+  const openIssues = payIssues.filter((i) => i.status === "Open");
+  const queues = ([
+    { key: "documents", label: "Documents", count: pendingDocsByStudent.length, area: "review" },
+    { key: "grades", label: "Grades", count: pendingGrades.length, area: "review" },
+    { key: "receipts", label: "Student receipts", count: receiptsToReview.length, area: "finance" },
+    { key: "problems", label: "Payment problems", count: openIssues.length, area: "finance" },
+    { key: "deletions", label: "Deletion requests", count: pendingDeletions.length, area: "manage" },
+  ] as { key: string; label: string; count: number; area: StaffArea }[]).filter((x) => staffCan(adminRole, x.area));
+  const queueTotal = queues.reduce((t, x) => t + x.count, 0);
+  const activeQueue = queues.find((x) => x.key === queueTab) ?? queues.find((x) => x.count > 0) ?? queues[0];
+  const openQueue = (key: string) => { setQueueTab(key); setActiveSection("queue"); };
+
+  // Programs with room (slots and budget) and people on the waitlist: someone can be promoted.
+  const waitlistOpenings = scholarships.flatMap((sch) => {
+    const waiting = applications.filter((a) => a.scholarship_id === sch.id && a.status === "Waitlisted").length;
+    if (!waiting) return [];
+    const free = sch.slots > 0 ? sch.slots - approvedCount(sch.id) : Infinity;
+    const budgetLeft = Number(sch.total_budget) > 0 ? Number(sch.total_budget) - committedFor(sch) : Infinity;
+    if (free <= 0 || budgetLeft < Math.max(Number(sch.amount) || 0, 0.01)) return [];
+    return [{ sch, waiting, free }];
+  });
+
+  const showApplicants = (status: string, program = "all") => {
+    setStatusFilter(status); setAppProgram(program); setAppPage(1); setSelectedApps(new Set()); setActiveSection("applications");
+  };
   // Shown on Applicant Management; the Dashboard's stat cards follow the same order.
   const pipelineStrip = (
     <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-2">
@@ -1117,18 +1350,61 @@ export default function AdminDashboardPage() {
   );
 
   type ApplicantRow = { kind: "app"; app: typeof applications[number]; at: string } | { kind: "none"; profile: Tables<"profiles">; at: string };
+  const termOf = (a: { academic_year: string | null; semester: string | null }) => [a.academic_year, a.semester].filter(Boolean).join(" · ");
+  const appTerms = [...new Set(applications.map(termOf).filter(Boolean))].sort().reverse();
   const q = appSearch.trim().toLowerCase();
+  // Students who haven't applied have no program or term, so those filters leave them out.
+  const includeNotApplied = (statusFilter === "all" || statusFilter === "not_applied") && appProgram === "all" && appTerm === "all";
+  const rowGrade = (r: ApplicantRow) => (r.kind === "app" ? r.app.average_grade ?? r.app.profiles?.average_grade : r.profile.average_grade) ?? null;
+  const rowIncome = (r: ApplicantRow) => (r.kind === "app" ? r.app.household_income : null);
   const filteredApps: ApplicantRow[] = [
-    ...(statusFilter === "all" || statusFilter === "not_applied"
+    ...(includeNotApplied
       ? notApplied
           .filter((p) => !q || `${personName(p)} ${p.email || ""}`.toLowerCase().includes(q))
           .map((p): ApplicantRow => ({ kind: "none", profile: p, at: p.created_at }))
       : []),
     ...applications
       .filter((a) => statusFilter === "all" || a.status.toLowerCase() === statusFilter)
+      .filter((a) => appProgram === "all" || a.scholarship_id === appProgram)
+      .filter((a) => appTerm === "all" || termOf(a) === appTerm)
       .filter((a) => !q || personName(a.profiles).toLowerCase().includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q))
       .map((a): ApplicantRow => ({ kind: "app", app: a, at: a.created_at })),
-  ].sort((x, y) => y.at.localeCompare(x.at));
+  ].sort((x, y) => {
+    // Ranking: highest grade first, or lowest household income first (unknowns last).
+    if (appSort === "grade") return (rowGrade(y) ?? -1) - (rowGrade(x) ?? -1);
+    if (appSort === "income") return (rowIncome(x) ?? Infinity) - (rowIncome(y) ?? Infinity);
+    return appSort === "oldest" ? x.at.localeCompare(y.at) : y.at.localeCompare(x.at);
+  });
+  const rowKey = (r: ApplicantRow) => (r.kind === "app" ? r.app.id : `none-${r.profile.id}`);
+  const selectedRows = filteredApps.filter((r) => selectedApps.has(rowKey(r)));
+  const selectedDecidable = selectedRows.flatMap((r) => (r.kind === "app" && ["Pending", "Waitlisted"].includes(r.app.status) ? [r.app] : []));
+  const selectedNotApplied = selectedRows.flatMap((r) => (r.kind === "none" ? [r.profile] : []));
+  const toggleRow = (key: string) => setSelectedApps((prev) => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
+
+  const exportApplicants = async () => {
+    const XLSX = await import("xlsx");
+    const rows = filteredApps.map((r) => {
+      const p = r.kind === "app" ? r.app.profiles : r.profile;
+      return {
+        Name: personName(p), Email: p?.email || "—", "Student ID": p?.student_id_number || "—",
+        School: (r.kind === "app" ? r.app.school_name : null) || p?.school_name || "—",
+        Course: (r.kind === "app" ? r.app.course : null) || p?.course || "—",
+        "Year Level": (r.kind === "app" ? r.app.year_level : null) || p?.year_level || "—",
+        Scholarship: r.kind === "app" ? r.app.scholarships?.name || "—" : "No application yet",
+        Term: r.kind === "app" ? termOf(r.app) || "—" : "—",
+        Type: r.kind === "app" ? (r.app.is_renewal ? "Renewal" : "New") : "—",
+        Grade: rowGrade(r) ?? "—",
+        "Household income": rowIncome(r) ?? "—",
+        "Household size": r.kind === "app" ? r.app.household_size ?? "—" : "—",
+        Status: r.kind === "app" ? r.app.status : "Not yet applied",
+        Date: new Date(r.at).toLocaleDateString(),
+      };
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Applicants");
+    XLSX.writeFile(wb, "applicants.xlsx");
+    toast.success("Excel downloaded");
+  };
   const appPages = Math.max(1, Math.ceil(filteredApps.length / APP_PAGE_SIZE));
   const currentAppPage = Math.min(appPage, appPages);
   const pagedApps = filteredApps.slice((currentAppPage - 1) * APP_PAGE_SIZE, currentAppPage * APP_PAGE_SIZE);
@@ -1186,9 +1462,15 @@ export default function AdminDashboardPage() {
 
     const recent = [...inRange].sort((x, y) => new Date(payDate(y)).getTime() - new Date(payDate(x)).getTime()).slice(0, 8);
 
-    // Approved applications that have no payment yet.
-    const paidAppIds = new Set(payments.filter((p) => p.status !== "Cancelled").map((p) => p.application_id).filter(Boolean));
-    const awaiting = applications.filter((a) => a.status === "Approved" && !paidAppIds.has(a.id));
+    // Approved awards with something left to schedule: an unscheduled balance, or (no award amount
+    // set) no payment at all yet.
+    const live = payments.filter((p) => p.status !== "Cancelled");
+    const awaiting = applications.filter((a) => {
+      if (a.status !== "Approved") return false;
+      const mine = live.filter((p) => p.application_id === a.id);
+      const award = Number(a.amount_approved ?? scholarships.find((x) => x.id === a.scholarship_id)?.amount ?? 0);
+      return award > 0 ? mine.reduce((t, p) => t + Number(p.amount || 0), 0) < award - 0.005 : mine.length === 0;
+    });
 
     return { pipeline, byProgram, byMethod, monthly, recent, awaiting, disbursedTotal };
   }, [payments, applications, scholarships, fundPeriod, fromDate, toDate]);
@@ -1209,10 +1491,15 @@ export default function AdminDashboardPage() {
           <button className="lg:hidden" onClick={() => setSidebarOpen(false)}><X className="h-5 w-5" /></button>
         </div>
         <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
-          {sidebarItems.map((item) => {
-            const unread = item.key === "notifications" ? unreadTotal : 0;
+          {sidebarItems.filter((item) => canOpen(item.key)).map((item, i, visible) => {
+            const unread = item.key === "notifications" ? unreadTotal : item.key === "queue" ? queueTotal : 0;
+            const firstOfGroup = i === 0 || visible[i - 1].group !== item.group;
             return (
-              <button key={item.key} onClick={() => { setActiveSection(item.key); setSidebarOpen(false); }}
+              <div key={item.key}>
+              {firstOfGroup && (
+                <p className={`px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80 ${i === 0 ? "" : "pt-3"}`}>{item.group}</p>
+              )}
+              <button onClick={() => { setActiveSection(item.key); setSidebarOpen(false); }}
                 className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeSection === item.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
                 <item.icon className="h-4 w-4 shrink-0" /><span className="truncate">{item.label}</span>
                 {unread > 0 && (
@@ -1221,6 +1508,7 @@ export default function AdminDashboardPage() {
                   </span>
                 )}
               </button>
+              </div>
             );
           })}
         </nav>
@@ -1268,12 +1556,158 @@ export default function AdminDashboardPage() {
               onRefresh={() => loadData(true)}
               onViewApp={setViewApp}
               onNavigate={(section, opts) => {
+                if (!canOpen(section)) return;
                 setActiveSection(section);
-                if (opts?.status !== undefined) { setStatusFilter(opts.status); setAppPage(1); }
-                if (opts?.verif !== undefined) setVerifFilter(opts.verif);
+                if (opts?.status !== undefined) { setStatusFilter(opts.status); setAppProgram("all"); setAppPage(1); }
+                if (opts?.verif !== undefined) { setVerifFilter(opts.verif); setVerifPage(1); }
               }}
+              canOpen={canOpen}
+              extraAttention={[
+                ...(pendingDocsByStudent.length ? [{ icon: FileText, tone: "text-warning", section: "queue:review", cta: "Review", go: () => openQueue("documents"),
+                  text: `${pendingDocsByStudent.length} student${pendingDocsByStudent.length === 1 ? " has" : "s have"} documents to review` }] : []),
+                ...(pendingGrades.length ? [{ icon: GraduationCap, tone: "text-warning", section: "queue:review", cta: "Review", go: () => openQueue("grades"),
+                  text: `${pendingGrades.length} grade update${pendingGrades.length === 1 ? "" : "s"} to verify` }] : []),
+                ...(receiptsToReview.length ? [{ icon: Receipt, tone: "text-warning", section: "queue:finance", cta: "Review", go: () => openQueue("receipts"),
+                  text: `${receiptsToReview.length} student receipt${receiptsToReview.length === 1 ? "" : "s"} to review` }] : []),
+                ...(openIssues.length ? [{ icon: AlertTriangle, tone: "text-destructive", section: "queue:finance", cta: "Respond", go: () => openQueue("problems"),
+                  text: `${openIssues.length} open payment problem${openIssues.length === 1 ? "" : "s"}` }] : []),
+                ...(pendingDeletions.length ? [{ icon: Trash2, tone: "text-destructive", section: "queue:manage", cta: "Handle", go: () => openQueue("deletions"),
+                  text: `${pendingDeletions.length} account deletion request${pendingDeletions.length === 1 ? "" : "s"}` }] : []),
+                ...waitlistOpenings.map(({ sch, waiting, free }) => ({ icon: Hourglass, tone: "text-primary", section: "applications", cta: "Promote",
+                  go: () => showApplicants("waitlisted", sch.id),
+                  text: `${sch.name}: ${free === Infinity ? "slots open" : `${free} slot${free === 1 ? "" : "s"} free`}, ${waiting} waitlisted` })),
+              ]}
             />
           )}
+
+          {/* REVIEW QUEUE */}
+          {activeSection === "queue" && (() => {
+            const prof = (id: string) => profiles.find((p) => p.id === id);
+            const when = (d: string) => new Date(d).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+            const empty = (cols: number, text: string) => <TableRow><TableCell colSpan={cols} className="text-center py-8 text-muted-foreground">{text}</TableCell></TableRow>;
+            const head = (cols: string[]) => (
+              <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
+                {cols.map((c, i) => <TableHead key={c} className={i === cols.length - 1 ? "text-right" : undefined}>{c}</TableHead>)}
+              </TableRow></TableHeader>
+            );
+            return (
+              <div className="space-y-4 animate-fade-in">
+                <div>
+                  <h2 className="text-xl font-display font-bold">Review Queue</h2>
+                  <p className="text-sm text-muted-foreground">Everything waiting on staff, oldest first.</p>
+                </div>
+                <div className="flex flex-wrap gap-2" role="tablist">
+                  {queues.map((x) => (
+                    <button key={x.key} type="button" role="tab" aria-selected={activeQueue?.key === x.key} onClick={() => setQueueTab(x.key)}
+                      className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer ${activeQueue?.key === x.key ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted"}`}>
+                      {x.label}
+                      <span className={`rounded-full px-1.5 text-xs font-bold ${activeQueue?.key === x.key ? "bg-white/25" : x.count ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>{x.count}</span>
+                    </button>
+                  ))}
+                </div>
+                <Card>
+                  <Table>
+                    {activeQueue?.key === "documents" && (<>
+                      {head(["Student", "Documents to review", "Waiting since", "Action"])}
+                      <TableBody>
+                        {pendingDocsByStudent.length === 0 && empty(4, "No documents waiting for review")}
+                        {pendingDocsByStudent.map((r) => {
+                          const p = prof(r.userId);
+                          const app = applications.find((a) => a.user_id === r.userId && (a.status === "Pending" || a.status === "Waitlisted"));
+                          return (
+                            <TableRow key={r.userId}>
+                              <TableCell><p className="font-medium">{personName(p)}</p><p className="text-xs text-muted-foreground">{app ? `${app.scholarships?.name || "Application"} · ${app.status}` : "No open application"}</p></TableCell>
+                              <TableCell className="text-sm">{r.docs.map((d) => d.document_type).join(", ")}</TableCell>
+                              <TableCell className="text-sm">{when(r.oldest)}</TableCell>
+                              <TableCell className="text-right"><Button size="sm" onClick={() => (app ? setViewApp(app) : p && setViewStudent(p))}>Review</Button></TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </>)}
+                    {activeQueue?.key === "grades" && (<>
+                      {head(["Student", "Grade", "Term", "Submitted", "Actions"])}
+                      <TableBody>
+                        {pendingGrades.length === 0 && empty(5, "No grade updates waiting")}
+                        {[...pendingGrades].reverse().map((g) => (
+                          <TableRow key={g.id}>
+                            <TableCell className="font-medium">{personName(prof(g.user_id))}<p className="text-xs font-normal text-muted-foreground">Current: {prof(g.user_id)?.average_grade ?? "—"}</p></TableCell>
+                            <TableCell className="font-semibold">{g.grade}</TableCell>
+                            <TableCell className="text-sm">{g.term}</TableCell>
+                            <TableCell className="text-sm">{when(g.created_at)}</TableCell>
+                            <TableCell className="text-right space-x-1 whitespace-nowrap">
+                              <Button size="sm" variant="outline" onClick={() => openStoredFile(g.file_path, "No grade report on file")}>View report</Button>
+                              <Button size="sm" disabled={payBusy} onClick={() => reviewGrade(g, "Verified")}>Verify</Button>
+                              <Button size="sm" variant="outline" className="text-destructive" disabled={payBusy} onClick={() => { setGradeNote(""); setRejectGrade(g); }}>Reject</Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </>)}
+                    {activeQueue?.key === "receipts" && (<>
+                      {head(["Student", "Payment", "Submitted", "Actions"])}
+                      <TableBody>
+                        {receiptsToReview.length === 0 && empty(4, "No student receipts waiting")}
+                        {[...receiptsToReview].sort((x, y) => (x.student_receipt_at ?? "").localeCompare(y.student_receipt_at ?? "")).map((p) => (
+                          <TableRow key={p.id}>
+                            <TableCell><p className="font-medium">{payStudent(p)}</p><p className="text-xs text-muted-foreground">{payProgram(p)}</p></TableCell>
+                            <TableCell className="text-sm">{formatPHP(Number(p.amount))} · {p.method}{p.reference ? ` · ${p.reference}` : ""}</TableCell>
+                            <TableCell className="text-sm">{p.student_receipt_at && when(p.student_receipt_at)}{!p.student_receipt_path && <p className="text-xs text-muted-foreground">Confirmed without a file</p>}</TableCell>
+                            <TableCell className="text-right space-x-1 whitespace-nowrap">
+                              {p.student_receipt_path && <Button size="sm" variant="outline" onClick={() => viewStudentReceipt(p)}>View</Button>}
+                              <Button size="sm" disabled={payBusy} onClick={() => reviewReceipt(p, "Accepted")}>Accept</Button>
+                              <Button size="sm" variant="outline" className="text-destructive" disabled={payBusy} onClick={() => { setReceiptNote(""); setRejectReceipt(p); }}>Reject</Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </>)}
+                    {activeQueue?.key === "problems" && (<>
+                      {head(["Student", "Problem", "Reported", "Action"])}
+                      <TableBody>
+                        {openIssues.length === 0 && empty(4, "No open payment problems")}
+                        {[...openIssues].reverse().map((i) => {
+                          const pay = payments.find((p) => p.id === i.payment_id);
+                          return (
+                            <TableRow key={i.id}>
+                              <TableCell><p className="font-medium">{personName(prof(i.user_id))}</p>{pay && <p className="text-xs text-muted-foreground">{formatPHP(Number(pay.amount))} · {pay.status}</p>}</TableCell>
+                              <TableCell className="text-sm max-w-[360px]"><span className="font-medium">{{ not_received: "Not received", wrong_amount: "Wrong amount", other: "Other" }[i.kind] ?? i.kind}:</span> <span className="line-clamp-2">{i.message}</span></TableCell>
+                              <TableCell className="text-sm">{when(i.created_at)}</TableCell>
+                              <TableCell className="text-right">{pay && <Button size="sm" onClick={() => { setIssueResponse(""); setIssueDialog(pay); }}>Respond</Button>}</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </>)}
+                    {activeQueue?.key === "deletions" && (<>
+                      {head(["Student", "Reason", "Requested", "Actions"])}
+                      <TableBody>
+                        {pendingDeletions.length === 0 && empty(4, "No deletion requests")}
+                        {[...pendingDeletions].reverse().map((r) => {
+                          const p = prof(r.user_id);
+                          const paid = payments.some((x) => x.user_id === r.user_id && x.status === "Disbursed");
+                          return (
+                            <TableRow key={r.id}>
+                              <TableCell><p className="font-medium">{personName(p)}</p>{paid && <p className="text-xs text-warning">Has disbursed payments (must be kept)</p>}</TableCell>
+                              <TableCell className="text-sm max-w-[320px]">{r.reason || "—"}</TableCell>
+                              <TableCell className="text-sm">{when(r.created_at)}</TableCell>
+                              <TableCell className="text-right space-x-1 whitespace-nowrap">
+                                {p && <Button size="sm" variant="ghost" onClick={() => setViewStudent(p)}>Profile</Button>}
+                                <Button size="sm" variant="outline" onClick={() => { setReqResponse(""); setHandleReq({ req: r, status: "Declined" }); }}>Decline</Button>
+                                <Button size="sm" variant="destructive" disabled={paid} title={paid ? "Disbursed payments must be kept; decline instead" : undefined}
+                                  onClick={() => { setReqResponse("Your account and data have been deleted."); setHandleReq({ req: r, status: "Completed" }); }}>Delete account…</Button>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </>)}
+                    {!activeQueue && <TableBody>{empty(1, "Nothing for your role to review")}</TableBody>}
+                  </Table>
+                </Card>
+              </div>
+            );
+          })()}
 
           {/* APPLICATIONS */}
           {activeSection === "applications" && (
@@ -1285,7 +1719,7 @@ export default function AdminDashboardPage() {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input placeholder="Search name, scholarship..." value={appSearch} onChange={(e) => { setAppSearch(e.target.value); setAppPage(1); }} className="pl-9 w-60" />
                   </div>
-                  <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setAppPage(1); }}>
+                  <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setAppPage(1); setSelectedApps(new Set()); }}>
                     <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Status</SelectItem>
@@ -1294,25 +1728,72 @@ export default function AdminDashboardPage() {
                       <SelectItem value="approved">Approved</SelectItem>
                       <SelectItem value="waitlisted">Waitlisted</SelectItem>
                       <SelectItem value="rejected">Rejected</SelectItem>
+                      <SelectItem value="revoked">Revoked</SelectItem>
                       <SelectItem value="withdrawn">Withdrawn</SelectItem>
                     </SelectContent>
                   </Select>
+                  <Select value={appProgram} onValueChange={(v) => { setAppProgram(v); setAppPage(1); setSelectedApps(new Set()); }}>
+                    <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All programs</SelectItem>
+                      {scholarships.map((sc) => <SelectItem key={sc.id} value={sc.id}>{sc.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Select value={appTerm} onValueChange={(v) => { setAppTerm(v); setAppPage(1); setSelectedApps(new Set()); }}>
+                    <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All terms</SelectItem>
+                      {appTerms.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Select value={appSort} onValueChange={(v) => { setAppSort(v); setAppPage(1); }}>
+                    <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="newest">Sort: Newest</SelectItem>
+                      <SelectItem value="oldest">Sort: Oldest</SelectItem>
+                      <SelectItem value="grade">Rank: Highest grade</SelectItem>
+                      <SelectItem value="income">Rank: Lowest income</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="outline" disabled={filteredApps.length === 0} onClick={exportApplicants}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
                 </div>
               </div>
               {pipelineStrip}
+              {selectedRows.length > 0 && (
+                <div className="sticky top-16 z-10 flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-card px-3 py-2 shadow-sm">
+                  <span className="text-sm font-medium">{selectedRows.length} selected</span>
+                  {selectedDecidable.length > 0 && (<>
+                    <Button size="sm" disabled={bulkBusy} onClick={() => decideMany(selectedDecidable.map((a) => a.id), "Approved")}><CheckCircle className="mr-1 h-4 w-4" /> Approve {selectedDecidable.length}</Button>
+                    <Button size="sm" variant="outline" disabled={bulkBusy} onClick={() => decideMany(selectedDecidable.filter((a) => a.status === "Pending").map((a) => a.id), "Waitlisted")}><Hourglass className="mr-1 h-4 w-4" /> Waitlist</Button>
+                    <Button size="sm" variant="outline" className="text-destructive" disabled={bulkBusy} onClick={() => openDecision(selectedDecidable.map((a) => a.id), "Rejected")}><XCircle className="mr-1 h-4 w-4" /> Reject</Button>
+                  </>)}
+                  {selectedNotApplied.length > 0 && (
+                    <Button size="sm" variant="outline" disabled={bulkBusy} onClick={() => openReminder(selectedNotApplied.map((p) => p.id))}><Send className="mr-1 h-4 w-4" /> Remind {selectedNotApplied.length}</Button>
+                  )}
+                  {bulkBusy && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                  <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setSelectedApps(new Set())}>Clear</Button>
+                </div>
+              )}
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
+                    <TableHead className="w-8">
+                      <Checkbox aria-label="Select all on this page" checked={pagedApps.length > 0 && pagedApps.every((r) => selectedApps.has(rowKey(r)))}
+                        onCheckedChange={(on) => setSelectedApps((prev) => { const n = new Set(prev); pagedApps.forEach((r) => (on ? n.add(rowKey(r)) : n.delete(rowKey(r)))); return n; })} />
+                    </TableHead>
                     <TableHead>Applicant</TableHead><TableHead>Scholarship</TableHead><TableHead>Grade</TableHead><TableHead>Date</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {filteredApps.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No applicants found</TableCell></TableRow>}
+                    {filteredApps.length === 0 && <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No applicants found</TableCell></TableRow>}
                     {pagedApps.map((row) => {
+                      const key = rowKey(row);
+                      const tick = <TableCell><Checkbox aria-label="Select" checked={selectedApps.has(key)} onCheckedChange={() => toggleRow(key)} /></TableCell>;
                       if (row.kind === "none") {
                         const p = row.profile;
                         const docs = docsReady(p.id);
                         return (
-                          <TableRow key={`none-${p.id}`} className="bg-amber-50/40 dark:bg-amber-950/10">
+                          <TableRow key={key} className="bg-amber-50/40 dark:bg-amber-950/10">
+                            {tick}
                             <TableCell>
                               <p className="font-medium">{personName(p)}</p>
                               <p className="text-xs text-muted-foreground">{p.email}</p>
@@ -1328,7 +1809,8 @@ export default function AdminDashboardPage() {
                                 <Clock className="h-3 w-3" />Not yet applied
                               </span>
                             </TableCell>
-                            <TableCell className="text-right">
+                            <TableCell className="text-right space-x-1">
+                              <Button size="icon" variant="ghost" title="Send a reminder" onClick={() => openReminder([p.id])}><Send className="h-4 w-4" /></Button>
                               <Button size="icon" variant="ghost" title="View profile" onClick={() => setViewStudent(p)}><Eye className="h-4 w-4" /></Button>
                             </TableCell>
                           </TableRow>
@@ -1337,7 +1819,8 @@ export default function AdminDashboardPage() {
                       const a = row.app;
                       const name = a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "—";
                       return (
-                        <TableRow key={a.id}>
+                        <TableRow key={key}>
+                          {tick}
                           <TableCell>
                             <p className="font-medium">{name}</p>
                             <div className="mt-1 flex gap-1 flex-wrap empty:hidden">
@@ -1345,14 +1828,17 @@ export default function AdminDashboardPage() {
                               {dataReqs.some((r) => r.user_id === a.user_id && r.status === "Pending") && <Badge variant="destructive" className="text-[10px]">Deletion requested</Badge>}
                             </div>
                           </TableCell>
-                          <TableCell>{a.scholarships?.name || "—"}</TableCell>
-                          <TableCell>{a.profiles?.average_grade || "—"}</TableCell>
+                          <TableCell>
+                            {a.scholarships?.name || "—"}
+                            {termOf(a) && <p className="text-xs text-muted-foreground">{termOf(a)}{a.is_renewal ? " · Renewal" : ""}</p>}
+                          </TableCell>
+                          <TableCell>{a.average_grade ?? a.profiles?.average_grade ?? "—"}</TableCell>
                           <TableCell>{new Date(a.created_at).toLocaleDateString()}</TableCell>
                           <TableCell>{statusBadge(a.status)}</TableCell>
-                          <TableCell className="text-right space-x-1">
+                          <TableCell className="text-right space-x-1 whitespace-nowrap">
                             <Button size="icon" variant="ghost" onClick={() => setViewApp(a)} title="View"><Eye className="h-4 w-4" /></Button>
                             {(a.status === "Pending" || a.status === "Waitlisted") && (<>
-                              <Button size="icon" variant="ghost" disabled={!!approveBlocker(a)} title={approveBlocker(a) ?? "Approve"} onClick={async () => {
+                              <Button size="icon" variant="ghost" disabled={!!approveBlocker(a)} title={approveBlocker(a) ?? (a.status === "Waitlisted" ? "Promote from waitlist" : "Approve")} onClick={async () => {
                                 if (await decideApplication(a, "Approved")) { toast.success(`${name} approved!`); loadData(); }
                               }}><CheckCircle className="h-4 w-4 text-success" /></Button>
                               {a.status === "Pending" && (
@@ -1360,12 +1846,13 @@ export default function AdminDashboardPage() {
                                   if (await decideApplication(a, "Waitlisted")) { toast.info(`${name} waitlisted`); loadData(); }
                                 }}><Hourglass className="h-4 w-4 text-warning" /></Button>
                               )}
-                              <Button size="icon" variant="ghost" title="Reject" onClick={async () => {
-                                if (await decideApplication(a, "Rejected")) { toast.error(`${name} rejected`); loadData(); }
-                              }}><XCircle className="h-4 w-4 text-destructive" /></Button>
+                              <Button size="icon" variant="ghost" title="Reject" onClick={() => openDecision([a.id], "Rejected")}><XCircle className="h-4 w-4 text-destructive" /></Button>
                             </>)}
-                            {a.status === "Rejected" && (
-                              <Button size="icon" variant="ghost" title="Reopen" onClick={async () => {
+                            {a.status === "Approved" && (
+                              <Button size="icon" variant="ghost" title="Revoke scholarship" onClick={() => openDecision([a.id], "Revoked")}><Ban className="h-4 w-4 text-destructive" /></Button>
+                            )}
+                            {(a.status === "Rejected" || a.status === "Revoked") && (
+                              <Button size="icon" variant="ghost" title={a.status === "Revoked" ? "Reopen for review (reinstate)" : "Reopen"} onClick={async () => {
                                 if (await decideApplication(a, "Pending")) { toast.success(`${name} reopened`); loadData(); }
                               }}><RotateCcw className="h-4 w-4" /></Button>
                             )}
@@ -1384,81 +1871,6 @@ export default function AdminDashboardPage() {
                   <Button size="sm" variant="outline" disabled={currentAppPage >= appPages} onClick={() => setAppPage(currentAppPage + 1)}><ChevronRight className="h-4 w-4" /></Button>
                 </div>
               </div>
-
-              <Dialog open={!!viewApp} onOpenChange={(open) => !open && setViewApp(null)}>
-                <DialogContent className="max-w-lg">
-                  <DialogHeader><DialogTitle>Application Details</DialogTitle></DialogHeader>
-                  {viewApp && (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <Label className="text-muted-foreground text-xs">Applicant</Label>
-                          <p className="font-medium">{viewApp.profiles ? `${viewApp.profiles.first_name} ${viewApp.profiles.last_name}` : "—"}</p>
-                          {profiles.some((p) => p.id === viewApp.user_id) && (
-                            <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => setViewStudent(profiles.find((p) => p.id === viewApp.user_id) ?? null)}>View full profile</button>
-                          )}
-                        </div>
-                        <div><Label className="text-muted-foreground text-xs">Email</Label><p className="font-medium">{viewApp.profiles?.email || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">School</Label><p className="font-medium">{viewApp.profiles?.school_name || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Course</Label><p className="font-medium">{viewApp.profiles?.course || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Year Level</Label><p className="font-medium">{viewApp.profiles?.year_level || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Grade</Label><p className="font-medium">{viewApp.profiles?.average_grade || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Scholarship</Label><p className="font-medium">{viewApp.scholarships?.name || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Status</Label><div>{statusBadge(viewApp.status)}</div></div>
-                        <div><Label className="text-muted-foreground text-xs">Type</Label><p className="font-medium">{viewApp.is_renewal ? "Renewal" : "New application"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Term</Label><p className="font-medium">{[viewApp.academic_year, viewApp.semester].filter(Boolean).join(" · ") || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Grade when applied</Label><p className="font-medium">{viewApp.average_grade ?? "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Household income</Label><p className="font-medium">{viewApp.household_income != null ? `₱${Number(viewApp.household_income).toLocaleString("en-PH")}` : "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Household size</Label><p className="font-medium">{viewApp.household_size ?? "—"}</p></div>
-                      </div>
-                      <div>
-                        <Label className="text-xs">Applicant statement</Label>
-                        <p className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/40 px-3 py-2 text-sm">{viewApp.statement || "—"}</p>
-                      </div>
-                      <div>
-                        <Label className="text-xs">Documents</Label>
-                        {docList(viewDocs, docsLoading)}
-                      </div>
-                      <div>
-                        <Label className="text-xs">Reviewer Remarks</Label>
-                        <Textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Add notes..." />
-                        {!["Pending", "Waitlisted"].includes(viewApp.status) && (
-                          <Button size="sm" variant="outline" className="mt-2" onClick={async () => {
-                            const notes = remarks.trim() || null;
-                            const { error } = await supabase.from("applications").update({ notes }).eq("id", viewApp.id);
-                            if (error) { toast.error(error.message); return; }
-                            await logAudit("update_application_remarks", "applications", viewApp.id, { notes: viewApp.notes }, { notes });
-                            toast.success("Remarks saved"); loadData();
-                          }}>Save remarks</Button>
-                        )}
-                      </div>
-                      {(viewApp.status === "Pending" || viewApp.status === "Waitlisted") && approveBlocker(viewApp) && (
-                        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Can&apos;t approve yet. {approveBlocker(viewApp)}.</p>
-                      )}
-                      {(viewApp.status === "Pending" || viewApp.status === "Waitlisted") && (
-                        <div className="flex gap-2 pt-2 flex-wrap">
-                          <Button className="flex-1" disabled={!!approveBlocker(viewApp)} title={approveBlocker(viewApp) ?? undefined} onClick={async () => {
-                            if (await decideApplication(viewApp, "Approved", remarks)) { toast.success("Approved!"); setViewApp(null); loadData(); }
-                          }}><CheckCircle className="mr-1 h-4 w-4" /> Approve</Button>
-                          {viewApp.status === "Pending" && (
-                            <Button variant="outline" className="flex-1" onClick={async () => {
-                              if (await decideApplication(viewApp, "Waitlisted", remarks)) { toast.info("Waitlisted"); setViewApp(null); loadData(); }
-                            }}><Hourglass className="mr-1 h-4 w-4" /> Waitlist</Button>
-                          )}
-                          <Button variant="destructive" className="flex-1" onClick={async () => {
-                            if (await decideApplication(viewApp, "Rejected", remarks)) { toast.error("Rejected"); setViewApp(null); loadData(); }
-                          }}><XCircle className="mr-1 h-4 w-4" /> Reject</Button>
-                        </div>
-                      )}
-                      {viewApp.status === "Rejected" && (
-                        <Button variant="outline" className="w-full" onClick={async () => {
-                          if (await decideApplication(viewApp, "Pending", remarks)) { toast.success("Reopened"); setViewApp(null); loadData(); }
-                        }}><RotateCcw className="mr-1 h-4 w-4" /> Reopen for review</Button>
-                      )}
-                    </div>
-                  )}
-                </DialogContent>
-              </Dialog>
             </div>
           )}
 
@@ -1481,9 +1893,11 @@ export default function AdminDashboardPage() {
                       <SelectItem value="inactive">Disabled</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Button className="bg-gradient-primary shadow-primary" onClick={() => { setSchActive(true); setSchYearLevels([]); setSchDialog("new"); }}>
-                    <Plus className="mr-1 h-4 w-4" /> Add Scholarship
-                  </Button>
+                  {canManage && (
+                    <Button className="bg-gradient-primary shadow-primary" onClick={() => { setSchActive(true); setSchYearLevels([]); setSchDialog("new"); }}>
+                      <Plus className="mr-1 h-4 w-4" /> Add Scholarship
+                    </Button>
+                  )}
                 </div>
               </div>
 
@@ -1586,19 +2000,35 @@ export default function AdminDashboardPage() {
                             {sch.slots > 0 ? `${Math.max(sch.slots - approved, 0)} left of ${sch.slots}` : "Unlimited"}
                             {full && <Badge variant="secondary" className="ml-2">Full</Badge>}
                           </TableCell>
-                          <TableCell>{applicantCount(sch.id)}</TableCell>
+                          <TableCell>
+                            {applicantCount(sch.id)}
+                            {(() => {
+                              const waiting = applications.filter((a) => a.scholarship_id === sch.id && a.status === "Waitlisted").length;
+                              const pending = applications.filter((a) => a.scholarship_id === sch.id && a.status === "Pending").length;
+                              return (pending > 0 || waiting > 0) && (
+                                <button type="button" className="block text-xs text-muted-foreground hover:underline" onClick={() => canReview && showApplicants(waiting && !pending ? "waitlisted" : "all", sch.id)}>
+                                  {[pending && `${pending} pending`, waiting && `${waiting} waitlisted`].filter(Boolean).join(" · ")}
+                                </button>
+                              );
+                            })()}
+                          </TableCell>
                           <TableCell className="text-sm">
                             {sch.open_date && <p className="text-xs text-muted-foreground">Opens {sch.open_date}</p>}
                             <p>{sch.deadline || "—"}{isClosed(sch) && <Badge variant="secondary" className="ml-2">Closed</Badge>}</p>
                           </TableCell>
                           <TableCell><Badge variant={sch.is_active ? "default" : "secondary"}>{sch.is_active ? "Active" : "Disabled"}</Badge></TableCell>
-                          <TableCell className="text-right space-x-1">
-                            <Button size="icon" variant="ghost" title="Edit" onClick={() => { setSchActive(sch.is_active); setSchYearLevels(sch.year_levels ?? []); setSchDialog(sch); }}><Pencil className="h-4 w-4" /></Button>
-                            <Button size="icon" variant="ghost" title="Duplicate for next year" onClick={() => duplicateScholarship(sch)}><Copy className="h-4 w-4" /></Button>
-                            <Button size="icon" variant="ghost" title={sch.is_active ? "Disable" : "Enable"} onClick={() => toggleScholarship(sch)}>
-                              {sch.is_active ? <XCircle className="h-4 w-4" /> : <CheckCircle className="h-4 w-4 text-success" />}
-                            </Button>
-                            <Button size="icon" variant="ghost" title="Delete" onClick={() => setDeleteSch(sch)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                          <TableCell className="text-right space-x-1 whitespace-nowrap">
+                            {canManage && (<>
+                              <Button size="icon" variant="ghost" title="Edit" onClick={() => { setSchActive(sch.is_active); setSchYearLevels(sch.year_levels ?? []); setSchDialog(sch); }}><Pencil className="h-4 w-4" /></Button>
+                              <Button size="icon" variant="ghost" title="Duplicate for next year" onClick={() => duplicateScholarship(sch)}><Copy className="h-4 w-4" /></Button>
+                              <Button size="icon" variant="ghost" title={sch.is_active ? "Disable" : "Enable"} onClick={() => toggleScholarship(sch)}>
+                                {sch.is_active ? <XCircle className="h-4 w-4" /> : <CheckCircle className="h-4 w-4 text-success" />}
+                              </Button>
+                              {(sch.is_active || applications.some((a) => a.scholarship_id === sch.id && (a.status === "Pending" || a.status === "Waitlisted"))) && (
+                                <Button size="icon" variant="ghost" title="Close cycle: disable and reject remaining applicants" onClick={() => { setCloseNote(""); setCloseCycle(sch); }}><Ban className="h-4 w-4 text-warning" /></Button>
+                              )}
+                              <Button size="icon" variant="ghost" title="Delete" onClick={() => setDeleteSch(sch)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                            </>)}
                           </TableCell>
                         </TableRow>
                       );
@@ -1664,9 +2094,11 @@ export default function AdminDashboardPage() {
                           <TableCell><Badge variant={p.is_active ? "default" : "secondary"}>{p.is_active ? "Active" : "Inactive"}</Badge></TableCell>
                           <TableCell className="text-right space-x-1">
                             <Button size="icon" variant="ghost" title="View" onClick={() => setViewStudent(p)}><Eye className="h-4 w-4" /></Button>
-                            <Button size="icon" variant="ghost" title={p.is_active ? "Deactivate" : "Activate"} onClick={() => toggleStudentActive(p)}>
-                              <Power className={`h-4 w-4 ${p.is_active ? "text-destructive" : "text-success"}`} />
-                            </Button>
+                            {canManage && (
+                              <Button size="icon" variant="ghost" title={p.is_active ? "Deactivate" : "Activate"} onClick={() => toggleStudentActive(p)}>
+                                <Power className={`h-4 w-4 ${p.is_active ? "text-destructive" : "text-success"}`} />
+                              </Button>
+                            )}
                           </TableCell>
                         </TableRow>
                       );
@@ -1787,14 +2219,23 @@ export default function AdminDashboardPage() {
                 <Card>
                   <CardHeader className="flex-row items-center justify-between space-y-0">
                     <CardTitle className="text-base">Awaiting Payment ({fundData.awaiting.length})</CardTitle>
-                    <Button size="sm" variant="ghost" onClick={() => { openNewPayment(); setActiveSection("disbursement"); }}>Schedule payment <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>
+                    <div className="flex gap-1">
+                      {fundData.awaiting.length > 1 && <Button size="sm" variant="outline" onClick={() => { setBulkScheduleDate(defaultScheduledDate); setBulkSchedule(true); }}>Schedule all</Button>}
+                      <Button size="sm" variant="ghost" onClick={() => { openNewPayment(); setActiveSection("disbursement"); }}>Schedule payment <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>
+                    </div>
                   </CardHeader>
                   <Table>
                     <TableBody>
                       {fundData.awaiting.length === 0 && <TableRow><TableCell className="text-center py-6 text-muted-foreground">All approved scholars have a payment</TableCell></TableRow>}
                       {fundData.awaiting.map((a) => (
                         <TableRow key={a.id}>
-                          <TableCell><p className="font-medium">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"}</p><p className="text-xs text-muted-foreground">{a.scholarships?.name || "—"}</p></TableCell>
+                          <TableCell>
+                            <p className="font-medium">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {a.scholarships?.name || "—"}
+                              {remainingFor(a.id) != null && ` · ${formatPHP(remainingFor(a.id) ?? 0)} left of ${formatPHP(awardOf(a))}`}
+                            </p>
+                          </TableCell>
                           <TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => { openNewPayment(a.id); setActiveSection("disbursement"); }}>Schedule payment</Button></TableCell>
                         </TableRow>
                       ))}
@@ -1827,27 +2268,46 @@ export default function AdminDashboardPage() {
                       <SelectItem value="issues">Open problems</SelectItem>
                     </SelectContent>
                   </Select>
+                  {selectedPays.size > 0 && (
+                    <Button variant="outline" disabled={bulkBusy} onClick={processSelectedPayments}>
+                      {bulkBusy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Mark {selectedPays.size} processing
+                    </Button>
+                  )}
                   <Button className="bg-gradient-primary shadow-primary" onClick={() => openNewPayment()}><Plus className="mr-1 h-4 w-4" /> Schedule Payment</Button>
                 </div>
               </div>
               <Card className="border-warning/30 bg-warning/5">
                 <CardContent className="py-3 flex items-start gap-2">
                   <Lock className="h-4 w-4 text-warning mt-0.5" />
-                  <p className="text-sm text-muted-foreground">Payments can only be created for <strong className="text-foreground">approved</strong> applications. Disbursed payments are <strong className="text-foreground">locked</strong>. Only the methods enabled in <strong className="text-foreground">Settings</strong> ({enabledMethods.join(" and ")}) are accepted, and a receipt upload is required before marking as disbursed.</p>
+                  <p className="text-sm text-muted-foreground">Payments can only be created for <strong className="text-foreground">approved</strong> applications, and an award can be split into instalments up to its approved amount. Disbursed payments are <strong className="text-foreground">locked</strong> (a mistake can be reversed, with a reason). Only the methods enabled in <strong className="text-foreground">Settings</strong> ({enabledMethods.join(" and ")}) are accepted, and a receipt upload is required before marking as disbursed.</p>
                 </CardContent>
               </Card>
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
+                    <TableHead className="w-8">
+                      <Checkbox aria-label="Select all pending on this page"
+                        checked={pagedPayments.some((p) => p.status === "Pending") && pagedPayments.filter((p) => p.status === "Pending").every((p) => selectedPays.has(p.id))}
+                        onCheckedChange={(on) => setSelectedPays((prev) => { const n = new Set(prev); pagedPayments.filter((p) => p.status === "Pending").forEach((p) => (on ? n.add(p.id) : n.delete(p.id))); return n; })} />
+                    </TableHead>
                     <TableHead>Student</TableHead><TableHead>Reference / Cheque No.</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Student prefers</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead>Student receipt</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {pagedPayments.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No payments found</TableCell></TableRow>}
+                    {pagedPayments.length === 0 && <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">No payments found</TableCell></TableRow>}
                     {pagedPayments.map((p) => {
                       const open = p.status === "Pending" || p.status === "Processing";
                       return (
                         <TableRow key={p.id} className={p.status === "Cancelled" ? "opacity-60" : undefined}>
-                          <TableCell><p className="font-medium">{payStudent(p)}</p><p className="text-xs text-muted-foreground">{payProgram(p)}</p></TableCell>
+                          <TableCell>
+                            {p.status === "Pending" && (
+                              <Checkbox aria-label="Select" checked={selectedPays.has(p.id)}
+                                onCheckedChange={() => setSelectedPays((prev) => { const n = new Set(prev); if (n.has(p.id)) n.delete(p.id); else n.add(p.id); return n; })} />
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <p className="font-medium">{payStudent(p)}</p><p className="text-xs text-muted-foreground">{payProgram(p)}</p>
+                            {p.reversed_at && <p className="text-xs text-destructive" title={p.cancel_reason ?? undefined}>Reversed {new Date(p.reversed_at).toLocaleDateString()}</p>}
+                          </TableCell>
                           <TableCell className="font-mono text-xs">{p.reference || "—"}</TableCell>
                           <TableCell className="font-medium">{formatPHP(p.amount)}</TableCell>
                           <TableCell>
@@ -1902,8 +2362,11 @@ export default function AdminDashboardPage() {
                                 <AlertTriangle className={`h-4 w-4 ${openIssueFor(p.id) ? "text-warning" : "text-muted-foreground"}`} />
                               </Button>
                             )}
-                            {p.status === "Disbursed" && (
+                            {(p.status === "Disbursed" || p.reversed_at) && (
                               <Button size="icon" variant="ghost" title="View receipt" onClick={() => viewReceipt(p)}><Receipt className="h-4 w-4" /></Button>
+                            )}
+                            {p.status === "Disbursed" && (
+                              <Button size="icon" variant="ghost" title="Reverse disbursement (mistake)" onClick={() => { setReverseReason(""); setReversePay(p); }}><Undo2 className="h-4 w-4 text-destructive" /></Button>
                             )}
                             {open && (<>
                               <Button size="icon" variant="ghost" title="Edit" onClick={() => { setPayMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash"); setPayDialog(p); }}><Pencil className="h-4 w-4" /></Button>
@@ -1962,6 +2425,18 @@ export default function AdminDashboardPage() {
                             </Select>
                           </div>
                         )}
+                        {(() => {
+                          const appId = cur?.application_id ?? payAppId;
+                          const a = applications.find((x) => x.id === appId);
+                          const award = awardOf(a);
+                          if (!a || award <= 0) return null;
+                          const scheduled = liveTotal(a.id) - (cur && cur.status !== "Cancelled" ? Number(cur.amount) : 0);
+                          return (
+                            <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                              Award {formatPHP(award)} · already scheduled or paid {formatPHP(scheduled)} · <span className="font-medium text-foreground">{formatPHP(Math.max(award - scheduled, 0))} left</span>. Split it into instalments by scheduling several payments.
+                            </p>
+                          );
+                        })()}
                         <div className="grid grid-cols-2 gap-4">
                           <div><Label>Amount (₱) *</Label><Input key={cur?.id ?? payAppId} name="amount" type="number" min={0.01} step="0.01" required defaultValue={cur?.amount ?? awardFor(payAppId)} /></div>
                           <div><Label>Scheduled date</Label><Input name="scheduled_date" type="date" defaultValue={cur ? (cur.scheduled_date ?? "") : defaultScheduledDate} /></div>
@@ -2173,45 +2648,86 @@ export default function AdminDashboardPage() {
 
           {/* SETTINGS */}
           {/* SCHOLAR VERIFICATION */}
-          {activeSection === "verification" && (
+          {activeSection === "verification" && (() => {
+            const VERIF_PAGE_SIZE = 15;
+            const nameOf = (v: Tables<"scholar_verifications">) => personName(profiles.find((p) => p.id === v.user_id));
+            const vq = verifSearch.trim().toLowerCase();
+            const list = verifications.filter((v) => (verifFilter === "all" || v.verification_status === verifFilter)
+              && (!vq || `${nameOf(v)} ${v.student_id_number || ""} ${applications.find((x) => x.id === v.application_id)?.scholarships?.name || ""}`.toLowerCase().includes(vq)));
+            const pages = Math.max(1, Math.ceil(list.length / VERIF_PAGE_SIZE));
+            const page = Math.min(verifPage, pages);
+            const paged = list.slice((page - 1) * VERIF_PAGE_SIZE, page * VERIF_PAGE_SIZE);
+            const pendingOnPage = paged.filter((v) => v.verification_status === "Pending");
+            return (
             <div className="space-y-4 animate-fade-in">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center justify-between flex-wrap gap-3">
                 <h2 className="text-xl font-display font-bold">Scholar Verification</h2>
-                <Select value={verifFilter} onValueChange={setVerifFilter}>
-                  <SelectTrigger className="w-40"><SelectValue placeholder="Status" /></SelectTrigger>
-                  <SelectContent>
-                    {["all", "Pending", "Flagged", "Verified", "Cleared"].map((st) => (
-                      <SelectItem key={st} value={st}>{st === "all" ? "All statuses" : st}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex gap-2 flex-wrap">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input placeholder="Name, student ID, program..." value={verifSearch} onChange={(e) => { setVerifSearch(e.target.value); setVerifPage(1); }} className="pl-9 w-60" />
+                  </div>
+                  <Select value={verifFilter} onValueChange={(v) => { setVerifFilter(v); setVerifPage(1); setSelectedVerifs(new Set()); }}>
+                    <SelectTrigger className="w-40"><SelectValue placeholder="Status" /></SelectTrigger>
+                    <SelectContent>
+                      {["all", "Pending", "Flagged", "Verified", "Cleared"].map((st) => (
+                        <SelectItem key={st} value={st}>{st === "all" ? "All statuses" : st}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {selectedVerifs.size > 0 && (
+                    <Button disabled={bulkBusy} onClick={verifySelected}>{bulkBusy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Verify {selectedVerifs.size} selected</Button>
+                  )}
+                </div>
               </div>
               <Card className="border-warning/30 bg-warning/5">
                 <CardContent className="py-3 flex items-start gap-2">
                   <ShieldCheck className="h-4 w-4 text-warning mt-0.5" />
-                  <p className="text-sm text-muted-foreground">Applications can only be approved once their verification is Verified or Cleared. Flagged records share a student ID with another applicant.</p>
+                  <p className="text-sm text-muted-foreground">Applications can only be approved once their verification is Verified or Cleared. Flagged records share a student ID with another applicant. A verified record can be flagged again if something turns up later.</p>
                 </CardContent>
               </Card>
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
+                    <TableHead className="w-8">
+                      <Checkbox aria-label="Select all pending on this page" disabled={pendingOnPage.length === 0}
+                        checked={pendingOnPage.length > 0 && pendingOnPage.every((v) => selectedVerifs.has(v.id))}
+                        onCheckedChange={(on) => setSelectedVerifs((prev) => { const n = new Set(prev); pendingOnPage.forEach((v) => (on ? n.add(v.id) : n.delete(v.id))); return n; })} />
+                    </TableHead>
                     <TableHead>Applicant</TableHead><TableHead>Application</TableHead><TableHead>Student ID</TableHead><TableHead>Existing Scholarship</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {verifications.filter((v) => verifFilter === "all" || v.verification_status === verifFilter).length === 0 && (
-                      <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No verification records</TableCell></TableRow>
+                    {paged.length === 0 && (
+                      <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No verification records</TableCell></TableRow>
                     )}
-                    {verifications.filter((v) => verifFilter === "all" || v.verification_status === verifFilter).map((v) => {
-                      const prof = profiles.find(p => p.id === v.user_id);
-                      const name = prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() : "Unknown";
+                    {paged.map((v) => {
+                      const prof = profiles.find((p) => p.id === v.user_id);
                       const app = applications.find((a) => a.id === v.application_id);
                       return (
                         <TableRow key={v.id}>
-                          <TableCell className="font-medium">{name}</TableCell>
-                          <TableCell className="text-xs">
-                            {app ? (<><div>{app.scholarships?.name || "—"}</div><div className="text-muted-foreground">{app.status}</div></>) : "—"}
+                          <TableCell>
+                            {v.verification_status === "Pending" && (
+                              <Checkbox aria-label="Select" checked={selectedVerifs.has(v.id)}
+                                onCheckedChange={() => setSelectedVerifs((prev) => { const n = new Set(prev); if (n.has(v.id)) n.delete(v.id); else n.add(v.id); return n; })} />
+                            )}
                           </TableCell>
-                          <TableCell className="font-mono text-xs">{v.student_id_number || "—"}</TableCell>
+                          <TableCell className="font-medium">
+                            {prof ? <button type="button" className="hover:underline text-left" onClick={() => setViewStudent(prof)}>{nameOf(v)}</button> : "Unknown"}
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            {app ? (
+                              <button type="button" className="text-left hover:underline" onClick={() => setViewApp(app)}>
+                                <div>{app.scholarships?.name || "—"}</div><div className="text-muted-foreground">{app.status}</div>
+                              </button>
+                            ) : "—"}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">
+                            {v.student_id_number || "—"}
+                            {v.student_id_number && (() => {
+                              const dupes = verifications.filter((x) => x.id !== v.id && x.student_id_number === v.student_id_number && x.user_id !== v.user_id).length;
+                              return dupes > 0 && <p className="font-sans text-destructive">Also used by {dupes} other applicant{dupes === 1 ? "" : "s"}</p>;
+                            })()}
+                          </TableCell>
                           <TableCell>
                             {v.has_existing_scholarship ? <Badge variant="destructive">Yes</Badge> : <Badge variant="outline">No</Badge>}
                             {v.existing_scholarship_details && <p className="text-xs text-muted-foreground mt-1 max-w-[200px]">{v.existing_scholarship_details}</p>}
@@ -2222,11 +2738,11 @@ export default function AdminDashboardPage() {
                             </Badge>
                             {v.notes && <p className="text-xs text-muted-foreground mt-1 max-w-[200px] whitespace-pre-line">{v.notes}</p>}
                           </TableCell>
-                          <TableCell className="text-right space-x-1">
+                          <TableCell className="text-right space-x-1 whitespace-nowrap">
                             {(v.verification_status === "Pending" || v.verification_status === "Flagged") && (
                               <Button size="sm" onClick={() => { setVerifNotes(""); setVerifAction({ v, status: "Verified" }); }}>Verify</Button>
                             )}
-                            {v.verification_status === "Pending" && (
+                            {v.verification_status !== "Flagged" && (
                               <Button size="sm" variant="destructive" onClick={() => { setVerifNotes(""); setVerifAction({ v, status: "Flagged" }); }}>Flag</Button>
                             )}
                             {v.verification_status === "Flagged" && (
@@ -2239,21 +2755,33 @@ export default function AdminDashboardPage() {
                   </TableBody>
                 </Table>
               </Card>
+              <div className="flex items-center justify-between text-sm text-muted-foreground">
+                <span>{list.length === 0 ? "0 records" : `Showing ${(page - 1) * VERIF_PAGE_SIZE + 1}–${Math.min(page * VERIF_PAGE_SIZE, list.length)} of ${list.length}`}</span>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setVerifPage(page - 1)}><ChevronLeft className="h-4 w-4" /></Button>
+                  <span>Page {page} of {pages}</span>
+                  <Button size="sm" variant="outline" disabled={page >= pages} onClick={() => setVerifPage(page + 1)}><ChevronRight className="h-4 w-4" /></Button>
+                </div>
+              </div>
               <Dialog open={!!verifAction} onOpenChange={(o) => { if (!o) setVerifAction(null); }}>
                 <DialogContent>
                   <DialogHeader><DialogTitle>Mark as {verifAction?.status}</DialogTitle></DialogHeader>
+                  {verifAction?.status === "Flagged" && verifAction.v.verification_status !== "Pending" && (
+                    <p className="text-sm text-muted-foreground">Flagging a {verifAction.v.verification_status.toLowerCase()} record doesn&apos;t change an approval already made, but blocks new approvals until it is cleared.</p>
+                  )}
                   <div className="space-y-2">
-                    <Label className="text-xs">Notes (optional)</Label>
+                    <Label className="text-xs">Notes {verifAction?.status === "Flagged" ? "(what was found)" : "(optional)"}</Label>
                     <Textarea value={verifNotes} onChange={(e) => setVerifNotes(e.target.value)} placeholder="Reason or evidence..." />
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setVerifAction(null)}>Cancel</Button>
-                    <Button onClick={submitVerification}>Confirm</Button>
+                    <Button disabled={verifAction?.status === "Flagged" && !verifNotes.trim()} onClick={submitVerification}>Confirm</Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
             </div>
-          )}
+            );
+          })()}
 
           {/* AUDIT LOGS */}
           {activeSection === "audit-logs" && (
@@ -2311,7 +2839,15 @@ export default function AdminDashboardPage() {
                 </Table>
               </Card>
               <div className="flex items-center justify-between text-sm text-muted-foreground">
-                <span>{filteredLogs.length === 0 ? "0 entries" : `Showing ${(currentAuditPage - 1) * AUDIT_PAGE_SIZE + 1}–${Math.min(currentAuditPage * AUDIT_PAGE_SIZE, filteredLogs.length)} of ${filteredLogs.length}`}{auditLogs.length >= 1000 && " (latest 1,000 loaded)"}</span>
+                <span className="flex items-center gap-2 flex-wrap">
+                  {filteredLogs.length === 0 ? "0 entries" : `Showing ${(currentAuditPage - 1) * AUDIT_PAGE_SIZE + 1}–${Math.min(currentAuditPage * AUDIT_PAGE_SIZE, filteredLogs.length)} of ${filteredLogs.length}`}
+                  {!auditExhausted && (<>
+                    <span>(latest {auditLogs.length.toLocaleString()} loaded)</span>
+                    <Button size="sm" variant="outline" disabled={loadingOlder} onClick={loadOlderLogs}>
+                      {loadingOlder && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}Load older entries
+                    </Button>
+                  </>)}
+                </span>
                 <div className="flex items-center gap-2">
                   <Button size="sm" variant="outline" disabled={currentAuditPage <= 1} onClick={() => setAuditPage(currentAuditPage - 1)}><ChevronLeft className="h-4 w-4" /></Button>
                   <span>Page {currentAuditPage} of {auditPages}</span>
@@ -2374,6 +2910,9 @@ export default function AdminDashboardPage() {
             />
           )}
 
+          {/* STAFF */}
+          {activeSection === "staff" && <StaffPanel userId={adminUserId} role={adminRole} onChanged={() => loadData(true)} />}
+
           {/* SETTINGS */}
           {activeSection === "settings" && (
             <div className="space-y-4">
@@ -2384,6 +2923,100 @@ export default function AdminDashboardPage() {
         </main>
       </div>
 
+      <Dialog open={!!viewApp} onOpenChange={(open) => !open && setViewApp(null)}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Application Details</DialogTitle></DialogHeader>
+          {viewApp && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-muted-foreground text-xs">Applicant</Label>
+                  <p className="font-medium">{viewApp.profiles ? `${viewApp.profiles.first_name} ${viewApp.profiles.last_name}` : "—"}</p>
+                  {profiles.some((p) => p.id === viewApp.user_id) && (
+                    <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => setViewStudent(profiles.find((p) => p.id === viewApp.user_id) ?? null)}>View full profile</button>
+                  )}
+                </div>
+                <div><Label className="text-muted-foreground text-xs">Email</Label><p className="font-medium">{viewApp.profiles?.email || "—"}</p></div>
+                <div><Label className="text-muted-foreground text-xs">School</Label><p className="font-medium">{viewApp.profiles?.school_name || "—"}</p></div>
+                <div><Label className="text-muted-foreground text-xs">Course</Label><p className="font-medium">{viewApp.profiles?.course || "—"}</p></div>
+                <div><Label className="text-muted-foreground text-xs">Year Level</Label><p className="font-medium">{viewApp.profiles?.year_level || "—"}</p></div>
+                <div><Label className="text-muted-foreground text-xs">Grade</Label><p className="font-medium">{viewApp.profiles?.average_grade || "—"}</p></div>
+                <div><Label className="text-muted-foreground text-xs">Scholarship</Label><p className="font-medium">{viewApp.scholarships?.name || "—"}</p></div>
+                <div><Label className="text-muted-foreground text-xs">Status</Label><div>{statusBadge(viewApp.status)}</div></div>
+                <div><Label className="text-muted-foreground text-xs">Type</Label><p className="font-medium">{viewApp.is_renewal ? "Renewal" : "New application"}</p></div>
+                <div><Label className="text-muted-foreground text-xs">Term</Label><p className="font-medium">{[viewApp.academic_year, viewApp.semester].filter(Boolean).join(" · ") || "—"}</p></div>
+                <div><Label className="text-muted-foreground text-xs">Grade when applied</Label><p className="font-medium">{viewApp.average_grade ?? "—"}</p></div>
+                <div><Label className="text-muted-foreground text-xs">Household income</Label><p className="font-medium">{viewApp.household_income != null ? `₱${Number(viewApp.household_income).toLocaleString("en-PH")}` : "—"}</p></div>
+                <div><Label className="text-muted-foreground text-xs">Household size</Label><p className="font-medium">{viewApp.household_size ?? "—"}</p></div>
+              </div>
+              <div>
+                <Label className="text-xs">Applicant statement</Label>
+                <p className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/40 px-3 py-2 text-sm">{viewApp.statement || "—"}</p>
+              </div>
+              <div>
+                <Label className="text-xs">Documents</Label>
+                {docList(viewDocs, docsLoading)}
+              </div>
+              <div>
+                <Label className="text-xs">Reviewer Remarks</Label>
+                <Textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Add notes..." />
+                {canReview && !["Pending", "Waitlisted"].includes(viewApp.status) && (
+                  <Button size="sm" variant="outline" className="mt-2" onClick={async () => {
+                    const notes = remarks.trim() || null;
+                    const { error } = await supabase.from("applications").update({ notes }).eq("id", viewApp.id);
+                    if (error) { toast.error(error.message); return; }
+                    toast.success("Remarks saved"); loadData();
+                  }}>Save remarks</Button>
+                )}
+              </div>
+              {(viewApp.status === "Pending" || viewApp.status === "Waitlisted") && approveBlocker(viewApp) && (
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Can&apos;t approve yet. {approveBlocker(viewApp)}.</p>
+              )}
+              {canReview && (viewApp.status === "Pending" || viewApp.status === "Waitlisted") && (
+                <div className="flex gap-2 pt-2 flex-wrap">
+                  <Button className="flex-1" disabled={!!approveBlocker(viewApp)} title={approveBlocker(viewApp) ?? undefined} onClick={async () => {
+                    if (await decideApplication(viewApp, "Approved", remarks)) { toast.success("Approved!"); setViewApp(null); loadData(); }
+                  }}><CheckCircle className="mr-1 h-4 w-4" /> Approve</Button>
+                  {viewApp.status === "Pending" && (
+                    <Button variant="outline" className="flex-1" onClick={async () => {
+                      if (await decideApplication(viewApp, "Waitlisted", remarks)) { toast.info("Waitlisted"); setViewApp(null); loadData(); }
+                    }}><Hourglass className="mr-1 h-4 w-4" /> Waitlist</Button>
+                  )}
+                  <Button variant="destructive" className="flex-1" onClick={() => openDecision([viewApp.id], "Rejected", remarks)}><XCircle className="mr-1 h-4 w-4" /> Reject</Button>
+                </div>
+              )}
+              {canReview && viewApp.status === "Approved" && (
+                <Button variant="outline" className="w-full text-destructive" onClick={() => openDecision([viewApp.id], "Revoked")}><Ban className="mr-1 h-4 w-4" /> Revoke scholarship</Button>
+              )}
+              {canReview && (viewApp.status === "Rejected" || viewApp.status === "Revoked") && (
+                <Button variant="outline" className="w-full" onClick={async () => {
+                  if (await decideApplication(viewApp, "Pending", remarks)) { toast.success("Reopened"); setViewApp(null); loadData(); }
+                }}><RotateCcw className="mr-1 h-4 w-4" /> Reopen for review</Button>
+              )}
+              {(() => {
+                // Everything recorded about this application and its payments, newest first.
+                const payIds = new Set(payments.filter((p) => p.application_id === viewApp.id).map((p) => p.id));
+                const history = auditLogs.filter((l) => l.entity_id === viewApp.id || (l.entity_type === "payments" && l.entity_id && payIds.has(l.entity_id)));
+                return (
+                  <div>
+                    <Label className="text-xs flex items-center gap-1"><History className="h-3.5 w-3.5" /> History</Label>
+                    {history.length === 0 ? <p className="text-sm text-muted-foreground">Nothing recorded yet{auditExhausted ? "" : " in the loaded audit entries"}</p> : (
+                      <ol className="mt-1 space-y-1 border-l pl-3">
+                        {history.map((l) => (
+                          <li key={l.id} className="text-xs">
+                            <span className="font-medium">{l.action.replace(/_/g, " ")}</span>
+                            <span className="text-muted-foreground"> · {l.user_email || "System"} · {new Date(l.created_at).toLocaleString()}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
       <Dialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Student Details</DialogTitle></DialogHeader>
@@ -2443,7 +3076,7 @@ export default function AdminDashboardPage() {
                               <span className="flex items-center gap-1.5">
                                 <Badge variant={g.status === "Verified" ? "default" : "secondary"} className={g.status === "Rejected" ? "text-destructive" : undefined}>{g.status}</Badge>
                                 <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openStoredFile(g.file_path, "No grade report on file")}>View report</Button>
-                                {g.status === "Pending" && (<>
+                                {canReview && g.status === "Pending" && (<>
                                   <Button size="sm" className="h-7 text-xs" disabled={payBusy} onClick={() => reviewGrade(g, "Verified")}>Verify</Button>
                                   <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={payBusy} onClick={() => { setGradeNote(""); setRejectGrade(g); }}>Reject</Button>
                                 </>)}
@@ -2467,10 +3100,10 @@ export default function AdminDashboardPage() {
                           <li key={r.id} className={`rounded-md border px-3 py-2 text-sm ${r.status === "Pending" ? "border-warning/40 bg-warning/5" : ""}`}>
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <span className="font-medium">Account deletion · {r.status} <span className="font-normal text-muted-foreground">· {new Date(r.created_at).toLocaleDateString()}</span></span>
-                              {r.status === "Pending" && (
+                              {canManage && r.status === "Pending" && (
                                 <span className="flex gap-1.5">
                                   <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setReqResponse(""); setHandleReq({ req: r, status: "Declined" }); }}>Decline</Button>
-                                  <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => { setReqResponse("Your account and data have been deleted."); setHandleReq({ req: r, status: "Completed" }); }}>Mark completed</Button>
+                                  <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => { setReqResponse("Your account and data have been deleted."); setHandleReq({ req: r, status: "Completed" }); }}>Delete account…</Button>
                                 </span>
                               )}
                             </div>
@@ -2479,9 +3112,6 @@ export default function AdminDashboardPage() {
                           </li>
                         ))}
                       </ul>
-                      {reqs.some((r) => r.status === "Pending") && (
-                        <p className="mt-1 text-xs text-muted-foreground">Deleting the account itself is done in the Supabase dashboard (Authentication → Users), then remove their files from Storage. Mark it completed afterwards.</p>
-                      )}
                     </div>
                   );
                 })()}
@@ -2489,11 +3119,13 @@ export default function AdminDashboardPage() {
                   <Label className="text-xs">Documents</Label>
                   {docList(studentDocs, studentDocsLoading)}
                 </div>
-                <DialogFooter>
-                  <Button variant={viewStudent.is_active ? "destructive" : "default"} onClick={() => toggleStudentActive(viewStudent)}>
-                    <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
-                  </Button>
-                </DialogFooter>
+                {canManage && (
+                  <DialogFooter>
+                    <Button variant={viewStudent.is_active ? "destructive" : "default"} onClick={() => toggleStudentActive(viewStudent)}>
+                      <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
+                    </Button>
+                  </DialogFooter>
+                )}
               </div>
             );
           })()}
@@ -2517,17 +3149,29 @@ export default function AdminDashboardPage() {
 
       <Dialog open={!!handleReq} onOpenChange={(o) => { if (!o) setHandleReq(null); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{handleReq?.status === "Completed" ? "Complete deletion request" : "Decline deletion request"}</DialogTitle></DialogHeader>
-          <div>
-            <Label className="text-xs">Message to the student</Label>
-            <Textarea value={reqResponse} onChange={(e) => setReqResponse(e.target.value)} placeholder={handleReq?.status === "Declined" ? "Explain why, e.g. payment records must be kept for audit." : ""} />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setHandleReq(null)}>Cancel</Button>
-            <Button variant={handleReq?.status === "Declined" ? "outline" : "destructive"} disabled={payBusy || !reqResponse.trim()} onClick={respondToRequest}>
-              {handleReq?.status === "Completed" ? "Mark completed" : "Decline request"}
-            </Button>
-          </DialogFooter>
+          <DialogHeader><DialogTitle>{handleReq?.status === "Completed" ? "Delete this student's account?" : "Decline deletion request"}</DialogTitle></DialogHeader>
+          {handleReq?.status === "Completed" ? (<>
+            <p className="text-sm text-muted-foreground">
+              This permanently deletes the account, profile, applications, documents, uploaded files and notifications. It can&apos;t be undone.
+              A student with disbursed payments can&apos;t be deleted, because those records must be kept; decline the request instead.
+            </p>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => setHandleReq(null)}>Cancel</Button>
+              <Button variant="ghost" disabled={payBusy || deletingAccount} title="The account was already deleted another way" onClick={respondToRequest}>Mark completed only</Button>
+              <Button variant="destructive" disabled={deletingAccount} onClick={() => handleReq && deleteAccount(handleReq.req)}>
+                {deletingAccount && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Delete account
+              </Button>
+            </DialogFooter>
+          </>) : (<>
+            <div>
+              <Label className="text-xs">Message to the student</Label>
+              <Textarea value={reqResponse} onChange={(e) => setReqResponse(e.target.value)} placeholder="Explain why, e.g. payment records must be kept for audit." />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setHandleReq(null)}>Cancel</Button>
+              <Button variant="outline" disabled={payBusy || !reqResponse.trim()} onClick={respondToRequest}>Decline request</Button>
+            </DialogFooter>
+          </>)}
         </DialogContent>
       </Dialog>
 
@@ -2570,6 +3214,111 @@ export default function AdminDashboardPage() {
               ))}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!decisionDialog} onOpenChange={(o) => { if (!o) setDecisionDialog(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {decisionDialog?.status === "Revoked" ? "Revoke scholarship" : "Reject"}
+              {decisionDialog && decisionDialog.ids.length > 1 ? ` ${decisionDialog.ids.length} applications` : decisionDialog?.status === "Revoked" ? "" : " application"}
+            </DialogTitle>
+          </DialogHeader>
+          {decisionDialog?.status === "Revoked" && (
+            <p className="text-sm text-muted-foreground">The scholar loses the award and its slot opens up. Any scheduled payments are cancelled. Payments already disbursed stay on record.</p>
+          )}
+          <div>
+            <Label className="text-xs">Reason (shown to the student)</Label>
+            <Textarea value={decisionNote} onChange={(e) => setDecisionNote(e.target.value)} maxLength={1000}
+              placeholder={decisionDialog?.status === "Revoked" ? "e.g. Your grades fell below the renewal requirement." : "e.g. Your household income is above the program's limit."} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDecisionDialog(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={bulkBusy || !decisionNote.trim()} onClick={confirmDecision}>
+              {bulkBusy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}{decisionDialog?.status === "Revoked" ? "Revoke" : "Reject"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!remindDialog} onOpenChange={(o) => { if (!o) setRemindDialog(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Send a reminder to {remindDialog?.length ?? 0} student{remindDialog?.length === 1 ? "" : "s"}</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">They get it in their dashboard, and by email if they allow application emails. A student gets at most one reminder a day.</p>
+          <div>
+            <Label className="text-xs">Message</Label>
+            <Textarea rows={4} maxLength={500} value={remindMsg} onChange={(e) => setRemindMsg(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemindDialog(null)}>Cancel</Button>
+            <Button disabled={bulkBusy || !remindMsg.trim()} onClick={sendReminders}>{bulkBusy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}<Send className="mr-1 h-4 w-4" /> Send</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!closeCycle} onOpenChange={(o) => { if (!o) setCloseCycle(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Close {closeCycle?.name}?</DialogTitle></DialogHeader>
+          {closeCycle && (() => {
+            const open = applications.filter((a) => a.scholarship_id === closeCycle.id && (a.status === "Pending" || a.status === "Waitlisted")).length;
+            return (
+              <p className="text-sm text-muted-foreground">
+                The program is disabled and stops taking applications.{" "}
+                {open ? `Its ${open} pending or waitlisted application${open === 1 ? " is" : "s are"} rejected, and each student is notified with the message below.` : "It has no pending or waitlisted applications."}
+                {" "}Approved scholars are not affected.
+              </p>
+            );
+          })()}
+          <div>
+            <Label className="text-xs">Message to rejected applicants (optional)</Label>
+            <Textarea value={closeNote} onChange={(e) => setCloseNote(e.target.value)} placeholder="The selection for this program has closed and all slots were filled." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCloseCycle(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={bulkBusy} onClick={confirmCloseCycle}>{bulkBusy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Close cycle</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!reversePay} onOpenChange={(o) => { if (!o) setReversePay(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Reverse this disbursement?</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {reversePay && `${formatPHP(reversePay.amount)} to ${payStudent(reversePay)} is marked as not paid. The record, its receipt and this reason are kept, and the student is notified. Use this only for a disbursement entered by mistake; schedule a new payment if money is still owed.`}
+          </p>
+          <div>
+            <Label className="text-xs">Reason</Label>
+            <Textarea value={reverseReason} onChange={(e) => setReverseReason(e.target.value)} placeholder="e.g. Recorded against the wrong student." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReversePay(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={payBusy || !reverseReason.trim()} onClick={confirmReverse}>Reverse</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkSchedule} onOpenChange={setBulkSchedule}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Schedule {fundData.awaiting.length} payment{fundData.awaiting.length === 1 ? "" : "s"}</DialogTitle></DialogHeader>
+          {(() => {
+            const total = fundData.awaiting.reduce((t, a) => t + (remainingFor(a.id) ?? 0), 0);
+            const noAmount = fundData.awaiting.filter((a) => !remainingFor(a.id)).length;
+            return (
+              <p className="text-sm text-muted-foreground">
+                Each approved scholar awaiting payment gets one payment for the rest of their award ({formatPHP(total)} in total), using the default method ({parseSettings(systemSettings).default_payment_method}).
+                {noAmount > 0 && ` ${noAmount} award${noAmount === 1 ? " has" : "s have"} no amount set and will be skipped.`}
+              </p>
+            );
+          })()}
+          <div>
+            <Label className="text-xs">Scheduled date</Label>
+            <Input type="date" value={bulkScheduleDate} onChange={(e) => setBulkScheduleDate(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkSchedule(false)}>Cancel</Button>
+            <Button disabled={bulkBusy} onClick={() => scheduleAllAwaiting(bulkScheduleDate)}>{bulkBusy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Schedule all</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
