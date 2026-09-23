@@ -31,6 +31,10 @@ type Props = {
   onRefresh: () => void;
   onNavigate: (section: string, opts?: { status?: string; verif?: string }) => void;
   onViewApp: (a: OverviewApp) => void;
+  /** Sections the signed-in staff role may open; attention items and shortcuts elsewhere are hidden. */
+  canOpen?: (section: string) => boolean;
+  /** Work queues tracked by the page (documents, grades, receipts, ...), shown under "Needs attention". */
+  extraAttention?: { icon: typeof FileText; tone: string; text: string; cta: string; section: string; go: () => void }[];
 };
 
 const formatPHP = (n: number) => `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -160,6 +164,7 @@ function Trend({ current, previous }: { current: number; previous: number | null
 export default function OverviewPanel({
   applications, scholarships, profiles, notApplied = [], payments, verifications, auditLogs,
   firstName, refreshing, lastUpdated, loadError, onRefresh, onNavigate, onViewApp,
+  canOpen = () => true, extraAttention = [],
 }: Props) {
   const [period, setPeriod] = useState("all");
 
@@ -268,15 +273,16 @@ export default function OverviewPanel({
   ];
 
   const attention = [
-    { show: data.flagged > 0, icon: ShieldCheck, tone: "text-destructive", text: `${data.flagged} flagged verification${data.flagged === 1 ? "" : "s"}`, cta: "Review", go: () => onNavigate("verification", { verif: "Flagged" }) },
-    { show: data.unverified > 0, icon: ShieldCheck, tone: "text-warning", text: `${data.unverified} scholar${data.unverified === 1 ? "" : "s"} awaiting verification`, cta: "Verify", go: () => onNavigate("verification", { verif: "Pending" }) },
-    { show: data.awaiting.length > 0, icon: Wallet, tone: "text-warning", text: `${data.awaiting.length} approved application${data.awaiting.length === 1 ? "" : "s"} with no payment`, cta: "Disburse", go: () => onNavigate("disbursement") },
-    { show: data.queuedCount > 0, icon: Banknote, tone: "text-primary", text: `${data.queuedCount} payment${data.queuedCount === 1 ? "" : "s"} pending or processing (${formatPHP(data.queued)})`, cta: "Open", go: () => onNavigate("disbursement") },
-    { show: data.pending > 0, icon: Clock, tone: "text-warning", text: `${data.pending} application${data.pending === 1 ? "" : "s"} waiting for review`, cta: "Review", go: () => onNavigate("applications", { status: "pending" }) },
-    ...data.closingSoon.map((s) => ({ show: true, icon: CalendarClock, tone: "text-warning", text: `${s.name} closes ${new Date(`${s.deadline}T00:00:00`).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}`, cta: "View", go: () => onNavigate("scholarships") })),
-    ...data.pastDeadline.map((s) => ({ show: true, icon: AlertTriangle, tone: "text-destructive", text: `${s.name} is active but past its deadline`, cta: "Fix", go: () => onNavigate("scholarships") })),
-    ...data.fullPrograms.map((s) => ({ show: true, icon: GraduationCap, tone: "text-warning", text: `${s.name} has filled all ${s.slots} slots`, cta: "View", go: () => onNavigate("scholarships") })),
-  ].filter((x) => x.show);
+    { section: "verification", show: data.flagged > 0, icon: ShieldCheck, tone: "text-destructive", text: `${data.flagged} flagged verification${data.flagged === 1 ? "" : "s"}`, cta: "Review", go: () => onNavigate("verification", { verif: "Flagged" }) },
+    { section: "verification", show: data.unverified > 0, icon: ShieldCheck, tone: "text-warning", text: `${data.unverified} scholar${data.unverified === 1 ? "" : "s"} awaiting verification`, cta: "Verify", go: () => onNavigate("verification", { verif: "Pending" }) },
+    { section: "disbursement", show: data.awaiting.length > 0, icon: Wallet, tone: "text-warning", text: `${data.awaiting.length} approved application${data.awaiting.length === 1 ? "" : "s"} with no payment`, cta: "Disburse", go: () => onNavigate("disbursement") },
+    { section: "disbursement", show: data.queuedCount > 0, icon: Banknote, tone: "text-primary", text: `${data.queuedCount} payment${data.queuedCount === 1 ? "" : "s"} pending or processing (${formatPHP(data.queued)})`, cta: "Open", go: () => onNavigate("disbursement") },
+    { section: "applications", show: data.pending > 0, icon: Clock, tone: "text-warning", text: `${data.pending} application${data.pending === 1 ? "" : "s"} waiting for review`, cta: "Review", go: () => onNavigate("applications", { status: "pending" }) },
+    ...data.closingSoon.map((s) => ({ section: "scholarships", show: true, icon: CalendarClock, tone: "text-warning", text: `${s.name} closes ${new Date(`${s.deadline}T00:00:00`).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}`, cta: "View", go: () => onNavigate("scholarships") })),
+    ...data.pastDeadline.map((s) => ({ section: "scholarships", show: true, icon: AlertTriangle, tone: "text-destructive", text: `${s.name} is active but past its deadline`, cta: "Fix", go: () => onNavigate("scholarships") })),
+    ...data.fullPrograms.map((s) => ({ section: "scholarships", show: true, icon: GraduationCap, tone: "text-warning", text: `${s.name} has filled all ${s.slots} slots`, cta: "View", go: () => onNavigate("scholarships") })),
+    ...extraAttention.map((x) => ({ show: true, ...x })),
+  ].filter((x) => x.show && canOpen(x.section));
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -319,10 +325,10 @@ export default function OverviewPanel({
       {/* Period + quick actions */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => onNavigate("scholarships")} className="cursor-pointer"><Plus className="mr-1 h-4 w-4" />Create Scholarship</Button>
-          <Button size="sm" variant="outline" onClick={() => onNavigate("verification", { verif: "Flagged" })} className="cursor-pointer"><ShieldCheck className="mr-1 h-4 w-4" />Review flagged{data.flagged > 0 ? ` (${data.flagged})` : ""}</Button>
-          <Button size="sm" variant="outline" onClick={() => onNavigate("disbursement")} className="cursor-pointer"><Banknote className="mr-1 h-4 w-4" />Disburse pending</Button>
-          <Button size="sm" variant="outline" onClick={() => onNavigate("reports")} className="cursor-pointer"><FileDown className="mr-1 h-4 w-4" />Export report</Button>
+          {canOpen("scholarships:edit") && <Button size="sm" onClick={() => onNavigate("scholarships")} className="cursor-pointer"><Plus className="mr-1 h-4 w-4" />Create Scholarship</Button>}
+          {canOpen("verification") && <Button size="sm" variant="outline" onClick={() => onNavigate("verification", { verif: "Flagged" })} className="cursor-pointer"><ShieldCheck className="mr-1 h-4 w-4" />Review flagged{data.flagged > 0 ? ` (${data.flagged})` : ""}</Button>}
+          {canOpen("disbursement") && <Button size="sm" variant="outline" onClick={() => onNavigate("disbursement")} className="cursor-pointer"><Banknote className="mr-1 h-4 w-4" />Disburse pending</Button>}
+          {canOpen("reports") && <Button size="sm" variant="outline" onClick={() => onNavigate("reports")} className="cursor-pointer"><FileDown className="mr-1 h-4 w-4" />Export report</Button>}
         </div>
         <Select value={period} onValueChange={setPeriod}>
           <SelectTrigger className="w-44" aria-label="Period"><SelectValue /></SelectTrigger>

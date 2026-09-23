@@ -30,6 +30,11 @@ export function buildTimeline(app: App, payments: Payment[]): Step[] {
       detail: app.notes || "Your application was not approved this time. You can apply again next year." });
     return steps;
   }
+  if (app.status === "Revoked") {
+    steps.push({ key: "decision", title: "Scholarship revoked", date: app.updated_at, state: "bad",
+      detail: app.notes || "Your scholarship was revoked. Contact the scholarship office if you have questions." });
+    return steps;
+  }
   if (app.status === "Waitlisted") {
     steps.push({ key: "decision", title: "Waitlisted", date: app.updated_at, state: "warn",
       detail: app.notes || "You are on the waitlist. We will notify you if a slot opens." });

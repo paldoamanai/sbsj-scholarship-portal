@@ -236,6 +236,8 @@ export type Database = {
           receipt_reviewed_by: string | null
           receipt_reviewed_at: string | null
           cancel_reason: string | null
+          reversed_at: string | null
+          reversed_by: string | null
         }
         Insert: {
           id?: string
@@ -258,6 +260,8 @@ export type Database = {
           receipt_reviewed_by?: string | null
           receipt_reviewed_at?: string | null
           cancel_reason?: string | null
+          reversed_at?: string | null
+          reversed_by?: string | null
         }
         Update: {
           id?: string
@@ -280,6 +284,8 @@ export type Database = {
           receipt_reviewed_by?: string | null
           receipt_reviewed_at?: string | null
           cancel_reason?: string | null
+          reversed_at?: string | null
+          reversed_by?: string | null
         }
         Relationships: [
           {
@@ -841,6 +847,30 @@ export type Database = {
           _status: string
           _response: string
         }
+        Returns: undefined
+      }
+      revoke_application: {
+        Args: { _id: string; _reason: string }
+        Returns: undefined
+      }
+      reverse_disbursement: {
+        Args: { _payment_id: string; _reason: string }
+        Returns: undefined
+      }
+      close_scholarship_cycle: {
+        Args: { _id: string; _note?: string | null }
+        Returns: number
+      }
+      remind_students: {
+        Args: { _user_ids: string[]; _message: string }
+        Returns: number
+      }
+      list_staff: {
+        Args: Record<string, never>
+        Returns: { user_id: string; email: string; role: string; name: string | null; created_at: string }[]
+      }
+      set_staff_role: {
+        Args: { _email: string; _role: string }
         Returns: undefined
       }
       send_announcement: {

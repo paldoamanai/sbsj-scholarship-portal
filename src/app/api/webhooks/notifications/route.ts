@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { createClient } from "@supabase/supabase-js";
 import { normalizeSupabaseUrl } from "@/lib/supabase/url";
+import { isAdminRole } from "@/lib/settings";
 
 // Called by a Supabase Database Webhook on INSERT into public.notifications.
 // Emails the recipient through Resend, honoring the global email switch and the
@@ -85,7 +86,7 @@ export async function POST(request: Request) {
   const url = record.link && site ? `${site}${record.link}` : null;
 
   // Where this person manages their emails (admins keep them on their profile).
-  const staff = ["admin", "super_admin"].includes(String(roleRow?.role));
+  const staff = isAdminRole(roleRow?.role);
   const prefsPath = staff ? "/admin?section=profile" : "/student-dashboard?section=settings";
   const prefsUrl = site ? `${site}${prefsPath}` : null;
 
