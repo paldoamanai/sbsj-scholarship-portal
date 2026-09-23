@@ -5,7 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import {
   FileText, CheckCircle, XCircle, Clock, Users, Banknote, Plus, Bell, ArrowRight, GraduationCap,
   RefreshCw, Loader2, AlertTriangle, ShieldCheck, Wallet, CalendarClock, TrendingUp, TrendingDown, Minus,
-  FileDown, ScrollText, Table2, BarChart3,
+  FileDown, ScrollText, Table2, BarChart3, UserX,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,8 @@ type Props = {
   applications: OverviewApp[];
   scholarships: Tables<"scholarships">[];
   profiles: Tables<"profiles">[];
+  /** Registered students who haven't submitted an application yet; counted as applicants. */
+  notApplied?: Tables<"profiles">[];
   payments: Tables<"payments">[];
   verifications: Tables<"scholar_verifications">[];
   auditLogs: Tables<"audit_logs">[];
@@ -156,7 +158,7 @@ function Trend({ current, previous }: { current: number; previous: number | null
 }
 
 export default function OverviewPanel({
-  applications, scholarships, profiles, payments, verifications, auditLogs,
+  applications, scholarships, profiles, notApplied = [], payments, verifications, auditLogs,
   firstName, refreshing, lastUpdated, loadError, onRefresh, onNavigate, onViewApp,
 }: Props) {
   const [period, setPeriod] = useState("all");
@@ -178,9 +180,16 @@ export default function OverviewPanel({
     const rejected = cnt(curApps, "Rejected");
     const pending = cnt(curApps, "Pending");
     const waitlisted = cnt(curApps, "Waitlisted");
+    const notYetApplied = notApplied.filter((p) => inCur(p.created_at)).length;
+    const notYetAppliedPrev = prevSince ? notApplied.filter((p) => inPrev(p.created_at)).length : null;
+    // Applicants are people, not applications: one student with two applications counts once.
+    const people = (list: OverviewApp[]) => new Set(list.map((a) => a.user_id)).size;
+    const applicants = people(curApps) + notYetApplied;
+    const applicantsPrev = prevApps && notYetAppliedPrev !== null ? people(prevApps) + notYetAppliedPrev : null;
 
     const disbursed = payments.filter((p) => p.status === "Disbursed");
     const disbCur = disbursed.filter((p) => inCur(payDate(p))).reduce((t, p) => t + Number(p.amount || 0), 0);
+    const paidScholars = new Set(disbursed.filter((p) => inCur(payDate(p))).map((p) => p.user_id)).size;
     const disbPrev = prevSince ? disbursed.filter((p) => inPrev(payDate(p))).reduce((t, p) => t + Number(p.amount || 0), 0) : null;
 
     const newStudents = profiles.filter((p) => inCur(p.created_at)).length;
@@ -231,7 +240,7 @@ export default function OverviewPanel({
     const unverified = verifications.filter((v) => v.verification_status === "Pending").length;
 
     return {
-      total, approved, rejected, pending, waitlisted, prevApps, prevTotal: prevApps?.length ?? null,
+      total, approved, rejected, pending, waitlisted, notYetApplied, notYetAppliedPrev, applicants, applicantsPrev, paidScholars, prevApps, prevTotal: prevApps?.length ?? null,
       prevApproved: prevApps ? cnt(prevApps, "Approved") : null, prevRejected: prevApps ? cnt(prevApps, "Rejected") : null,
       prevPending: prevApps ? cnt(prevApps, "Pending") : null,
       disbCur, disbPrev, newStudents, newStudentsPrev, perMonth, months, statusPie, distribution: (() => { const all = [...dist.values()].sort((x, y) => y.value - x.value); if (all.length <= 6) return all; const rest = all.slice(5).reduce((t, r) => t + r.value, 0); return [...all.slice(0, 5), { name: "Other programs", value: rest }]; })(),
@@ -242,18 +251,20 @@ export default function OverviewPanel({
       rejectionRate: total ? Math.round((rejected / total) * 100) : 0,
       activeStudents: profiles.filter((p) => p.is_active).length,
     };
-  }, [applications, scholarships, profiles, payments, verifications, period]);
+  }, [applications, scholarships, profiles, notApplied, payments, verifications, period]);
 
   const pendingApps = useMemo(() => applications.filter((a) => a.status === "Pending").slice(0, 5), [applications]);
   const recent = useMemo(() => auditLogs.slice(0, 8), [auditLogs]);
 
   const stats = [
-    { label: "Total Applicants", value: data.total, sub: `${data.pending} pending`, icon: FileText, color: "text-primary", trend: <Trend current={data.total} previous={data.prevTotal} />, go: () => onNavigate("applications", { status: "all" }) },
+    // Ordered like the applicant pipeline: registered → applied → decided → scholar → paid.
+    { label: "Total Applicants", value: data.applicants, sub: "registered students", icon: FileText, color: "text-primary", trend: <Trend current={data.applicants} previous={data.applicantsPrev} />, go: () => onNavigate("applications", { status: "all" }) },
+    { label: "Not Yet Applied", value: data.notYetApplied, sub: "registered, no application", icon: UserX, color: "text-warning", trend: <Trend current={data.notYetApplied} previous={data.notYetAppliedPrev} />, go: () => onNavigate("applications", { status: "not_applied" }) },
+    { label: "Pending", value: data.pending, sub: data.waitlisted ? `+ ${data.waitlisted} waitlisted` : "Needs review", icon: Clock, color: "text-warning", trend: <Trend current={data.pending} previous={data.prevPending} />, go: () => onNavigate("applications", { status: "pending" }) },
     { label: "Approved", value: data.approved, sub: `${data.approvalRate}% approval rate`, icon: CheckCircle, color: "text-success", trend: <Trend current={data.approved} previous={data.prevApproved} />, go: () => onNavigate("applications", { status: "approved" }) },
     { label: "Rejected", value: data.rejected, sub: `${data.rejectionRate}% rejection rate`, icon: XCircle, color: "text-destructive", trend: <Trend current={data.rejected} previous={data.prevRejected} />, go: () => onNavigate("applications", { status: "rejected" }) },
-    { label: "Pending", value: data.pending, sub: "Needs review", icon: Clock, color: "text-warning", trend: <Trend current={data.pending} previous={data.prevPending} />, go: () => onNavigate("applications", { status: "pending" }) },
     { label: "Students", value: profiles.length, sub: `${data.activeStudents} active · ${data.newStudents} new`, icon: Users, color: "text-primary", trend: <Trend current={data.newStudents} previous={data.newStudentsPrev} />, go: () => onNavigate("students") },
-    { label: "Disbursed", value: formatPHP(data.disbCur), sub: PERIODS[period], icon: Banknote, color: "text-success", trend: <Trend current={data.disbCur} previous={data.disbPrev} />, go: () => onNavigate("disbursement"), small: true },
+    { label: "Disbursed", value: formatPHP(data.disbCur), sub: `${data.paidScholars} scholar${data.paidScholars === 1 ? "" : "s"} paid · ${PERIODS[period]}`, icon: Banknote, color: "text-success", trend: <Trend current={data.disbCur} previous={data.disbPrev} />, go: () => onNavigate("disbursement"), small: true },
   ];
 
   const attention = [
@@ -319,8 +330,13 @@ export default function OverviewPanel({
         </Select>
       </div>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
+      {/* Stat cards, in applicant pipeline order */}
+      <section aria-label="Applicant pipeline" className="space-y-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="text-sm font-semibold">Applicant pipeline</h3>
+        <span className="text-xs text-muted-foreground">registered → applied → decided → scholar → paid</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
         {stats.map((stat) => (
           <Card key={stat.label} className="hover-lift cursor-pointer" role="button" tabIndex={0} onClick={stat.go}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") stat.go(); }}>
@@ -338,6 +354,7 @@ export default function OverviewPanel({
           </Card>
         ))}
       </div>
+      </section>
       {period !== "all" && <p className="-mt-3 text-xs text-muted-foreground">Trend arrows compare with the previous equal-length period.</p>}
 
       {/* Needs attention + Funds */}

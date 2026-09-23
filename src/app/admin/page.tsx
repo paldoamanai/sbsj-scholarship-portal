@@ -1060,13 +1060,75 @@ export default function AdminDashboardPage() {
   }, []);
 
   const APP_PAGE_SIZE = 10;
-  const filteredApps = applications.filter((a) => {
-    const matchesStatus = statusFilter === "all" || a.status.toLowerCase() === statusFilter;
-    const q = appSearch.toLowerCase();
-    const name = a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.toLowerCase() : "";
-    const matchesSearch = !q || name.includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q);
-    return matchesStatus && matchesSearch;
-  });
+  // Registered students who haven't submitted an application yet. They count as applicants so
+  // admins can see who is stuck (usually on the required documents) and follow up.
+  const notApplied = useMemo(() => {
+    const applied = new Set(applications.map((a) => a.user_id));
+    return profiles.filter((p) => !applied.has(p.id));
+  }, [profiles, applications]);
+  // Required documents uploaded (and not rejected) by a student who hasn't applied yet.
+  const docsReady = (userId: string) => {
+    const required = parseSettings(systemSettings).required_documents;
+    const ok = required.filter((type) => {
+      const latest = allDocs
+        .filter((d) => d.user_id === userId && d.document_type === type && d.application_id === null)
+        .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
+      return latest && latest.status !== "Rejected";
+    });
+    return { done: ok.length, total: required.length, missing: required.filter((t) => !ok.includes(t)) };
+  };
+  // Applicant pipeline: registered → applied (pending) → approved / rejected → scholar → paid.
+  const pipeline = useMemo(() => {
+    const by = (st: string) => applications.filter((a) => a.status === st).length;
+    const paidScholars = new Set(payments.filter((p) => p.status === "Disbursed").map((p) => p.user_id));
+    return {
+      total: notApplied.length + new Set(applications.map((a) => a.user_id)).size,
+      notApplied: notApplied.length,
+      pending: by("Pending"),
+      waitlisted: by("Waitlisted"),
+      approved: by("Approved"),
+      rejected: by("Rejected"),
+      scholars: scholars.length,
+      disbursed: paidScholars.size,
+    };
+  }, [applications, payments, notApplied, scholars]);
+
+  const showApplicants = (status: string) => { setStatusFilter(status); setAppPage(1); setActiveSection("applications"); };
+  // Shown on Applicant Management; the Dashboard's stat cards follow the same order.
+  const pipelineStrip = (
+    <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-2">
+      {([
+        { label: "Total applicants", value: pipeline.total, sub: "registered students", go: () => showApplicants("all") },
+        { label: "Not yet applied", value: pipeline.notApplied, sub: "registered, no application", go: () => showApplicants("not_applied"), warn: pipeline.notApplied > 0 },
+        { label: "Pending", value: pipeline.pending, sub: pipeline.waitlisted ? `+ ${pipeline.waitlisted} waitlisted` : "awaiting review", go: () => showApplicants("pending") },
+        { label: "Approved", value: pipeline.approved, sub: "applications", go: () => showApplicants("approved") },
+        { label: "Rejected", value: pipeline.rejected, sub: "applications", go: () => showApplicants("rejected") },
+        { label: "Students", value: pipeline.scholars, sub: "approved scholars", go: () => setActiveSection("students") },
+        { label: "Disbursed", value: pipeline.disbursed, sub: "scholars paid", go: () => setActiveSection("disbursement") },
+      ] as { label: string; value: number; sub: string; go: () => void; warn?: boolean }[]).map((t) => (
+        <button key={t.label} type="button" onClick={t.go}
+          className={`rounded-xl border bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted/60 cursor-pointer ${t.warn ? "border-amber-300" : "border-border"}`}>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t.label}</p>
+          <p className={`text-2xl font-bold tabular-nums ${t.warn ? "text-amber-700" : "text-foreground"}`}>{t.value}</p>
+          <p className="text-[11px] text-muted-foreground truncate">{t.sub}</p>
+        </button>
+      ))}
+    </div>
+  );
+
+  type ApplicantRow = { kind: "app"; app: typeof applications[number]; at: string } | { kind: "none"; profile: Tables<"profiles">; at: string };
+  const q = appSearch.trim().toLowerCase();
+  const filteredApps: ApplicantRow[] = [
+    ...(statusFilter === "all" || statusFilter === "not_applied"
+      ? notApplied
+          .filter((p) => !q || `${personName(p)} ${p.email || ""}`.toLowerCase().includes(q))
+          .map((p): ApplicantRow => ({ kind: "none", profile: p, at: p.created_at }))
+      : []),
+    ...applications
+      .filter((a) => statusFilter === "all" || a.status.toLowerCase() === statusFilter)
+      .filter((a) => !q || personName(a.profiles).toLowerCase().includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q))
+      .map((a): ApplicantRow => ({ kind: "app", app: a, at: a.created_at })),
+  ].sort((x, y) => y.at.localeCompare(x.at));
   const appPages = Math.max(1, Math.ceil(filteredApps.length / APP_PAGE_SIZE));
   const currentAppPage = Math.min(appPage, appPages);
   const pagedApps = filteredApps.slice((currentAppPage - 1) * APP_PAGE_SIZE, currentAppPage * APP_PAGE_SIZE);
@@ -1195,6 +1257,7 @@ export default function AdminDashboardPage() {
               applications={applications}
               scholarships={scholarships}
               profiles={scholars}
+              notApplied={notApplied}
               payments={payments}
               verifications={verifications}
               auditLogs={auditLogs}
@@ -1226,6 +1289,7 @@ export default function AdminDashboardPage() {
                     <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Status</SelectItem>
+                      <SelectItem value="not_applied">Not yet applied</SelectItem>
                       <SelectItem value="pending">Pending</SelectItem>
                       <SelectItem value="approved">Approved</SelectItem>
                       <SelectItem value="waitlisted">Waitlisted</SelectItem>
@@ -1235,14 +1299,42 @@ export default function AdminDashboardPage() {
                   </Select>
                 </div>
               </div>
+              {pipelineStrip}
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
                     <TableHead>Applicant</TableHead><TableHead>Scholarship</TableHead><TableHead>Grade</TableHead><TableHead>Date</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {filteredApps.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No applications found</TableCell></TableRow>}
-                    {pagedApps.map((a) => {
+                    {filteredApps.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No applicants found</TableCell></TableRow>}
+                    {pagedApps.map((row) => {
+                      if (row.kind === "none") {
+                        const p = row.profile;
+                        const docs = docsReady(p.id);
+                        return (
+                          <TableRow key={`none-${p.id}`} className="bg-amber-50/40 dark:bg-amber-950/10">
+                            <TableCell>
+                              <p className="font-medium">{personName(p)}</p>
+                              <p className="text-xs text-muted-foreground">{p.email}</p>
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground" title={docs.missing.length ? `Missing: ${docs.missing.join(", ")}` : undefined}>
+                              No application yet
+                              <span className="block">Documents {docs.done}/{docs.total}</span>
+                            </TableCell>
+                            <TableCell>{p.average_grade ?? "—"}</TableCell>
+                            <TableCell title="Registered">{new Date(p.created_at).toLocaleDateString()}</TableCell>
+                            <TableCell>
+                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
+                                <Clock className="h-3 w-3" />Not yet applied
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button size="icon" variant="ghost" title="View profile" onClick={() => setViewStudent(p)}><Eye className="h-4 w-4" /></Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      }
+                      const a = row.app;
                       const name = a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "—";
                       return (
                         <TableRow key={a.id}>
@@ -1285,7 +1377,7 @@ export default function AdminDashboardPage() {
                 </Table>
               </Card>
               <div className="flex items-center justify-between text-sm text-muted-foreground">
-                <span>{filteredApps.length === 0 ? "0 applications" : `Showing ${(currentAppPage - 1) * APP_PAGE_SIZE + 1}–${Math.min(currentAppPage * APP_PAGE_SIZE, filteredApps.length)} of ${filteredApps.length}`}</span>
+                <span>{filteredApps.length === 0 ? "0 applicants" : `Showing ${(currentAppPage - 1) * APP_PAGE_SIZE + 1}–${Math.min(currentAppPage * APP_PAGE_SIZE, filteredApps.length)} of ${filteredApps.length}`}</span>
                 <div className="flex items-center gap-2">
                   <Button size="sm" variant="outline" disabled={currentAppPage <= 1} onClick={() => setAppPage(currentAppPage - 1)}><ChevronLeft className="h-4 w-4" /></Button>
                   <span>Page {currentAppPage} of {appPages}</span>
