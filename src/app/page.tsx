@@ -216,10 +216,10 @@ export default function HomePage() {
   ];
 
   return (
-    <Layout transparentOnTop>
+    <Layout>
 
       {/* ── Hero ──────────────────────────────────────── */}
-      <section className="relative min-h-[100svh] flex items-center overflow-hidden -mt-16 pt-16">
+      <section className="relative min-h-[100svh] flex items-center overflow-hidden pt-28 pb-16">
         <div className="absolute inset-0">
           <Image src="/hero-bg.jpg" alt="San Jose, Occidental Mindoro" fill className="object-cover" priority />
           <div className="absolute inset-0 bg-gradient-to-tr from-black/80 via-black/50 to-black/10" />
@@ -329,7 +329,7 @@ export default function HomePage() {
       </section>
 
       {/* ── Features ──────────────────────────────────── */}
-      <section id="platform" className="py-20 lg:py-28 bg-background scroll-mt-16">
+      <section id="platform" className="py-20 lg:py-28 bg-background">
         <div className="container">
           <Reveal className="text-center max-w-xl mx-auto mb-14">
             <SectionLabel>Our Platform</SectionLabel>
@@ -361,7 +361,7 @@ export default function HomePage() {
       </section>
 
       {/* ── Scholarships ──────────────────────────────── */}
-      <section id="scholarships" className="py-20 lg:py-28 bg-orange-100/40 scroll-mt-20">
+      <section id="scholarships" className="py-20 lg:py-28 bg-orange-100/40">
         <div className="container">
           <Reveal className="text-center max-w-xl mx-auto mb-14">
             <SectionLabel>Scholarships</SectionLabel>
@@ -395,6 +395,7 @@ export default function HomePage() {
                     program={s}
                     globalMinGrade={settings.min_grade_requirement}
                     onApply={() => router.push(applyHref(s.id, signedIn))}
+                    hideAmount
                   />
                 </Reveal>
               ))}
@@ -447,7 +448,7 @@ export default function HomePage() {
       </section>
 
       {/* ── Requirements ──────────────────────────────── */}
-      <section id="requirements" className="py-20 lg:py-28 bg-orange-100/40 scroll-mt-20">
+      <section id="requirements" className="py-20 lg:py-28 bg-orange-100/40">
         <div className="container max-w-5xl">
           <Reveal className="text-center max-w-xl mx-auto mb-14">
             <SectionLabel>Requirements</SectionLabel>
@@ -500,7 +501,7 @@ export default function HomePage() {
       </section>
 
       {/* ── FAQ ───────────────────────────────────────── */}
-      <section id="faq" className="py-20 lg:py-28 bg-background scroll-mt-20">
+      <section id="faq" className="py-20 lg:py-28 bg-background">
         <div className="container max-w-3xl">
           <Reveal className="text-center max-w-xl mx-auto mb-12">
             <SectionLabel>FAQ</SectionLabel>
@@ -538,7 +539,7 @@ export default function HomePage() {
       </section>
 
       {/* ── Contact ───────────────────────────────────── */}
-      <section id="contact" className="py-20 lg:py-28 bg-background scroll-mt-20">
+      <section id="contact" className="py-20 lg:py-28 bg-background">
         <div className="container max-w-5xl">
           <Reveal className="text-center max-w-xl mx-auto mb-14">
             <SectionLabel>Contact Us</SectionLabel>

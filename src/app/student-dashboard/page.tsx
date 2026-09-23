@@ -493,7 +493,7 @@ export default function StudentDashboardPage() {
   const [uploadingDoc, setUploadingDoc]             = useState<string | null>(null);
   const [removeDoc, setRemoveDoc]                   = useState<Tables<"documents"> | null>(null);
   const [removingDoc, setRemovingDoc]               = useState(false);
-  const { settings } = useSystemSettings();
+  const { settings, loaded: settingsLoaded } = useSystemSettings();
   const applyBlocked = applicationsBlockedReason(settings);
 
 
@@ -509,12 +509,14 @@ export default function StudentDashboardPage() {
   }, []);
 
   useEffect(() => {
-    if (openApplyOnLoad && !loading) {
+    // Wait for both loads: applyBlocked reads from settings, which default to "open" until they
+    // arrive, so opening on a stale default could show the form even when applications are closed.
+    if (openApplyOnLoad && !loading && settingsLoaded) {
       setOpenApplyOnLoad(false);
       if (!currentApp && !applyBlocked) setApplyDialogOpen(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openApplyOnLoad, loading]);
+  }, [openApplyOnLoad, loading, settingsLoaded]);
 
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -1166,7 +1168,7 @@ export default function StudentDashboardPage() {
               </label>
               <DialogFooter>
                 <Button
-                  disabled={!applyScholarshipId || applyLoading || applyIssues.length > 0 || missingDocs.length > 0 || applyStatement.trim().length < STATEMENT_MIN || !applyCertified}
+                  disabled={!!applyBlocked || !applyScholarshipId || applyLoading || applyIssues.length > 0 || missingDocs.length > 0 || applyStatement.trim().length < STATEMENT_MIN || !applyCertified}
                   className="bg-primary hover:bg-primary text-white rounded-xl w-full"
                   onClick={submitApplication}>
                   {applyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

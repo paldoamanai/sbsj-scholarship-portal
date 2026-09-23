@@ -21,15 +21,17 @@ interface ScholarshipCardProps {
   /** Global minimum grade from settings, merged into the displayed requirements. */
   globalMinGrade?: number;
   onApply: () => void;
+  /** Hide the per-scholar award amount (the landing page doesn't show it). */
+  hideAmount?: boolean;
 }
 
-const ScholarshipCard = ({ program, globalMinGrade = 0, onApply }: ScholarshipCardProps) => {
+const ScholarshipCard = ({ program, globalMinGrade = 0, onApply, hideAmount = false }: ScholarshipCardProps) => {
   const [open, setOpen] = useState(false);
   const { name, description, eligibility } = program;
   const deadline = deadlineLabel(program.deadline);
   const { canApply, label } = availabilityInfo(program);
   const requirements = requirementLines(program, globalMinGrade);
-  const hasAmount = Number(program.amount) > 0;
+  const hasAmount = !hideAmount && Number(program.amount) > 0;
 
   return (
     <>

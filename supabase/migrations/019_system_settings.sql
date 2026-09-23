@@ -7,7 +7,26 @@
 --   * payment methods: only enabled methods can be used (Cash / Cheque are the supported ones)
 
 -- ── 0. Create the table if this database never had it (see schema.sql section 14) ──
-Success. 
+CREATE TABLE IF NOT EXISTS public.system_settings (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  key TEXT UNIQUE NOT NULL,
+  value JSONB NOT NULL,
+  description TEXT,
+  updated_by UUID REFERENCES auth.users(id),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE public.system_settings ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone can read settings" ON public.system_settings;
+CREATE POLICY "Anyone can read settings" ON public.system_settings
+  FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Admins can manage settings" ON public.system_settings;
+CREATE POLICY "Admins can manage settings" ON public.system_settings
+  FOR ALL USING (
+    public.has_role('admin', auth.uid())
+    OR public.has_role('super_admin', auth.uid())
+  );
 
 UPDATE public.system_settings SET description = 'Maximum applications per student per calendar year'
  WHERE key = 'max_scholarships_per_student';

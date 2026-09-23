@@ -1,7 +1,9 @@
--- Catch-up for migrations 021 to 028 (student applications, documents, scholarships, disbursement, profile,
--- notification settings, notification overhaul).
+-- Catch-up for migrations 021 to 032 (student applications, documents, scholarships, disbursement,
+-- profile, notification settings, notification overhaul, public stats, bug fixes, 2FA-in-RLS).
 -- Run once in the Supabase SQL Editor, after 2_catchup_002_to_018.sql and migrations 019 and 020.
 -- Each part is safe to re-run. If it stops on an error, fix that and run the whole script again.
+-- Migration 032 (2FA enforced in RLS) is the riskiest part here: test with a real MFA-enrolled
+-- account before relying on it. See its header comment for what it assumes about your project.
 
 -- ════════════════════════════════════════════════════════════════════
 -- 021_student_application_hardening
@@ -1938,6 +1940,503 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.send_announcement(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.send_announcement(TEXT, TEXT, TEXT, TEXT) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ════════════════════════════════════════════════════════════════════
+-- 029_public_stats
+-- ════════════════════════════════════════════════════════════════════
+-- Public, aggregate-only numbers for the landing page. No personal data leaves the database.
+CREATE OR REPLACE FUNCTION public.public_stats()
+RETURNS TABLE (scholars INTEGER, active_programs INTEGER, total_disbursed NUMERIC)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT
+    (SELECT COUNT(DISTINCT user_id)::int FROM public.applications WHERE status = 'Approved'),
+    (SELECT COUNT(*)::int FROM public.scholarships WHERE is_active),
+    (SELECT COALESCE(SUM(amount), 0) FROM public.payments WHERE status = 'Disbursed');
+$$;
+GRANT EXECUTE ON FUNCTION public.public_stats() TO anon, authenticated;
+
+-- ════════════════════════════════════════════════════════════════════
+-- 030_bugfixes
+-- ════════════════════════════════════════════════════════════════════
+-- Bug fixes found by review. Run after 029. Safe to re-run.
+--
+--   1. notify_admins() / notify_students() only matched role = 'admin' literally, so accounts with
+--      'super_admin', 'finance_admin' or 'reviewer' (all treated as staff everywhere else via
+--      is_admin()/has_role('admin', ...)) never received a single admin notification — new
+--      applications, uploaded documents, payment problems, grade submissions, deletion requests,
+--      receipts, unpaid approvals. A school whose only account is a super_admin got none of these.
+--   2. A program's own minimum grade (scholarships.min_grade) ignored renewal_min_grade: a renewing
+--      scholar was held to the program's normal minimum instead of the (often different) renewal
+--      minimum, inconsistent with the global minimum check, which already applies renewal_min_grade.
+
+-- ── 1. notify_admins / notify_students: match the same staff roles as is_admin() ──
+CREATE OR REPLACE FUNCTION public.notify_admins(
+  _title TEXT, _message TEXT, _type TEXT DEFAULT 'info', _category TEXT DEFAULT 'system',
+  _link TEXT DEFAULT NULL, _entity_type TEXT DEFAULT NULL, _entity_id UUID DEFAULT NULL, _dedupe TEXT DEFAULT NULL
+) RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  admin_id UUID;
+BEGIN
+  FOR admin_id IN SELECT user_id FROM public.user_roles WHERE public.is_admin(user_id) LOOP
+    PERFORM public.notify(admin_id, _title, _message, _type, _category, _link, _entity_type, _entity_id, _dedupe);
+  END LOOP;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.notify_students(
+  _title TEXT, _message TEXT, _type TEXT DEFAULT 'info', _category TEXT DEFAULT 'system',
+  _link TEXT DEFAULT NULL, _entity_type TEXT DEFAULT NULL, _entity_id UUID DEFAULT NULL, _dedupe TEXT DEFAULT NULL
+) RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  student_id UUID;
+BEGIN
+  FOR student_id IN
+    SELECT ur.user_id FROM public.user_roles ur
+      JOIN public.profiles p ON p.id = ur.user_id
+     WHERE NOT public.is_admin(ur.user_id) AND p.is_active
+  LOOP
+    PERFORM public.notify(student_id, _title, _message, _type, _category, _link, _entity_type, _entity_id, _dedupe);
+  END LOOP;
+END;
+$$;
+
+-- ── 2. A program's minimum grade, like the global one, is relaxed to renewal_min_grade for a renewal ──
+CREATE OR REPLACE FUNCTION public.enforce_scholarship_open()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  s public.scholarships%ROWTYPE;
+  prof public.profiles%ROWTYPE;
+  approved_count INTEGER;
+  required_grade NUMERIC;
+BEGIN
+  IF NEW.scholarship_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT * INTO s FROM public.scholarships WHERE id = NEW.scholarship_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Scholarship program not found';
+  END IF;
+  IF NOT s.is_active THEN
+    RAISE EXCEPTION '% is not accepting applications', s.name;
+  END IF;
+  IF s.open_date IS NOT NULL AND s.open_date > CURRENT_DATE THEN
+    RAISE EXCEPTION 'Applications for % open on %', s.name, to_char(s.open_date, 'FMMonth DD, YYYY');
+  END IF;
+  IF s.deadline IS NOT NULL AND s.deadline < CURRENT_DATE THEN
+    RAISE EXCEPTION 'The deadline for % has passed (%)', s.name, s.deadline;
+  END IF;
+  IF s.slots > 0 THEN
+    SELECT COUNT(*) INTO approved_count FROM public.applications
+     WHERE scholarship_id = s.id AND status = 'Approved';
+    IF approved_count >= s.slots THEN
+      RAISE EXCEPTION 'All % slots for % are already filled', s.slots, s.name;
+    END IF;
+  END IF;
+
+  -- The program's own eligibility rules (for signed-in students; not seed / service-role inserts).
+  IF auth.uid() IS NOT NULL THEN
+    SELECT * INTO prof FROM public.profiles WHERE id = NEW.user_id;
+
+    IF s.min_grade IS NOT NULL AND s.min_grade > 0 THEN
+      required_grade := s.min_grade;
+      -- A renewing scholar (an earlier approval exists) is held to the renewal minimum instead,
+      -- same as the global minimum check in enforce_application_settings.
+      IF public.setting_bool('renewal_enabled', true)
+         AND EXISTS (SELECT 1 FROM public.applications WHERE user_id = NEW.user_id AND status = 'Approved') THEN
+        required_grade := public.setting_number('renewal_min_grade', required_grade);
+      END IF;
+      IF required_grade > 0 THEN
+        IF prof.average_grade IS NULL THEN
+          RAISE EXCEPTION 'Add your average grade to your profile before applying to % (minimum: %)', s.name, required_grade;
+        END IF;
+        IF prof.average_grade < required_grade THEN
+          RAISE EXCEPTION 'Your average grade (%) is below the % required for %', prof.average_grade, required_grade, s.name;
+        END IF;
+      END IF;
+    END IF;
+    IF s.year_levels IS NOT NULL AND cardinality(s.year_levels) > 0
+       AND (prof.year_level IS NULL OR NOT (prof.year_level = ANY (s.year_levels))) THEN
+      RAISE EXCEPTION '% is open to % students only', s.name, array_to_string(s.year_levels, ', ');
+    END IF;
+    IF btrim(COALESCE(s.municipality, '')) <> ''
+       AND lower(btrim(COALESCE(prof.municipality, ''))) <> lower(btrim(s.municipality)) THEN
+      RAISE EXCEPTION '% is for residents of % only', s.name, s.municipality;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ════════════════════════════════════════════════════════════════════
+-- 031_bugfixes_2
+-- ════════════════════════════════════════════════════════════════════
+-- More bug fixes, found by an independent multi-agent review of the whole branch. Run after 030.
+-- Safe to re-run.
+--
+--   1. apply_scholarship_award() only checked the budget on the transition INTO 'Approved'. Editing
+--      amount_approved on an application that is already Approved (the admin PUT route allows this on
+--      its own, with no other bound) skipped the check entirely, silently letting the amount go over
+--      the program's total_budget.
+--   2. notify_application_decision() only announced a reopen for Rejected -> Pending. A Waitlisted ->
+--      Pending change (the database allows it; today's UI doesn't offer the button, but a future admin
+--      feature or a direct update could still make it) sent no notification.
+--   3. facebook_url has client-side format validation (must be blank or start with http(s)://) but no
+--      matching database check, unlike every other setting — a write that skips the client (SQL editor,
+--      a future API route, a scripted RPC) could store an arbitrary value that is later rendered as an
+--      href on the public site.
+
+-- ── 1. Re-check the budget whenever amount_approved changes, not just on entering Approved ──
+CREATE OR REPLACE FUNCTION public.apply_scholarship_award()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  s public.scholarships%ROWTYPE;
+  committed NUMERIC;
+BEGIN
+  -- Runs on entering Approved, and again on any later edit to amount_approved while still Approved.
+  IF NEW.status <> 'Approved'
+     OR (OLD.status = 'Approved' AND NEW.amount_approved IS NOT DISTINCT FROM OLD.amount_approved) THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT * INTO s FROM public.scholarships WHERE id = NEW.scholarship_id;
+  IF NOT FOUND THEN RETURN NEW; END IF;
+
+  IF OLD.status <> 'Approved' AND NEW.amount_approved IS NULL AND COALESCE(s.amount, 0) > 0 THEN
+    NEW.amount_approved := s.amount;
+  END IF;
+
+  IF COALESCE(s.total_budget, 0) > 0 THEN
+    -- Exclude this row itself: on a fresh approval it isn't in the table as Approved yet; on a later
+    -- edit it already is, and would otherwise be double-counted against its own new amount.
+    committed := public.scholarship_committed(s.id)
+      - CASE WHEN OLD.status = 'Approved' THEN COALESCE(OLD.amount_approved, s.amount, 0) ELSE 0 END;
+    IF committed + COALESCE(NEW.amount_approved, 0) > s.total_budget THEN
+      RAISE EXCEPTION 'This would exceed the budget for % (% of % already committed)', s.name, committed, s.total_budget;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS tr_apply_scholarship_award ON public.applications;
+CREATE TRIGGER tr_apply_scholarship_award
+  BEFORE UPDATE OF status, amount_approved ON public.applications
+  FOR EACH ROW EXECUTE FUNCTION public.apply_scholarship_award();
+
+-- ── 2. Notify on any reopen back to Pending, not just from Rejected ──
+CREATE OR REPLACE FUNCTION public.notify_application_decision()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  sch TEXT;
+  remarks TEXT;
+BEGIN
+  IF NEW.status IS NOT DISTINCT FROM OLD.status THEN RETURN NEW; END IF;
+  SELECT name INTO sch FROM public.scholarships WHERE id = NEW.scholarship_id;
+  sch := COALESCE(sch, 'the scholarship');
+  remarks := CASE WHEN COALESCE(btrim(NEW.notes), '') <> '' THEN ' Remarks: ' || NEW.notes ELSE '' END;
+
+  IF NEW.status = 'Approved' THEN
+    PERFORM public.notify(NEW.user_id, 'Application Approved', 'Your application for ' || sch || ' has been approved.' || remarks,
+      'success', 'application', '/student-dashboard?section=application', 'applications', NEW.id);
+  ELSIF NEW.status = 'Rejected' THEN
+    PERFORM public.notify(NEW.user_id, 'Application Rejected', 'Your application for ' || sch || ' was not approved this time.' || remarks,
+      'error', 'application', '/student-dashboard?section=application', 'applications', NEW.id);
+  ELSIF NEW.status = 'Waitlisted' THEN
+    PERFORM public.notify(NEW.user_id, 'Application Waitlisted', 'Your application for ' || sch || ' has been placed on the waitlist. We will notify you if a slot opens.' || remarks,
+      'warning', 'application', '/student-dashboard?section=application', 'applications', NEW.id);
+  ELSIF NEW.status = 'Pending' AND OLD.status IN ('Rejected', 'Waitlisted') THEN
+    PERFORM public.notify(NEW.user_id, 'Application Reopened', 'Your application for ' || sch || ' has been reopened for review.' || remarks,
+      'info', 'application', '/student-dashboard?section=application', 'applications', NEW.id);
+  ELSIF NEW.status = 'Withdrawn' THEN
+    PERFORM public.notify(NEW.user_id, 'Application Withdrawn', 'You withdrew your application for ' || sch || '. Your documents are kept, and you can apply again while applications are open.',
+      'info', 'application', '/student-dashboard?section=application', 'applications', NEW.id);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- ── 3. facebook_url: same rule as the client (blank, or a full http(s) link) ──
+CREATE OR REPLACE FUNCTION public.validate_system_setting_ext()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  n NUMERIC;
+  s TEXT;
+BEGIN
+  CASE NEW.key
+    WHEN 'required_documents' THEN
+      IF jsonb_typeof(NEW.value) <> 'array' OR jsonb_array_length(NEW.value) > 12 THEN
+        RAISE EXCEPTION 'Required documents must be a list of at most 12 items';
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM jsonb_array_elements(NEW.value) e
+        WHERE jsonb_typeof(e) <> 'string' OR btrim(e #>> '{}') = '' OR length(e #>> '{}') > 60
+      ) THEN
+        RAISE EXCEPTION 'Each required document needs a name of up to 60 characters';
+      END IF;
+      IF (SELECT COUNT(DISTINCT lower(btrim(x))) FROM jsonb_array_elements_text(NEW.value) x) <> jsonb_array_length(NEW.value) THEN
+        RAISE EXCEPTION 'Required documents must not repeat';
+      END IF;
+    WHEN 'default_payment_method' THEN
+      IF (NEW.value #>> '{}') NOT IN ('Cash', 'Cheque') THEN
+        RAISE EXCEPTION 'Default payment method must be Cash or Cheque';
+      END IF;
+    WHEN 'default_payment_lead_days' THEN
+      IF jsonb_typeof(NEW.value) <> 'number' THEN RAISE EXCEPTION 'Lead days must be a number'; END IF;
+      n := (NEW.value #>> '{}')::numeric;
+      IF n < 0 OR n > 365 OR n <> trunc(n) THEN RAISE EXCEPTION 'Lead days must be a whole number from 0 to 365'; END IF;
+    WHEN 'renewal_enabled' THEN
+      IF jsonb_typeof(NEW.value) <> 'boolean' THEN RAISE EXCEPTION 'renewal_enabled must be on or off'; END IF;
+    WHEN 'renewal_min_grade' THEN
+      IF jsonb_typeof(NEW.value) <> 'number' THEN RAISE EXCEPTION 'Renewal grade must be a number'; END IF;
+      n := (NEW.value #>> '{}')::numeric;
+      IF n < 0 OR n > 100 THEN RAISE EXCEPTION 'Renewal grade must be between 0 and 100'; END IF;
+    WHEN 'max_renewals' THEN
+      IF jsonb_typeof(NEW.value) <> 'number' THEN RAISE EXCEPTION 'Max renewals must be a number'; END IF;
+      n := (NEW.value #>> '{}')::numeric;
+      IF n < 0 OR n > 10 OR n <> trunc(n) THEN RAISE EXCEPTION 'Max renewals must be a whole number from 0 to 10'; END IF;
+    WHEN 'facebook_url' THEN
+      IF jsonb_typeof(NEW.value) <> 'string' THEN RAISE EXCEPTION 'Facebook link must be text'; END IF;
+      s := btrim(NEW.value #>> '{}');
+      IF s <> '' AND s !~* '^https?://\S+$' THEN
+        RAISE EXCEPTION 'Enter a full link starting with https://';
+      END IF;
+      IF length(s) > 300 THEN RAISE EXCEPTION 'Facebook link is too long'; END IF;
+    ELSE
+      NULL;
+  END CASE;
+  RETURN NEW;
+END;
+$$;
+
+-- ── 4. A student can no longer blank out their own student ID once it is set ──
+-- government_id was removed from the app, so student_id_number is now the sole input to the
+-- duplicate-scholar check in scholar_verifications. guard_profile_update() already locks this field
+-- entirely once the student has applied; this closes the earlier window (before ever applying) where
+-- they could clear it via an ordinary profile edit. Setting it for the first time is still allowed.
+CREATE OR REPLACE FUNCTION public.guard_profile_update()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF pg_trigger_depth() > 1 OR auth.uid() IS NULL OR auth.uid() <> OLD.id THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.id IS DISTINCT FROM OLD.id
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at
+     OR NEW.is_active IS DISTINCT FROM OLD.is_active
+     OR (NEW.email IS DISTINCT FROM OLD.email AND OLD.email IS NOT NULL)
+     OR NEW.grade_verified_at IS DISTINCT FROM OLD.grade_verified_at
+     OR NEW.grade_term IS DISTINCT FROM OLD.grade_term THEN
+    RAISE EXCEPTION 'That part of your profile can only be changed by the office';
+  END IF;
+
+  IF NEW.average_grade IS DISTINCT FROM OLD.average_grade AND OLD.average_grade IS NOT NULL THEN
+    RAISE EXCEPTION 'Your average grade is verified by the office. Submit a grade update with your grade report.';
+  END IF;
+
+  IF (NEW.student_id_number IS DISTINCT FROM OLD.student_id_number OR NEW.government_id IS DISTINCT FROM OLD.government_id)
+     AND EXISTS (SELECT 1 FROM public.applications WHERE user_id = OLD.id AND status <> 'Withdrawn') THEN
+    RAISE EXCEPTION 'Your ID numbers are locked once you have applied. Contact the office to correct them.';
+  END IF;
+  IF OLD.student_id_number IS NOT NULL AND NEW.student_id_number IS NULL THEN
+    RAISE EXCEPTION 'Your student ID number can only be cleared by the office';
+  END IF;
+
+  IF public.documents_locked(OLD.id)
+     AND ROW(NEW.first_name, NEW.middle_name, NEW.last_name, NEW.sex, NEW.dob, NEW.school_name, NEW.course, NEW.year_level)
+         IS DISTINCT FROM
+         ROW(OLD.first_name, OLD.middle_name, OLD.last_name, OLD.sex, OLD.dob, OLD.school_name, OLD.course, OLD.year_level) THEN
+    RAISE EXCEPTION 'Your name, birth date, school, course and year level are locked while your scholarship is active. Contact the office to change them.';
+  END IF;
+
+  IF NEW.phone IS DISTINCT FROM OLD.phone AND btrim(COALESCE(NEW.phone, '')) <> '' AND NEW.phone !~ '^(09|\+639)[0-9]{9}$' THEN
+    RAISE EXCEPTION 'Use a valid PH mobile number (09XXXXXXXXX or +639XXXXXXXXX)';
+  END IF;
+  IF NEW.guardian_phone IS DISTINCT FROM OLD.guardian_phone AND btrim(COALESCE(NEW.guardian_phone, '')) <> '' AND NEW.guardian_phone !~ '^(09|\+639)[0-9]{9}$' THEN
+    RAISE EXCEPTION 'Use a valid PH mobile number for your guardian (09XXXXXXXXX or +639XXXXXXXXX)';
+  END IF;
+  IF NEW.zip_code IS DISTINCT FROM OLD.zip_code AND btrim(COALESCE(NEW.zip_code, '')) <> '' AND NEW.zip_code !~ '^[0-9]{4}$' THEN
+    RAISE EXCEPTION 'ZIP code must be 4 digits';
+  END IF;
+  IF NEW.year_level IS DISTINCT FROM OLD.year_level AND NEW.year_level IS NOT NULL
+     AND NEW.year_level NOT IN ('Grade 11', 'Grade 12', '1st Year', '2nd Year', '3rd Year', '4th Year') THEN
+    RAISE EXCEPTION 'Choose a year level from the list';
+  END IF;
+  IF (NEW.first_name IS DISTINCT FROM OLD.first_name AND btrim(COALESCE(NEW.first_name, '')) = '')
+     OR (NEW.last_name IS DISTINCT FROM OLD.last_name AND btrim(COALESCE(NEW.last_name, '')) = '') THEN
+    RAISE EXCEPTION 'First and last name cannot be blank';
+  END IF;
+  IF NEW.dob IS DISTINCT FROM OLD.dob AND NEW.dob IS NOT NULL AND (NEW.dob > CURRENT_DATE OR NEW.dob < DATE '1900-01-01') THEN
+    RAISE EXCEPTION 'Enter a valid date of birth';
+  END IF;
+  IF NEW.profile_picture_url IS DISTINCT FROM OLD.profile_picture_url AND NEW.profile_picture_url IS NOT NULL
+     AND NEW.profile_picture_url !~ '^https?://'
+     AND split_part(NEW.profile_picture_url, '/', 1) <> OLD.id::text THEN
+    RAISE EXCEPTION 'Invalid photo location';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ════════════════════════════════════════════════════════════════════
+-- 032_enforce_2fa_in_rls
+-- ════════════════════════════════════════════════════════════════════
+-- Close the two-factor bypass: the AAL2 check previously lived only in Next.js middleware and four
+-- API routes. Everything else (NotificationInbox, ProfileSection, AccountSettings, the admin panels,
+-- and any other component calling supabase.from(...) directly) talks straight to PostgREST, which
+-- never looked at the session's authentication assurance level. A stolen or replayed password-only
+-- (AAL1) session cookie for an account with a verified authenticator could read and write that
+-- person's own data through those direct calls, bypassing the 2FA gate entirely.
+--
+-- public.mfa_ok(_user) is added to every "own row" policy below. It is a no-op (always true) for the
+-- large majority of accounts that have never enrolled a second factor, so this changes nothing for
+-- them. For an account with a VERIFIED factor, it additionally requires the current request's JWT to
+-- carry aal2 — i.e. the second step must have been completed in this session.
+--
+-- Run after 031. Safe to re-run. Test with a real 2FA-enrolled account before relying on this: it
+-- reads Supabase Auth's internal auth.mfa_factors table and the auth.jwt() claims, both standard but
+-- unverified against a live project in this environment.
+
+CREATE OR REPLACE FUNCTION public.mfa_ok(_user UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT
+    NOT EXISTS (SELECT 1 FROM auth.mfa_factors WHERE user_id = _user AND status = 'verified')
+    OR COALESCE((auth.jwt() ->> 'aal') = 'aal2', false);
+$$;
+GRANT EXECUTE ON FUNCTION public.mfa_ok(UUID) TO authenticated;
+
+-- ── profiles ──
+DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
+CREATE POLICY "Users can view own profile" ON public.profiles
+  FOR SELECT USING (auth.uid() = id AND public.mfa_ok(id));
+DROP POLICY IF EXISTS "Users can insert own profile" ON public.profiles;
+CREATE POLICY "Users can insert own profile" ON public.profiles
+  FOR INSERT WITH CHECK (auth.uid() = id AND public.mfa_ok(id));
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
+CREATE POLICY "Users can update own profile" ON public.profiles
+  FOR UPDATE USING (auth.uid() = id AND public.mfa_ok(id));
+
+-- ── applications ──
+DROP POLICY IF EXISTS "Users can view own applications" ON public.applications;
+CREATE POLICY "Users can view own applications" ON public.applications
+  FOR SELECT USING (auth.uid() = user_id AND public.mfa_ok(user_id));
+DROP POLICY IF EXISTS "Users can insert own applications" ON public.applications;
+CREATE POLICY "Users can insert own applications" ON public.applications
+  FOR INSERT WITH CHECK (auth.uid() = user_id AND public.mfa_ok(user_id));
+DROP POLICY IF EXISTS "Users can update own open applications" ON public.applications;
+CREATE POLICY "Users can update own open applications" ON public.applications
+  FOR UPDATE
+  USING (auth.uid() = user_id AND status IN ('Pending', 'Waitlisted') AND public.mfa_ok(user_id))
+  WITH CHECK (auth.uid() = user_id AND status IN ('Pending', 'Waitlisted', 'Withdrawn') AND public.mfa_ok(user_id));
+
+-- ── documents ──
+DROP POLICY IF EXISTS "Users can view own documents" ON public.documents;
+CREATE POLICY "Users can view own documents" ON public.documents
+  FOR SELECT USING (auth.uid() = user_id AND public.mfa_ok(user_id));
+DROP POLICY IF EXISTS "Users can insert own documents" ON public.documents;
+CREATE POLICY "Users can insert own documents" ON public.documents
+  FOR INSERT WITH CHECK (auth.uid() = user_id AND public.mfa_ok(user_id));
+DROP POLICY IF EXISTS "Users can delete own documents" ON public.documents;
+CREATE POLICY "Users can delete own documents" ON public.documents
+  FOR DELETE USING (
+    auth.uid() = user_id
+    AND public.mfa_ok(user_id)
+    AND NOT public.documents_locked(user_id)
+    AND (
+      application_id IS NULL
+      OR status = 'Rejected'
+      OR EXISTS (
+        SELECT 1 FROM public.documents n
+         WHERE n.user_id = documents.user_id
+           AND n.document_type = documents.document_type
+           AND n.uploaded_at > documents.uploaded_at
+      )
+    )
+  );
+
+-- ── payments (read-only for the owner; writes go through SECURITY DEFINER functions) ──
+DROP POLICY IF EXISTS "Users can view own payments" ON public.payments;
+CREATE POLICY "Users can view own payments" ON public.payments
+  FOR SELECT USING (auth.uid() = user_id AND public.mfa_ok(user_id));
+
+-- ── notifications ──
+DROP POLICY IF EXISTS "Users can view own notifications" ON public.notifications;
+CREATE POLICY "Users can view own notifications" ON public.notifications
+  FOR SELECT USING (auth.uid() = user_id AND public.mfa_ok(user_id));
+DROP POLICY IF EXISTS "Users can update own notifications" ON public.notifications;
+CREATE POLICY "Users can update own notifications" ON public.notifications
+  FOR UPDATE USING (auth.uid() = user_id AND public.mfa_ok(user_id));
+DROP POLICY IF EXISTS "Users can delete own notifications" ON public.notifications;
+CREATE POLICY "Users can delete own notifications" ON public.notifications
+  FOR DELETE USING (auth.uid() = user_id AND public.mfa_ok(user_id));
+
+-- ── notification_preferences / user_settings ──
+DROP POLICY IF EXISTS "Users manage own notification preferences" ON public.notification_preferences;
+CREATE POLICY "Users manage own notification preferences" ON public.notification_preferences
+  FOR ALL USING (auth.uid() = user_id AND public.mfa_ok(user_id))
+  WITH CHECK (auth.uid() = user_id AND public.mfa_ok(user_id));
+
+DROP POLICY IF EXISTS "Users manage own settings" ON public.user_settings;
+CREATE POLICY "Users manage own settings" ON public.user_settings
+  FOR ALL USING (auth.uid() = user_id AND public.mfa_ok(user_id))
+  WITH CHECK (auth.uid() = user_id AND public.mfa_ok(user_id));
+
+-- ── grade_updates / data_requests / payment_issues (read-only for the owner) ──
+DROP POLICY IF EXISTS "Students view own grade updates" ON public.grade_updates;
+CREATE POLICY "Students view own grade updates" ON public.grade_updates
+  FOR SELECT USING (auth.uid() = user_id AND public.mfa_ok(user_id));
+
+DROP POLICY IF EXISTS "Students view own data requests" ON public.data_requests;
+CREATE POLICY "Students view own data requests" ON public.data_requests
+  FOR SELECT USING (auth.uid() = user_id AND public.mfa_ok(user_id));
+
+DROP POLICY IF EXISTS "Students view own payment issues" ON public.payment_issues;
+CREATE POLICY "Students view own payment issues" ON public.payment_issues
+  FOR SELECT USING (auth.uid() = user_id AND public.mfa_ok(user_id));
+
+-- ── scholar_verifications (identity/verification data) ──
+DROP POLICY IF EXISTS "Users can view own verifications" ON public.scholar_verifications;
+CREATE POLICY "Users can view own verifications" ON public.scholar_verifications
+  FOR SELECT USING (auth.uid() = user_id AND public.mfa_ok(user_id));
 
 NOTIFY pgrst, 'reload schema';
 

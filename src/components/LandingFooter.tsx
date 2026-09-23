@@ -2,11 +2,40 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useSystemSettings } from "@/hooks/use-system-settings";
+import { createClient } from "@/lib/supabase/client";
+import { isAdminRole } from "@/lib/settings";
+import type { User } from "@supabase/supabase-js";
 import { GraduationCap, Mail, Phone, MapPin, Facebook, ExternalLink } from "lucide-react";
 
 const LandingFooter = () => {
   const { settings } = useSystemSettings();
+  const router = useRouter();
+  const supabase = createClient();
+  const [user, setUser] = useState<User | null>(null);
+  const [dashboardHref, setDashboardHref] = useState("/student-dashboard");
+
+  // onAuthStateChange fires once immediately with the current session, then on every change.
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        supabase.from("user_roles").select("role").eq("user_id", session.user.id).maybeSingle()
+          .then(({ data }) => setDashboardHref(isAdminRole(data?.role) ? "/admin" : "/student-dashboard"));
+      }
+    });
+    return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push("/");
+    router.refresh();
+  };
+
   return (
     <>
       {/* Footer */}
@@ -64,8 +93,17 @@ const LandingFooter = () => {
           <div className="md:col-span-2 space-y-3">
             <h4 className="text-xs font-bold text-orange-300 tracking-widest uppercase">Account</h4>
             <ul className="space-y-2.5 text-sm text-white/65">
-              <li><Link href="/login" className="hover:text-orange-300 transition-colors duration-150">Login</Link></li>
-              <li><Link href="/register" className="hover:text-orange-300 transition-colors duration-150">Register</Link></li>
+              {user ? (
+                <>
+                  <li><Link href={dashboardHref} className="hover:text-orange-300 transition-colors duration-150">Dashboard</Link></li>
+                  <li><button onClick={handleLogout} className="hover:text-orange-300 transition-colors duration-150 cursor-pointer">Log out</button></li>
+                </>
+              ) : (
+                <>
+                  <li><Link href="/login" className="hover:text-orange-300 transition-colors duration-150">Login</Link></li>
+                  <li><Link href="/register" className="hover:text-orange-300 transition-colors duration-150">Register</Link></li>
+                </>
+              )}
             </ul>
           </div>
 

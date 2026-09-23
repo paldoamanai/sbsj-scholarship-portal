@@ -10,18 +10,12 @@ async function loadContext(id: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) } as const;
 
-  const { data: app } = await supabase
-    .from("applications")
-    .select("disbursement_status, user_id, status")
-    .eq("id", id)
-    .maybeSingle();
+  // Independent lookups, run together.
+  const [{ data: app }, { data: roleData }] = await Promise.all([
+    supabase.from("applications").select("disbursement_status, user_id, status").eq("id", id).maybeSingle(),
+    supabase.from("user_roles").select("role").eq("user_id", user.id).maybeSingle(),
+  ]);
   if (!app) return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) } as const;
-
-  const { data: roleData } = await supabase
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", user.id)
-    .maybeSingle();
 
   return {
     supabase,
@@ -68,11 +62,11 @@ export async function PUT(
     if (!parsed.success) {
       return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid details" }, { status: 400 });
     }
-    update = {
-      statement: parsed.data.statement,
-      household_income: parsed.data.household_income ?? null,
-      household_size: parsed.data.household_size ?? null,
-    };
+    // household_income/size are optional in the schema, so a caller may omit them entirely (the
+    // current UI always sends all three together, but a partial body must not wipe a saved value).
+    update = { statement: parsed.data.statement };
+    if ("household_income" in body) update.household_income = parsed.data.household_income ?? null;
+    if ("household_size" in body) update.household_size = parsed.data.household_size ?? null;
   }
 
   const { data, error } = await supabase

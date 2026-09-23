@@ -24,6 +24,7 @@ import { createClient } from "@/lib/supabase/client";
 import { rememberCredential } from "@/lib/credentials";
 import { DOC_MIME, uploadUserDocument } from "@/lib/documents";
 import { YEAR_LEVEL_OPTIONS, coursesFor, isCollege, isSHS, schoolsFor } from "@/lib/academics";
+import { useSystemSettings } from "@/hooks/use-system-settings";
 import { availabilityInfo, peso, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
 import type { RegistrationProfileFields } from "@/lib/registration-profile";
 
@@ -41,6 +42,8 @@ const requiredDocuments = [
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { settings } = useSystemSettings();
+  const minGrade = settings.min_grade_requirement || 85;
   const [step, setStep] = useState(0);
   const maxStep = useRef(0);
   maxStep.current = Math.max(maxStep.current, step);
@@ -131,7 +134,7 @@ export default function RegisterPage() {
       if (!academic.course.trim()) errs.course = "Required";
       if (!academic.yearLevel) errs.yearLevel = "Required";
       if (!academic.averageGrade.trim()) errs.averageGrade = "Required";
-      else if (parseFloat(academic.averageGrade) < 85) errs.averageGrade = "Must be 85 or above to be eligible";
+      else if (parseFloat(academic.averageGrade) < minGrade) errs.averageGrade = `Must be ${minGrade} or above to be eligible`;
     } else if (step === 3) {
       const missing = PREREQUISITE_DOCS.filter((doc) => !docFiles[doc]);
       if (missing.length > 0)
@@ -250,7 +253,7 @@ export default function RegisterPage() {
     else next();
   };
 
-  const gradeWarning = academic.averageGrade && parseFloat(academic.averageGrade) < 85;
+  const gradeWarning = academic.averageGrade && parseFloat(academic.averageGrade) < minGrade;
 
   const FieldError = ({ field }: { field: string }) =>
     errors[field] ? <p className="text-xs text-destructive mt-1">{errors[field]}</p> : null;
@@ -498,13 +501,13 @@ export default function RegisterPage() {
                       step="0.01"
                       value={academic.averageGrade}
                       onChange={(e) => updateAcademic("averageGrade", e.target.value)}
-                      placeholder="85% above"
+                      placeholder={`${minGrade}% above`}
                     />
                     <FieldError field="averageGrade" />
                     {gradeWarning && (
                       <div className="flex items-center gap-1.5 mt-2 text-xs text-destructive">
                         <AlertTriangle className="h-3.5 w-3.5" />
-                        Grade below 85 — application will be automatically rejected.
+                        Grade below {minGrade} — application will be automatically rejected.
                       </div>
                     )}
                   </div>

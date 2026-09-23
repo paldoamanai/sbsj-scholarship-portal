@@ -49,32 +49,32 @@ export async function POST(request: Request) {
     auth: { persistSession: false },
   });
 
+  // None of these five reads depends on another's result, so run them together rather than
+  // one round-trip at a time; the skip-checks below are then just as they were, in the same order.
+  const [{ data: setting }, { data: pref }, { data: master }, userResult, { data: roleRow }] = await Promise.all([
+    supabase.from("system_settings").select("value").eq("key", "email_notifications").maybeSingle(),
+    supabase.from("notification_preferences").select("email").eq("user_id", record.user_id).eq("category", record.category).maybeSingle(),
+    supabase.from("user_settings").select("email_enabled").eq("user_id", record.user_id).maybeSingle(),
+    supabase.auth.admin.getUserById(record.user_id),
+    supabase.from("user_roles").select("role").eq("user_id", record.user_id).maybeSingle(),
+  ]);
+
   // Global switch (defaults to on when the setting row is missing).
-  const { data: setting } = await supabase.from("system_settings").select("value").eq("key", "email_notifications").maybeSingle();
   if (setting && (setting.value === false || setting.value === "false")) {
     return NextResponse.json({ skipped: "email notifications are turned off" });
   }
 
   // Per-user preference for this category (missing row = on).
-  const { data: pref } = await supabase
-    .from("notification_preferences")
-    .select("email")
-    .eq("user_id", record.user_id)
-    .eq("category", record.category)
-    .maybeSingle();
   if (pref && pref.email === false) {
     return NextResponse.json({ skipped: "user turned off email for this category" });
   }
 
   // Master email switch. Account and system notices are always sent, like the per-category rule above.
-  if (["application", "verification", "payment", "program"].includes(record.category)) {
-    const { data: master } = await supabase.from("user_settings").select("email_enabled").eq("user_id", record.user_id).maybeSingle();
-    if (master && master.email_enabled === false) {
-      return NextResponse.json({ skipped: "user turned off email notifications" });
-    }
+  if (["application", "verification", "payment", "program"].includes(record.category) && master && master.email_enabled === false) {
+    return NextResponse.json({ skipped: "user turned off email notifications" });
   }
 
-  const { data: userData, error: userError } = await supabase.auth.admin.getUserById(record.user_id);
+  const { data: userData, error: userError } = userResult;
   const to = userData?.user?.email;
   if (userError || !to) {
     return NextResponse.json({ skipped: "recipient has no email" });
@@ -85,7 +85,6 @@ export async function POST(request: Request) {
   const url = record.link && site ? `${site}${record.link}` : null;
 
   // Where this person manages their emails (admins keep them on their profile).
-  const { data: roleRow } = await supabase.from("user_roles").select("role").eq("user_id", record.user_id).maybeSingle();
   const staff = ["admin", "super_admin"].includes(String(roleRow?.role));
   const prefsPath = staff ? "/admin?section=profile" : "/student-dashboard?section=settings";
   const prefsUrl = site ? `${site}${prefsPath}` : null;
