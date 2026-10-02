@@ -73,7 +73,6 @@ function Reveal({
 // ─── Section label (line — LABEL — line) ─────────────────────────────────────
 
 function SectionLabel({ children, light = false }: { children: string; light?: boolean }) {
-  const color = light ? "bg-orange-400/50 text-orange-300" : "bg-primary/35 text-primary";
   return (
     <div className="flex items-center gap-3 justify-center mb-5">
       <div className={cn("h-px w-10", light ? "bg-orange-400/30" : "bg-primary/25")} />

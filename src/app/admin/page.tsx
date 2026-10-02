@@ -11,15 +11,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import {
   LayoutDashboard, GraduationCap, FileText, Users, ShieldCheck,
   Plus, Pencil, Trash2, CheckCircle, XCircle, Clock, Eye,
-  Menu, X, Search, BookOpen, LogOut, Wallet, Banknote, BarChart3,
-  Bell, ScrollText, Settings as SettingsIcon, Lock, Download,
+  Menu, X, Search, LogOut, Wallet, Banknote, BarChart3,
+  Bell, ScrollText, Settings as SettingsIcon, Lock,
   FileDown, Receipt, Loader2, User, Upload, ArrowRight,
    ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle,
 } from "lucide-react";
