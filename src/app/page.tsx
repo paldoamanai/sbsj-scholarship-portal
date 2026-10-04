@@ -90,7 +90,7 @@ function SectionLabel({ children, light = false }: { children: string; light?: b
 const features = [
   { icon: Zap,      title: "Easy Application",     desc: "Apply in minutes with guided step-by-step forms — no confusion, no paperwork hassle." },
   { icon: BarChart3, title: "Real-Time Tracking",   desc: "Monitor every stage of your application and payment status from your personal dashboard." },
-  { icon: Wallet,   title: "Secure Disbursement",   desc: "Funds are released transparently with full audit trails and real-time notifications." },
+  { icon: Wallet,   title: "Secure Disbursement",   desc: "Funds are released with full audit trails and status updates." },
   { icon: Bell,     title: "Instant Notifications", desc: "Stay informed at every milestone with timely in-app and email alerts." },
 ];
 
@@ -98,8 +98,8 @@ const steps = [
   { icon: UserPlus,     title: "Register",     desc: "Create your account in under 2 minutes." },
   { icon: FileText,     title: "Apply",        desc: "Fill guided forms and upload documents." },
   { icon: Search,       title: "Review",       desc: "Admins verify your submission." },
-  { icon: CheckCircle2, title: "Get Approved", desc: "Receive your official approval." },
-  { icon: Wallet,       title: "Receive Funds", desc: "Funds released transparently." },
+  { icon: CheckCircle2, title: "Get Approved", desc: "We notify you once your application is approved." },
+  { icon: Wallet,       title: "Receive Funds", desc: "Claim your payout once it is released." },
 ];
 
 
@@ -149,6 +149,8 @@ export default function HomePage() {
       return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
     })
     .slice(0, 4);
+
+  const openCount = scholarships.filter((x) => x.availability === "open").length;
 
   const contactItems = [
     { icon: Mail,   label: "Email",  value: settings.contact_email },
@@ -236,12 +238,12 @@ export default function HomePage() {
               <GraduationCap className="h-4 w-4 text-orange-400" />
               Sangguniang Bayan ng San Jose
             </div>
-            <h1 className="text-5xl md:text-6xl lg:text-7xl font-display font-bold text-white leading-[1.05] tracking-tight drop-shadow-xl text-balance">
-              LGU Scholarship<br />
-              <span className="text-orange-400">Program</span>
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-display font-bold text-white leading-[1.05] tracking-tight drop-shadow-xl text-balance">
+              San Jose Scholarship &amp;<br />
+              <span className="text-orange-400">Financial Assistance</span>
             </h1>
             <p className="text-lg md:text-xl text-white/80 max-w-xl leading-relaxed">
-              Apply, track, and receive scholarships with full transparency — built for the students of San Jose, Occidental Mindoro.
+              Apply, track, and receive your scholarship or financial assistance with full transparency.
             </p>
             <div className="flex flex-wrap gap-3 pt-1">
               <Button
@@ -260,6 +262,19 @@ export default function HomePage() {
                 Sign In
               </Button>
             </div>
+            {openCount > 0 && (
+              <a
+                href="#scholarships"
+                className="inline-flex items-center gap-2 rounded-full border border-emerald-300/40 bg-emerald-500/15 px-4 py-1.5 text-sm font-medium text-white backdrop-blur-md hover:bg-emerald-500/25 transition-colors"
+              >
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                </span>
+                {openCount} {openCount === 1 ? "program is" : "programs are"} open now — see programs
+                <ArrowRight className="h-3.5 w-3.5" />
+              </a>
+            )}
           </div>
         </div>
 
@@ -271,7 +286,7 @@ export default function HomePage() {
           className="absolute bottom-10 left-1/2 z-10 -translate-x-1/2 animate-scroll-bounce"
         >
           <a
-            href="#platform"
+            href="#scholarships"
             aria-label="Scroll to learn more"
             className="flex h-10 w-10 items-center justify-center rounded-full border border-white/40 bg-black/30 text-white backdrop-blur-sm hover:bg-black/50 transition-colors"
           >
@@ -327,40 +342,8 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── Features ──────────────────────────────────── */}
-      <section id="platform" className="py-20 lg:py-28 bg-background">
-        <div className="container">
-          <Reveal className="text-center max-w-xl mx-auto mb-14">
-            <SectionLabel>Our Platform</SectionLabel>
-            <h2 className="text-3xl md:text-4xl font-display font-bold text-foreground mb-3 text-balance">
-              Everything You Need,{" "}
-              <span className="text-gradient-primary">In One Place</span>
-            </h2>
-            <p className="text-muted-foreground">
-              Built to make scholarship management seamless for students and administrators alike.
-            </p>
-          </Reveal>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {features.map((f, i) => (
-              <Reveal key={i} delay={i * 80}>
-                <Card className="card-glow border-border/60 h-full group cursor-default">
-                  <CardContent className="p-7 space-y-4">
-                    <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-100 to-orange-50 text-orange-600 transition-all duration-300 group-hover:from-primary group-hover:to-orange-400 group-hover:text-white">
-                      <f.icon className="h-6 w-6" />
-                    </div>
-                    <h3 className="text-lg font-display font-bold text-foreground">{f.title}</h3>
-                    <p className="text-sm text-muted-foreground leading-relaxed">{f.desc}</p>
-                  </CardContent>
-                </Card>
-              </Reveal>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* ── Scholarships ──────────────────────────────── */}
-      <section id="scholarships" className="py-20 lg:py-28 bg-orange-100/40">
+      <section id="scholarships" className="py-20 lg:py-28 bg-orange-100/40 scroll-mt-16">
         <div className="container">
           <Reveal className="text-center max-w-xl mx-auto mb-14">
             <SectionLabel>Scholarships</SectionLabel>
@@ -368,7 +351,9 @@ export default function HomePage() {
               Available <span className="text-gradient-primary">Programs</span>
             </h2>
             <p className="text-muted-foreground">
-              Browse and apply for scholarships that match your qualifications and goals.
+              {openCount > 0
+                ? `${openCount} ${openCount === 1 ? "program is" : "programs are"} accepting applications. Browse and apply for the ones that match your qualifications.`
+                : "Browse and apply for scholarships that match your qualifications and goals."}
             </p>
           </Reveal>
 
@@ -423,7 +408,7 @@ export default function HomePage() {
               From Application to{" "}
               <span className="text-gradient-primary">Disbursement</span>
             </h2>
-            <p className="text-muted-foreground">Five simple steps — fully transparent, start to finish.</p>
+            <p className="text-muted-foreground">Five simple steps, start to finish.</p>
           </Reveal>
 
           <div className="relative grid grid-cols-2 md:grid-cols-5 gap-6">
@@ -455,7 +440,7 @@ export default function HomePage() {
               Before You <span className="text-gradient-primary">Apply</span>
             </h2>
             <p className="text-muted-foreground">
-              What you need, and what makes you eligible. Individual programs may add their own conditions.
+              What you need, and what makes you eligible.
             </p>
           </Reveal>
 
@@ -499,8 +484,40 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ── Features ──────────────────────────────────── */}
+      <section id="platform" className="py-20 lg:py-28 bg-background">
+        <div className="container">
+          <Reveal className="text-center max-w-xl mx-auto mb-14">
+            <SectionLabel>Our Platform</SectionLabel>
+            <h2 className="text-3xl md:text-4xl font-display font-bold text-foreground mb-3 text-balance">
+              Everything You Need,{" "}
+              <span className="text-gradient-primary">In One Place</span>
+            </h2>
+            <p className="text-muted-foreground">
+              Built to make scholarship management seamless for students and administrators alike.
+            </p>
+          </Reveal>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {features.map((f, i) => (
+              <Reveal key={i} delay={i * 80}>
+                <Card className="card-glow border-border/60 h-full group cursor-default">
+                  <CardContent className="p-7 space-y-4">
+                    <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-100 to-orange-50 text-orange-600 transition-all duration-300 group-hover:from-primary group-hover:to-orange-400 group-hover:text-white">
+                      <f.icon className="h-6 w-6" />
+                    </div>
+                    <h3 className="text-lg font-display font-bold text-foreground">{f.title}</h3>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{f.desc}</p>
+                  </CardContent>
+                </Card>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ── FAQ ───────────────────────────────────────── */}
-      <section id="faq" className="py-20 lg:py-28 bg-background">
+      <section id="faq" className="py-20 lg:py-28 bg-orange-100/40">
         <div className="container max-w-3xl">
           <Reveal className="text-center max-w-xl mx-auto mb-12">
             <SectionLabel>FAQ</SectionLabel>
@@ -522,7 +539,7 @@ export default function HomePage() {
       </section>
 
       {/* ── Offered by ────────────────────────────────── */}
-      <section className="pb-16 bg-background">
+      <section className="pt-16 pb-0 bg-background">
         <div className="container max-w-3xl">
           <Reveal>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 rounded-2xl border border-border/60 bg-card px-6 py-5 text-center sm:text-left">

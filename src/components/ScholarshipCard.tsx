@@ -35,10 +35,16 @@ const ScholarshipCard = ({ program, globalMinGrade = 0, onApply, hideAmount = fa
 
   return (
     <>
-      <Card className={`hover-lift group overflow-hidden border-border/50 ${canApply ? "" : "opacity-90"}`}>
-        <div className="h-1 bg-gradient-primary" />
+      <Card className={`hover-lift group overflow-hidden ${canApply ? "border-primary/40 ring-2 ring-primary/15 shadow-md" : "border-border/50 opacity-75"}`}>
+        <div className={`${canApply ? "h-1.5" : "h-1"} bg-gradient-primary`} />
         <CardHeader className="pb-3">
-          <div className="flex items-start justify-between">
+          {canApply && (
+            <span className="mb-2 inline-flex w-fit items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              Open now
+            </span>
+          )}
+          <div className="flex items-start justify-between gap-2">
             <CardTitle className="text-lg font-display">{name}</CardTitle>
             <Badge variant="secondary" className="shrink-0">
               <Calendar className="mr-1 h-3 w-3" />

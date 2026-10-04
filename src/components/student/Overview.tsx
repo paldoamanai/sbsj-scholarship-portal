@@ -124,7 +124,13 @@ export default function Overview(p: OverviewProps) {
   }, [p.docStatus, p.gradeUpdates, p.issues, live, completeness, currentApp, profile]);
 
   // ── programs ──
-  const shownPrograms = showAllPrograms ? scholarships : scholarships.slice(0, 3);
+  // Open programs first, so students see what they can apply for right now.
+  const sortedPrograms = [...scholarships].sort((a, b) => Number(availabilityInfo(b).canApply) - Number(availabilityInfo(a).canApply));
+  const shownPrograms = showAllPrograms ? sortedPrograms : sortedPrograms.slice(0, 3);
+  const openCount = scholarships.filter((s) => availabilityInfo(s).canApply).length;
+  const canApplyNow = !currentApp && !applyBlocked;
+  // While the student can still apply, the program list moves to the top of the dashboard.
+  const promotePrograms = canApplyNow && openCount > 0;
   const programGrade = program
     ? requirementLines(program, currentApp?.is_renewal || applications.some((a) => a.status === "Approved") ? settings.renewal_min_grade : settings.min_grade_requirement)
     : [];
@@ -133,6 +139,70 @@ export default function Overview(p: OverviewProps) {
     : applyBlocked ? applyBlocked
     : !availabilityInfo(program).canApply ? availabilityInfo(program).label
     : null;
+
+  const programsPanel = (
+    <Panel className={promotePrograms ? "border-primary/40 ring-2 ring-primary/15" : ""}>
+      <div className={`px-5 py-4 border-b border-border flex items-center justify-between gap-2 ${promotePrograms ? "bg-accent/60 rounded-t-2xl" : ""}`}>
+        <div className="flex items-center gap-2">
+          <SectionTitle>Available Scholarships</SectionTitle>
+          {openCount > 0 && (
+            <span className="-mt-3 inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-[11px] font-semibold">
+              {openCount} open
+            </span>
+          )}
+        </div>
+        {scholarships.length > 3 && (
+          <button onClick={() => setShowAllPrograms((v) => !v)} className="text-xs text-primary font-semibold hover:text-primary/80 cursor-pointer -mt-3">
+            {showAllPrograms ? "Show fewer" : `Browse all ${scholarships.length}`}
+          </button>
+        )}
+      </div>
+      <div className="divide-y divide-border">
+        {scholarships.length === 0 && (
+          <div className="text-center py-10">
+            <GraduationCap className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
+            <p className="text-sm text-muted-foreground">No active scholarships right now.</p>
+          </div>
+        )}
+        {shownPrograms.map((s) => {
+          const av = availabilityInfo(s);
+          return (
+            <div key={s.id} className={`p-5 hover:bg-muted/40 transition-colors ${av.canApply ? "border-l-4 border-l-primary" : "opacity-75"}`}>
+              <div className="flex items-start justify-between gap-3 flex-wrap sm:flex-nowrap">
+                <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-semibold text-foreground break-words">{s.name}</p>
+                    {av.canApply && (
+                      <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-[11px] font-semibold">Open</span>
+                    )}
+                  </div>
+                  {s.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{s.description}</p>}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button onClick={() => setProgram(s)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-primary/30 text-primary text-xs font-semibold px-3 py-1.5 hover:bg-accent transition-colors cursor-pointer">
+                    Details <ArrowRight className="h-3 w-3" />
+                  </button>
+                  {av.canApply && canApplyNow && (
+                    <button onClick={() => p.onApply(s.id)}
+                      className="inline-flex items-center gap-1 rounded-lg bg-primary text-white text-xs font-semibold px-3 py-1.5 hover:bg-primary/90 transition-colors cursor-pointer">
+                      Apply
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-4 mt-3 text-xs text-muted-foreground">
+                {s.deadline && <span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {short(s.deadline)} ({deadlineLabel(s.deadline)})</span>}
+                <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" /> {slotsLabel(s)}</span>
+                {Number(s.amount) > 0 && <span>{peso(s.amount)} per scholar</span>}
+                {!av.canApply && <span className="font-semibold text-destructive">{av.label}</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Panel>
+  );
 
   const statusSub = !currentApp ? `No application for ${p.currentYear}`
     : currentApp.status === "Rejected" ? "See the reason below"
@@ -194,6 +264,8 @@ export default function Overview(p: OverviewProps) {
         )}
       </Panel>
 
+      {promotePrograms && programsPanel}
+
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={FileText} label="Application Status" value={currentApp?.status || "None"} sub={statusSub}
@@ -232,47 +304,7 @@ export default function Overview(p: OverviewProps) {
             </div>
           </Panel>
 
-          <Panel>
-            <div className="px-5 py-4 border-b border-border flex items-center justify-between">
-              <SectionTitle>Available Scholarships</SectionTitle>
-              {scholarships.length > 3 && (
-                <button onClick={() => setShowAllPrograms((v) => !v)} className="text-xs text-primary font-semibold hover:text-primary/80 cursor-pointer -mt-3">
-                  {showAllPrograms ? "Show fewer" : `Browse all ${scholarships.length}`}
-                </button>
-              )}
-            </div>
-            <div className="divide-y divide-border">
-              {scholarships.length === 0 && (
-                <div className="text-center py-10">
-                  <GraduationCap className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">No active scholarships right now.</p>
-                </div>
-              )}
-              {shownPrograms.map((s) => {
-                const av = availabilityInfo(s);
-                return (
-                  <div key={s.id} className="p-5 hover:bg-muted/40 transition-colors">
-                    <div className="flex items-start justify-between gap-3 flex-wrap sm:flex-nowrap">
-                      <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
-                        <p className="text-sm font-semibold text-foreground break-words">{s.name}</p>
-                        {s.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{s.description}</p>}
-                      </div>
-                      <button onClick={() => setProgram(s)}
-                        className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-primary/30 text-primary text-xs font-semibold px-3 py-1.5 hover:bg-accent transition-colors cursor-pointer">
-                        Details <ArrowRight className="h-3 w-3" />
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-4 mt-3 text-xs text-muted-foreground">
-                      {s.deadline && <span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {short(s.deadline)} ({deadlineLabel(s.deadline)})</span>}
-                      <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" /> {slotsLabel(s)}</span>
-                      {Number(s.amount) > 0 && <span>{peso(s.amount)} per scholar</span>}
-                      {!av.canApply && <span className="font-semibold text-destructive">{av.label}</span>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </Panel>
+          {!promotePrograms && programsPanel}
         </div>
 
         {/* Notifications */}

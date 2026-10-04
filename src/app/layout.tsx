@@ -7,11 +7,11 @@ const siteUrl =
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
-  title: "LGU SB San Jose Scholarship Portal",
+  title: "San Jose Scholarship & Financial Assistance",
   description:
     "Sangguniang Bayan ng San Jose Scholarship Portal. Apply, track, and receive scholarships transparently.",
   openGraph: {
-    title: "LGU SB San Jose Scholarship Portal",
+    title: "San Jose Scholarship & Financial Assistance",
     description:
       "Apply, track, and receive scholarships transparently. Built for the students of San Jose, Occidental Mindoro.",
     siteName: "SB San Jose Scholarship Portal",
@@ -21,7 +21,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "LGU SB San Jose Scholarship Portal",
+    title: "San Jose Scholarship & Financial Assistance",
     description: "Apply, track, and receive scholarships transparently.",
     images: ["/hero-bg.jpg"],
   },
