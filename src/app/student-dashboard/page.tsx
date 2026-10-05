@@ -53,7 +53,7 @@ const fmtSize = (n: number | null | undefined) => (n == null ? "" : n < 1024 * 1
 function DocStatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     Verified: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    Rejected: "bg-red-50 text-red-700 border-red-200",
+    Disapproved: "bg-red-50 text-red-700 border-red-200",
     Pending:  "bg-amber-50 text-amber-700 border-amber-200",
   };
   return <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${map[status] ?? map.Pending}`}>{status === "Pending" ? "Pending review" : status}</span>;
@@ -62,7 +62,7 @@ function DocStatusBadge({ status }: { status: string }) {
 // ── Section heading ────────────────────────────────────────────────────────────
 // ── Disbursement section ───────────────────────────────────────────────────────
 // Shared receipt-upload logic. The file goes to private storage first; the database then checks it
-// exists, its type and size, and refuses a second submission (unless staff rejected the first).
+// exists, its type and size, and refuses a second submission (unless staff disapproved the first).
 const RECEIPT_TYPES = ["application/pdf", "image/jpeg", "image/png"];
 
 function useReceiptUpload(onUploaded: () => void) {
@@ -162,13 +162,13 @@ const ISSUE_KINDS: Record<string, string> = {
 };
 
 // Everything a student sees to acknowledge a disbursed payment. Cash: file OR a confirmation; Cheque: file.
-// A submitted receipt is final unless the office rejected it, in which case a new one can be sent.
+// A submitted receipt is final unless the office disapproved it, in which case a new one can be sent.
 function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl }) {
   const { receiptFiles, uploadingFor, confirmed, setConfirmed, pickFile, upload, view } = ctl;
   const isCash = p.method === "Cash";
-  const rejected = p.receipt_review_status === "Rejected";
+  const disapproved = p.receipt_review_status === "Disapproved";
 
-  if (p.student_receipt_at && !rejected) {
+  if (p.student_receipt_at && !disapproved) {
     const accepted = p.receipt_review_status === "Accepted";
     return (
       <div className="space-y-1">
@@ -191,7 +191,7 @@ function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl 
   const canSubmit = !!file || (isCash && checked);
   return (
     <div className="space-y-2 min-w-[230px]">
-      {rejected && (
+      {disapproved && (
         <p className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
           <span className="font-semibold">Your receipt was not accepted.</span> {p.receipt_review_note}
         </p>
@@ -321,7 +321,7 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
         </Panel>
       )}
 
-      {payments.some((p) => p.status === "Disbursed" && (!p.student_receipt_at || p.receipt_review_status === "Rejected")) && (
+      {payments.some((p) => p.status === "Disbursed" && (!p.student_receipt_at || p.receipt_review_status === "Disapproved")) && (
         <div className="flex items-start gap-3 bg-accent border border-primary/20 rounded-xl px-4 py-3">
           <Upload className="h-4 w-4 text-primary mt-0.5 shrink-0" />
           <p className="text-sm text-primary">
@@ -702,8 +702,8 @@ export default function StudentDashboardPage() {
     .filter((d) => !d.application_id || d.application_id === currentApp?.id)
     .sort((a, b) => a.uploaded_at.localeCompare(b.uploaded_at))
     .forEach((d) => docByType.set(d.document_type, d));
-  // A rejected document has to be replaced, so it doesn't count as uploaded.
-  const docOk = (t: string) => { const d = docByType.get(t); return !!d && d.status !== "Rejected"; };
+  // A disapproved document has to be replaced, so it doesn't count as uploaded.
+  const docOk = (t: string) => { const d = docByType.get(t); return !!d && d.status !== "Disapproved"; };
   const docsUploaded = requiredDocTypes.filter(docOk).length;
   const missingDocs = requiredDocTypes.filter(t => !docOk(t));
 
@@ -1125,7 +1125,7 @@ export default function StudentDashboardPage() {
               {missingDocs.length > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
                   <p className="font-semibold mb-1">Upload your required documents first</p>
-                  <p className="mb-2">Missing or rejected: {missingDocs.join(", ")}.</p>
+                  <p className="mb-2">Missing or disapproved: {missingDocs.join(", ")}.</p>
                   <Button size="sm" variant="outline" className="rounded-xl border-amber-300 text-amber-800 hover:bg-amber-100"
                     onClick={() => { setApplyDialogOpen(false); setActive("documents"); }}>
                     <Upload className="mr-1 h-3 w-3" /> Go to Documents
@@ -1237,16 +1237,16 @@ export default function StudentDashboardPage() {
         {requiredDocTypes.map((docType) => {
           const uploaded = docByType.get(docType);
           const busy = uploadingDoc === docType;
-          const canRemove = !!uploaded && !locked && (!uploaded.application_id || uploaded.status === "Rejected");
-          const tone = !uploaded ? "" : uploaded.status === "Rejected" ? "border-red-200" : uploaded.status === "Verified" ? "border-emerald-200" : "border-amber-100";
+          const canRemove = !!uploaded && !locked && (!uploaded.application_id || uploaded.status === "Disapproved");
+          const tone = !uploaded ? "" : uploaded.status === "Disapproved" ? "border-red-200" : uploaded.status === "Verified" ? "border-emerald-200" : "border-amber-100";
           return (
             <Panel key={docType} className={`p-4 ${tone}`}>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${
-                    !uploaded ? "bg-muted" : uploaded.status === "Rejected" ? "bg-red-100" : uploaded.status === "Verified" ? "bg-emerald-100" : "bg-amber-100"}`}>
+                    !uploaded ? "bg-muted" : uploaded.status === "Disapproved" ? "bg-red-100" : uploaded.status === "Verified" ? "bg-emerald-100" : "bg-amber-100"}`}>
                     <FileText className={`h-5 w-5 ${
-                      !uploaded ? "text-muted-foreground" : uploaded.status === "Rejected" ? "text-red-600" : uploaded.status === "Verified" ? "text-emerald-600" : "text-amber-600"}`} />
+                      !uploaded ? "text-muted-foreground" : uploaded.status === "Disapproved" ? "text-red-600" : uploaded.status === "Verified" ? "text-emerald-600" : "text-amber-600"}`} />
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-foreground truncate">{docType}</p>
@@ -1278,10 +1278,10 @@ export default function StudentDashboardPage() {
                       }} />
                     <span className={`inline-flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 sm:py-1.5 text-xs font-semibold transition-colors ${
                       locked || busy ? "opacity-50 pointer-events-none border-border text-muted-foreground" :
-                      uploaded && uploaded.status !== "Rejected" ? "border-primary/20 text-primary hover:bg-accent" : "border-primary bg-primary text-white hover:bg-primary"
+                      uploaded && uploaded.status !== "Disapproved" ? "border-primary/20 text-primary hover:bg-accent" : "border-primary bg-primary text-white hover:bg-primary"
                     }`}>
                       {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
-                      {busy ? "Uploading…" : uploaded ? (uploaded.status === "Rejected" ? "Upload new" : "Replace") : "Upload"}
+                      {busy ? "Uploading…" : uploaded ? (uploaded.status === "Disapproved" ? "Upload new" : "Replace") : "Upload"}
                     </span>
                   </Label>
                 </div>
@@ -1292,7 +1292,7 @@ export default function StudentDashboardPage() {
                   <span className="text-[11px] text-muted-foreground">Uploaded {new Date(uploaded.uploaded_at).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</span>
                 </div>
               )}
-              {uploaded?.status === "Rejected" && uploaded.review_note && (
+              {uploaded?.status === "Disapproved" && uploaded.review_note && (
                 <p className="mt-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
                   <span className="font-semibold">Reason: </span>{uploaded.review_note}
                 </p>
@@ -1404,7 +1404,7 @@ export default function StudentDashboardPage() {
           applyBlocked={applyBlocked} approvedTotal={approvedTotal} locked={locked} isDisbursed={isDisbursed} currentYear={currentYear}
           docStatus={{
             uploaded: docsUploaded, required: requiredDocTypes.length, missing: missingDocs,
-            rejected: requiredDocTypes.filter((t) => docByType.get(t)?.status === "Rejected").map((t) => ({ type: t, note: docByType.get(t)?.review_note ?? null })),
+            disapproved: requiredDocTypes.filter((t) => docByType.get(t)?.status === "Disapproved").map((t) => ({ type: t, note: docByType.get(t)?.review_note ?? null })),
           }}
           onNavigate={setActive}
           onApply={(id) => { setApplyScholarshipId(id); setApplyDialogOpen(true); setActive("application"); }}

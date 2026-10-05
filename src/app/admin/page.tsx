@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import {
-  LayoutDashboard, GraduationCap, FileText, Users, ShieldCheck,
+  LayoutDashboard, GraduationCap, FileText, Users,
   Plus, Pencil, Trash2, CheckCircle, XCircle, Clock, Eye,
   Menu, X, Search, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock,
@@ -45,7 +45,6 @@ import type { Tables, Json } from "@/integrations/supabase/types";
 const sidebarItems = [
   { icon: LayoutDashboard, label: "Dashboard", key: "overview" },
   { icon: FileText, label: "Applicants", key: "applications" },
-  { icon: ShieldCheck, label: "Verification", key: "verification" },
   { icon: Users, label: "Students", key: "students" },
   { icon: GraduationCap, label: "Scholarships", key: "scholarships" },
   { icon: Wallet, label: "Funds", key: "funds" },
@@ -65,7 +64,7 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
   const map: Record<string, { icon: typeof CheckCircle; cls: string }> = {
     Approved:   { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
     Pending:    { icon: Clock,        cls: "bg-amber-50 text-amber-700 border-amber-200" },
-    Rejected:   { icon: XCircle,      cls: "bg-red-50 text-red-700 border-red-200" },
+    Disapproved:   { icon: XCircle,      cls: "bg-red-50 text-red-700 border-red-200" },
     Disbursed:  { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
     Processing: { icon: Clock,        cls: "bg-accent text-primary border-primary/20" },
     Waitlisted: { icon: Clock,        cls: "bg-muted text-muted-foreground border-border" },
@@ -153,12 +152,12 @@ export default function AdminDashboardPage() {
   const [payIssues, setPayIssues] = useState<Tables<"payment_issues">[]>([]);
   const [issueDialog, setIssueDialog] = useState<Tables<"payments"> | null>(null);
   const [issueResponse, setIssueResponse] = useState("");
-  const [rejectReceipt, setRejectReceipt] = useState<Tables<"payments"> | null>(null);
+  const [disapproveReceipt, setDisapproveReceipt] = useState<Tables<"payments"> | null>(null);
   const [receiptNote, setReceiptNote] = useState("");
   const [payBusy, setPayBusy] = useState(false);
   const [gradeReviews, setGradeReviews] = useState<Tables<"grade_updates">[]>([]);
   const [dataReqs, setDataReqs] = useState<Tables<"data_requests">[]>([]);
-  const [rejectGrade, setRejectGrade] = useState<Tables<"grade_updates"> | null>(null);
+  const [disapproveGrade, setDisapproveGrade] = useState<Tables<"grade_updates"> | null>(null);
   const [gradeNote, setGradeNote] = useState("");
   const [handleReq, setHandleReq] = useState<{ req: Tables<"data_requests">; status: "Completed" | "Declined" } | null>(null);
   const [reqResponse, setReqResponse] = useState("");
@@ -179,12 +178,11 @@ export default function AdminDashboardPage() {
   const [appPage, setAppPage] = useState(1);
   const [viewDocs, setViewDocs] = useState<AdminDoc[]>([]);
   const [allDocs, setAllDocs] = useState<DocSummary[]>([]);
-  const [rejectDoc, setRejectDoc] = useState<AdminDoc | null>(null);
-  const [rejectNote, setRejectNote] = useState("");
+  const [disapproveDoc, setDisapproveDoc] = useState<AdminDoc | null>(null);
+  const [disapproveNote, setDisapproveNote] = useState("");
   const [reviewingDoc, setReviewingDoc] = useState(false);
   const [docsLoading, setDocsLoading] = useState(false);
   const [auditLogs, setAuditLogs] = useState<Tables<"audit_logs">[]>([]);
-  const [verifications, setVerifications] = useState<Tables<"scholar_verifications">[]>([]);
   const [systemSettings, setSystemSettings] = useState<Tables<"system_settings">[]>([]);
   const [adminProfile, setAdminProfile] = useState<Tables<"profiles"> | null>(null);
   const [adminEmail, setAdminEmail] = useState("");
@@ -193,9 +191,6 @@ export default function AdminDashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [verifFilter, setVerifFilter] = useState("all");
-  const [verifAction, setVerifAction] = useState<{ v: Tables<"scholar_verifications">; status: "Verified" | "Flagged" | "Cleared" } | null>(null);
-  const [verifNotes, setVerifNotes] = useState("");
   const [notifications, setNotifications] = useState<Tables<"notifications">[]>([]);
   const [unreadTotal, setUnreadTotal] = useState(0);
   // The realtime handler is created once, so it reads the current section and link handler through refs.
@@ -242,13 +237,12 @@ export default function AdminDashboardPage() {
     if (!isAdminRole(role)) { router.push("/student-dashboard"); return; }
     setAdminRole(role as string);
 
-    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes] = await Promise.all([
+    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("scholarships").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
       supabase.from("payments").select("*").order("created_at", { ascending: false }),
       supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(1000),
-      supabase.from("scholar_verifications").select("*").order("created_at", { ascending: false }),
       supabase.from("system_settings").select("*"),
       supabase.from("profiles").select("*").eq("id", user.id).single(),
       supabase.from("notifications").select("*").eq("user_id", user.id).eq("muted", false).order("created_at", { ascending: false }).limit(NOTIFICATION_PAGE),
@@ -259,14 +253,13 @@ export default function AdminDashboardPage() {
       supabase.from("data_requests").select("*").order("created_at", { ascending: false }),
     ]);
 
-    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes].find((r) => r.error);
+    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes].find((r) => r.error);
     setLoadError(failed?.error ? failed.error.message : null);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (scholsRes.data) setScholarships(scholsRes.data);
     if (profilesRes.data) setProfiles(await withoutStaff(profilesRes.data));
     if (paymentsRes.data) setPayments(paymentsRes.data);
     if (logsRes.data) setAuditLogs(logsRes.data);
-    if (verifRes.data) setVerifications(verifRes.data);
     if (settingsRes.data) setSystemSettings(settingsRes.data);
     if (adminProfRes.data) setAdminProfile(adminProfRes.data);
     if (notifsRes.data) setNotifications(notifsRes.data);
@@ -368,25 +361,25 @@ export default function AdminDashboardPage() {
     }));
   };
 
-  // Verify or reject a document. The database records who reviewed it, audits it and notifies the student.
-  const reviewDocument = async (doc: AdminDoc, status: "Verified" | "Rejected" | "Pending", note?: string) => {
+  // Verify or disapprove a document. The database records who reviewed it, audits it and notifies the student.
+  const reviewDocument = async (doc: AdminDoc, status: "Verified" | "Disapproved" | "Pending", note?: string) => {
     setReviewingDoc(true);
     const { data, error } = await supabase.from("documents")
-      .update({ status, review_note: status === "Rejected" ? note?.trim() || null : null })
+      .update({ status, review_note: status === "Disapproved" ? note?.trim() || null : null })
       .eq("id", doc.id).select("status, review_note").single();
     setReviewingDoc(false);
     if (error || !data) { toast.error(error?.message ?? "Could not update the document"); return false; }
     const patch = (list: AdminDoc[]) => list.map((x) => (x.id === doc.id ? { ...x, status: data.status, note: data.review_note } : x));
     setViewDocs(patch); setStudentDocs(patch);
     setAllDocs((prev) => prev.map((x) => (x.id === doc.id ? { ...x, status: data.status } : x)));
-    toast.success(status === "Verified" ? `${doc.type} verified` : status === "Rejected" ? `${doc.type} rejected` : `${doc.type} reopened`);
+    toast.success(status === "Verified" ? `${doc.type} verified` : status === "Disapproved" ? `${doc.type} disapproved` : `${doc.type} reopened`);
     return true;
   };
 
   const docList = (docs: AdminDoc[], loading: boolean) => {
     if (loading) return <p className="text-sm text-muted-foreground">Loading…</p>;
     if (docs.length === 0) return <p className="text-sm text-muted-foreground">No documents uploaded</p>;
-    const tone = (st: string) => st === "Verified" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : st === "Rejected" ? "bg-red-50 text-red-700 border-red-200" : "bg-amber-50 text-amber-700 border-amber-200";
+    const tone = (st: string) => st === "Verified" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : st === "Disapproved" ? "bg-red-50 text-red-700 border-red-200" : "bg-amber-50 text-amber-700 border-amber-200";
     return (
       <ul className="mt-1 space-y-2">
         {docs.map((d) => (
@@ -405,11 +398,11 @@ export default function AdminDashboardPage() {
               </span>
               <span className="flex gap-1.5">
                 {d.status !== "Verified" && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={reviewingDoc} onClick={() => reviewDocument(d, "Verified")}>Verify</Button>}
-                {d.status !== "Rejected" && <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={reviewingDoc} onClick={() => { setRejectNote(""); setRejectDoc(d); }}>Reject</Button>}
+                {d.status !== "Disapproved" && <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={reviewingDoc} onClick={() => { setDisapproveNote(""); setDisapproveDoc(d); }}>Disapprove</Button>}
                 {d.status !== "Pending" && <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={reviewingDoc} onClick={() => reviewDocument(d, "Pending")}>Reset</Button>}
               </span>
             </div>
-            {d.status === "Rejected" && d.note && <p className="mt-1 text-xs text-destructive">Reason: {d.note}</p>}
+            {d.status === "Disapproved" && d.note && <p className="mt-1 text-xs text-destructive">Reason: {d.note}</p>}
           </li>
         ))}
       </ul>
@@ -605,13 +598,13 @@ export default function AdminDashboardPage() {
   const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment");
   const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The student hasn't submitted a receipt");
 
-  // Verify or reject a grade a student submitted. Verifying replaces their average grade; the student is notified.
-  const reviewGrade = async (g: Tables<"grade_updates">, status: "Verified" | "Rejected", note?: string) => {
+  // Verify or disapprove a grade a student submitted. Verifying replaces their average grade; the student is notified.
+  const reviewGrade = async (g: Tables<"grade_updates">, status: "Verified" | "Disapproved", note?: string) => {
     setPayBusy(true);
     const { error } = await supabase.rpc("review_grade_update", { _id: g.id, _status: status, _note: note ?? null });
     setPayBusy(false);
     if (error) { toast.error(error.message); return false; }
-    toast.success(status === "Verified" ? "Grade verified" : "Grade rejected — the student was asked to resubmit");
+    toast.success(status === "Verified" ? "Grade verified" : "Grade disapproved — the student was asked to resubmit");
     if (status === "Verified") {
       setViewStudent((v) => (v && v.id === g.user_id ? { ...v, average_grade: g.grade, grade_verified_at: new Date().toISOString(), grade_term: g.term } : v));
     }
@@ -630,13 +623,13 @@ export default function AdminDashboardPage() {
     loadData();
   };
 
-  // Accept or reject the receipt a student submitted. The student is notified by the database.
-  const reviewReceipt = async (p: Tables<"payments">, status: "Accepted" | "Rejected", note?: string) => {
+  // Accept or disapprove the receipt a student submitted. The student is notified by the database.
+  const reviewReceipt = async (p: Tables<"payments">, status: "Accepted" | "Disapproved", note?: string) => {
     setPayBusy(true);
     const { error } = await supabase.rpc("review_student_receipt", { _payment_id: p.id, _status: status, _note: note ?? null });
     setPayBusy(false);
     if (error) { toast.error(error.message); return false; }
-    toast.success(status === "Accepted" ? "Receipt accepted" : "Receipt rejected — the student was asked to resubmit");
+    toast.success(status === "Accepted" ? "Receipt accepted" : "Receipt disapproved — the student was asked to resubmit");
     loadData();
     return true;
   };
@@ -711,7 +704,6 @@ export default function AdminDashboardPage() {
   });
 
   const STUDENT_PAGE_SIZE = 10;
-  const verificationForUser = (userId: string) => verifications.find((v) => v.user_id === userId);
   // The Students section lists scholars only: accounts with at least one approved application.
   // Everyone else is reached through Applicants.
   const scholars = useMemo(() => {
@@ -755,7 +747,6 @@ export default function AdminDashboardPage() {
       "Year Level": p.year_level || "—",
       Grade: p.average_grade ?? "—",
       Applications: applications.filter((a) => a.user_id === p.id).length,
-      Verification: verificationForUser(p.id)?.verification_status || "—",
       Status: p.is_active ? "Active" : "Inactive",
     }));
     const wb = XLSX.utils.book_new();
@@ -764,11 +755,8 @@ export default function AdminDashboardPage() {
     toast.success("Excel downloaded");
   };
 
-  const verificationFor = (applicationId: string) => verifications.find((v) => v.application_id === applicationId);
   // Why an application can't be approved yet (null = it can). The database enforces the same rules.
   const approveBlocker = (a: { id: string; user_id: string }): string | null => {
-    const st = verificationFor(a.id)?.verification_status;
-    if (st !== "Verified" && st !== "Cleared") return "Verify the scholar first";
     const outstanding = parseSettings(systemSettings).required_documents.flatMap((type) => {
       // Latest copy wins: this application's own upload, or one still unattached.
       const latest = allDocs
@@ -779,7 +767,7 @@ export default function AdminDashboardPage() {
     return outstanding.length ? `Verify all required documents first: ${outstanding.join(", ")}` : null;
   };
   type AppRow = typeof applications[number];
-  type AppDecision = "Approved" | "Rejected" | "Waitlisted" | "Pending";
+  type AppDecision = "Approved" | "Disapproved" | "Waitlisted" | "Pending";
   const decideApplication = async (a: AppRow, status: AppDecision, note?: string) => {
     const blocker = status === "Approved" ? approveBlocker(a) : null;
     if (blocker) {
@@ -790,27 +778,11 @@ export default function AdminDashboardPage() {
     const update = { status, notes };
     const { error } = await supabase.from("applications").update(update).eq("id", a.id);
     if (error) { toast.error(error.message); return false; }
-    const auditAction = { Approved: "approve_application", Rejected: "reject_application", Waitlisted: "waitlist_application", Pending: "reopen_application" }[status];
+    const auditAction = { Approved: "approve_application", Disapproved: "disapprove_application", Waitlisted: "waitlist_application", Pending: "reopen_application" }[status];
     await logAudit(auditAction, "applications", a.id, { status: a.status }, update);
     // The student is notified by a database trigger (see migration 018).
     return true;
   };
-  const submitVerification = async () => {
-    if (!verifAction) return;
-    const { v, status } = verifAction;
-    const note = verifNotes.trim();
-    const { error } = await supabase.from("scholar_verifications").update({
-      verification_status: status,
-      verified_by: adminUserId || null,
-      verified_at: new Date().toISOString(),
-      notes: note ? (v.notes ? `${v.notes}\n${note}` : note) : v.notes,
-    }).eq("id", v.id);
-    if (error) { toast.error(error.message); return; }
-    await logAudit(`${status === "Verified" ? "verify" : status === "Flagged" ? "flag" : "clear"}_scholar`, "scholar_verifications", v.id, { status: v.verification_status }, { status, notes: note || null });
-    toast.success(`Marked ${status}`);
-    setVerifAction(null); setVerifNotes(""); loadData();
-  };
-
   const logAudit = async (action: string, entityType: string, entityId?: string, prev?: Json | null, next?: Json | null) => {
     const { data: { user } } = await supabase.auth.getUser();
     const { error } = await supabase.from("audit_logs").insert({
@@ -971,8 +943,8 @@ export default function AdminDashboardPage() {
     return {
       title: "Applicant Statistics", filters, count: count(apps), countLabel: "applications",
       sections: [
-        { name: "Summary", head: ["Metric", "Value"], rows: [["Total Applications", apps.length], ["Approved", approved], ["Rejected", by("Rejected")], ["Pending", by("Pending")], ["Waitlisted", by("Waitlisted")], ["Approval Rate (of all)", `${apps.length ? ((approved / apps.length) * 100).toFixed(1) : 0}%`]] },
-        { name: "By Scholarship Program", head: ["Scholarship", "Total", "Approved", "Rejected", "Pending", "Waitlisted"], rows: scholarships.filter((sc) => inProgram(sc.id)).map((sc) => { const l = apps.filter((a) => a.scholarship_id === sc.id); const c = (st: string) => l.filter((a) => a.status === st).length; return [sc.name, l.length, c("Approved"), c("Rejected"), c("Pending"), c("Waitlisted")]; }) },
+        { name: "Summary", head: ["Metric", "Value"], rows: [["Total Applications", apps.length], ["Approved", approved], ["Disapproved", by("Disapproved")], ["Pending", by("Pending")], ["Waitlisted", by("Waitlisted")], ["Approval Rate (of all)", `${apps.length ? ((approved / apps.length) * 100).toFixed(1) : 0}%`]] },
+        { name: "By Scholarship Program", head: ["Scholarship", "Total", "Approved", "Disapproved", "Pending", "Waitlisted"], rows: scholarships.filter((sc) => inProgram(sc.id)).map((sc) => { const l = apps.filter((a) => a.scholarship_id === sc.id); const c = (st: string) => l.filter((a) => a.status === st).length; return [sc.name, l.length, c("Approved"), c("Disapproved"), c("Pending"), c("Waitlisted")]; }) },
         { name: "By Sex", head: ["Sex", "Applicants", "Approved"], rows: group((a) => a.profiles?.sex || "") },
         { name: "By Year Level", head: ["Year Level", "Applicants", "Approved"], rows: group((a) => a.profiles?.year_level || "") },
         { name: "By School", head: ["School", "Applicants", "Approved"], rows: group((a) => a.profiles?.school_name || "") },
@@ -1066,18 +1038,18 @@ export default function AdminDashboardPage() {
     const applied = new Set(applications.map((a) => a.user_id));
     return profiles.filter((p) => !applied.has(p.id));
   }, [profiles, applications]);
-  // Required documents uploaded (and not rejected) by a student who hasn't applied yet.
+  // Required documents uploaded (and not disapproved) by a student who hasn't applied yet.
   const docsReady = (userId: string) => {
     const required = parseSettings(systemSettings).required_documents;
     const ok = required.filter((type) => {
       const latest = allDocs
         .filter((d) => d.user_id === userId && d.document_type === type && d.application_id === null)
         .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
-      return latest && latest.status !== "Rejected";
+      return latest && latest.status !== "Disapproved";
     });
     return { done: ok.length, total: required.length, missing: required.filter((t) => !ok.includes(t)) };
   };
-  // Applicant pipeline: registered → applied (pending) → approved / rejected → scholar → paid.
+  // Applicant pipeline: registered → applied (pending) → approved / disapproved → scholar → paid.
   const pipeline = useMemo(() => {
     const by = (st: string) => applications.filter((a) => a.status === st).length;
     const paidScholars = new Set(payments.filter((p) => p.status === "Disbursed").map((p) => p.user_id));
@@ -1087,7 +1059,7 @@ export default function AdminDashboardPage() {
       pending: by("Pending"),
       waitlisted: by("Waitlisted"),
       approved: by("Approved"),
-      rejected: by("Rejected"),
+      disapproved: by("Disapproved"),
       scholars: scholars.length,
       disbursed: paidScholars.size,
     };
@@ -1102,7 +1074,7 @@ export default function AdminDashboardPage() {
         { label: "Not yet applied", value: pipeline.notApplied, sub: "registered, no application", go: () => showApplicants("not_applied"), warn: pipeline.notApplied > 0 },
         { label: "Pending", value: pipeline.pending, sub: pipeline.waitlisted ? `+ ${pipeline.waitlisted} waitlisted` : "awaiting review", go: () => showApplicants("pending") },
         { label: "Approved", value: pipeline.approved, sub: "applications", go: () => showApplicants("approved") },
-        { label: "Rejected", value: pipeline.rejected, sub: "applications", go: () => showApplicants("rejected") },
+        { label: "Disapproved", value: pipeline.disapproved, sub: "applications", go: () => showApplicants("disapproved") },
         { label: "Students", value: pipeline.scholars, sub: "approved scholars", go: () => setActiveSection("students") },
         { label: "Disbursed", value: pipeline.disbursed, sub: "scholars paid", go: () => setActiveSection("disbursement") },
       ] as { label: string; value: number; sub: string; go: () => void; warn?: boolean }[]).map((t) => (
@@ -1259,7 +1231,6 @@ export default function AdminDashboardPage() {
               profiles={scholars}
               notApplied={notApplied}
               payments={payments}
-              verifications={verifications}
               auditLogs={auditLogs}
               firstName={adminProfile?.first_name}
               refreshing={refreshing}
@@ -1270,7 +1241,6 @@ export default function AdminDashboardPage() {
               onNavigate={(section, opts) => {
                 setActiveSection(section);
                 if (opts?.status !== undefined) { setStatusFilter(opts.status); setAppPage(1); }
-                if (opts?.verif !== undefined) setVerifFilter(opts.verif);
               }}
             />
           )}
@@ -1293,7 +1263,7 @@ export default function AdminDashboardPage() {
                       <SelectItem value="pending">Pending</SelectItem>
                       <SelectItem value="approved">Approved</SelectItem>
                       <SelectItem value="waitlisted">Waitlisted</SelectItem>
-                      <SelectItem value="rejected">Rejected</SelectItem>
+                      <SelectItem value="disapproved">Disapproved</SelectItem>
                       <SelectItem value="withdrawn">Withdrawn</SelectItem>
                     </SelectContent>
                   </Select>
@@ -1360,11 +1330,11 @@ export default function AdminDashboardPage() {
                                   if (await decideApplication(a, "Waitlisted")) { toast.info(`${name} waitlisted`); loadData(); }
                                 }}><Hourglass className="h-4 w-4 text-warning" /></Button>
                               )}
-                              <Button size="icon" variant="ghost" title="Reject" onClick={async () => {
-                                if (await decideApplication(a, "Rejected")) { toast.error(`${name} rejected`); loadData(); }
+                              <Button size="icon" variant="ghost" title="Disapprove" onClick={async () => {
+                                if (await decideApplication(a, "Disapproved")) { toast.error(`${name} disapproved`); loadData(); }
                               }}><XCircle className="h-4 w-4 text-destructive" /></Button>
                             </>)}
-                            {a.status === "Rejected" && (
+                            {a.status === "Disapproved" && (
                               <Button size="icon" variant="ghost" title="Reopen" onClick={async () => {
                                 if (await decideApplication(a, "Pending")) { toast.success(`${name} reopened`); loadData(); }
                               }}><RotateCcw className="h-4 w-4" /></Button>
@@ -1446,11 +1416,11 @@ export default function AdminDashboardPage() {
                             }}><Hourglass className="mr-1 h-4 w-4" /> Waitlist</Button>
                           )}
                           <Button variant="destructive" className="flex-1" onClick={async () => {
-                            if (await decideApplication(viewApp, "Rejected", remarks)) { toast.error("Rejected"); setViewApp(null); loadData(); }
-                          }}><XCircle className="mr-1 h-4 w-4" /> Reject</Button>
+                            if (await decideApplication(viewApp, "Disapproved", remarks)) { toast.error("Disapproved"); setViewApp(null); loadData(); }
+                          }}><XCircle className="mr-1 h-4 w-4" /> Disapprove</Button>
                         </div>
                       )}
-                      {viewApp.status === "Rejected" && (
+                      {viewApp.status === "Disapproved" && (
                         <Button variant="outline" className="w-full" onClick={async () => {
                           if (await decideApplication(viewApp, "Pending", remarks)) { toast.success("Reopened"); setViewApp(null); loadData(); }
                         }}><RotateCcw className="mr-1 h-4 w-4" /> Reopen for review</Button>
@@ -1640,37 +1610,33 @@ export default function AdminDashboardPage() {
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Name</TableHead><TableHead>Student ID</TableHead><TableHead>School / Course</TableHead><TableHead>Year</TableHead><TableHead>Grade</TableHead><TableHead>Apps</TableHead><TableHead>Verification</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Name</TableHead><TableHead>Student ID</TableHead><TableHead>School / Course</TableHead><TableHead>Year</TableHead><TableHead>Grade</TableHead><TableHead>Apps</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">{scholars.length === 0 ? "No scholars yet. Applicants appear here once approved." : "No scholars match your search"}</TableCell></TableRow>}
-                    {pagedStudents.map((p) => {
-                      const ver = verificationForUser(p.id);
-                      return (
-                        <TableRow key={p.id}>
-                          <TableCell>
-                            <p className="font-medium">{p.first_name} {p.last_name}</p><p className="text-xs text-muted-foreground">{p.email}</p>
-                            <div className="mt-1 flex gap-1 flex-wrap">
-                              {gradeReviews.some((g) => g.user_id === p.id && g.status === "Pending") && <Badge variant="secondary" className="text-[10px]">Grade to review</Badge>}
-                              {dataReqs.some((r) => r.user_id === p.id && r.status === "Pending") && <Badge variant="destructive" className="text-[10px]">Deletion requested</Badge>}
-                            </div>
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">{p.student_id_number || "—"}</TableCell>
-                          <TableCell className="text-xs"><p>{p.school_name || "—"}</p><p className="text-muted-foreground">{p.course || "—"}</p></TableCell>
-                          <TableCell>{p.year_level || "—"}</TableCell>
-                          <TableCell>{p.average_grade ?? "—"}</TableCell>
-                          <TableCell>{applications.filter((a) => a.user_id === p.id).length}</TableCell>
-                          <TableCell>{ver ? <Badge variant={ver.verification_status === "Verified" ? "default" : ver.verification_status === "Flagged" ? "destructive" : "secondary"}>{ver.verification_status}</Badge> : "—"}</TableCell>
-                          <TableCell><Badge variant={p.is_active ? "default" : "secondary"}>{p.is_active ? "Active" : "Inactive"}</Badge></TableCell>
-                          <TableCell className="text-right space-x-1">
-                            <Button size="icon" variant="ghost" title="View" onClick={() => setViewStudent(p)}><Eye className="h-4 w-4" /></Button>
-                            <Button size="icon" variant="ghost" title={p.is_active ? "Deactivate" : "Activate"} onClick={() => toggleStudentActive(p)}>
-                              <Power className={`h-4 w-4 ${p.is_active ? "text-destructive" : "text-success"}`} />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
+                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">{scholars.length === 0 ? "No scholars yet. Applicants appear here once approved." : "No scholars match your search"}</TableCell></TableRow>}
+                    {pagedStudents.map((p) => (
+                      <TableRow key={p.id}>
+                        <TableCell>
+                          <p className="font-medium">{p.first_name} {p.last_name}</p><p className="text-xs text-muted-foreground">{p.email}</p>
+                          <div className="mt-1 flex gap-1 flex-wrap">
+                            {gradeReviews.some((g) => g.user_id === p.id && g.status === "Pending") && <Badge variant="secondary" className="text-[10px]">Grade to review</Badge>}
+                            {dataReqs.some((r) => r.user_id === p.id && r.status === "Pending") && <Badge variant="destructive" className="text-[10px]">Deletion requested</Badge>}
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{p.student_id_number || "—"}</TableCell>
+                        <TableCell className="text-xs"><p>{p.school_name || "—"}</p><p className="text-muted-foreground">{p.course || "—"}</p></TableCell>
+                        <TableCell>{p.year_level || "—"}</TableCell>
+                        <TableCell>{p.average_grade ?? "—"}</TableCell>
+                        <TableCell>{applications.filter((a) => a.user_id === p.id).length}</TableCell>
+                        <TableCell><Badge variant={p.is_active ? "default" : "secondary"}>{p.is_active ? "Active" : "Inactive"}</Badge></TableCell>
+                        <TableCell className="text-right space-x-1">
+                          <Button size="icon" variant="ghost" title="View" onClick={() => setViewStudent(p)}><Eye className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" title={p.is_active ? "Deactivate" : "Activate"} onClick={() => toggleStudentActive(p)}>
+                            <Power className={`h-4 w-4 ${p.is_active ? "text-destructive" : "text-success"}`} />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
                   </TableBody>
                 </Table>
               </Card>
@@ -1882,17 +1848,17 @@ export default function AdminDashboardPage() {
                                     </span>
                                   )}
                                   <div className="flex items-center gap-1.5">
-                                    <Badge variant={p.receipt_review_status === "Accepted" ? "default" : "secondary"} className={p.receipt_review_status === "Rejected" ? "text-destructive" : undefined}>
+                                    <Badge variant={p.receipt_review_status === "Accepted" ? "default" : "secondary"} className={p.receipt_review_status === "Disapproved" ? "text-destructive" : undefined}>
                                       {p.receipt_review_status === "Pending" ? "To review" : p.receipt_review_status}
                                     </Badge>
                                     {p.receipt_review_status !== "Accepted" && (
                                       <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={payBusy} onClick={() => reviewReceipt(p, "Accepted")}>Accept</Button>
                                     )}
-                                    {p.receipt_review_status !== "Rejected" && (
-                                      <Button size="sm" variant="outline" className="h-6 px-2 text-xs text-destructive" disabled={payBusy} onClick={() => { setReceiptNote(""); setRejectReceipt(p); }}>Reject</Button>
+                                    {p.receipt_review_status !== "Disapproved" && (
+                                      <Button size="sm" variant="outline" className="h-6 px-2 text-xs text-destructive" disabled={payBusy} onClick={() => { setReceiptNote(""); setDisapproveReceipt(p); }}>Disapprove</Button>
                                     )}
                                   </div>
-                                  {p.receipt_review_status === "Rejected" && p.receipt_review_note && <p className="text-xs text-destructive">{p.receipt_review_note}</p>}
+                                  {p.receipt_review_status === "Disapproved" && p.receipt_review_note && <p className="text-xs text-destructive">{p.receipt_review_note}</p>}
                                 </div>
                               ) : <Badge variant="secondary">Awaiting</Badge>}
                           </TableCell>
@@ -2163,7 +2129,6 @@ export default function AdminDashboardPage() {
                 <CardContent>
                   <NotificationPreferences userId={adminUserId} email={adminEmail} categories={[
                     { key: "application", label: "Applications", hint: "New applications submitted" },
-                    { key: "verification", label: "Verification", hint: "Duplicate ID flags" },
                     { key: "payment", label: "Payments", hint: "Receipts, method choices and unpaid approvals" },
                   ]} />
                 </CardContent>
@@ -2172,89 +2137,6 @@ export default function AdminDashboardPage() {
           )}
 
           {/* SETTINGS */}
-          {/* SCHOLAR VERIFICATION */}
-          {activeSection === "verification" && (
-            <div className="space-y-4 animate-fade-in">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-xl font-display font-bold">Scholar Verification</h2>
-                <Select value={verifFilter} onValueChange={setVerifFilter}>
-                  <SelectTrigger className="w-40"><SelectValue placeholder="Status" /></SelectTrigger>
-                  <SelectContent>
-                    {["all", "Pending", "Flagged", "Verified", "Cleared"].map((st) => (
-                      <SelectItem key={st} value={st}>{st === "all" ? "All statuses" : st}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Card className="border-warning/30 bg-warning/5">
-                <CardContent className="py-3 flex items-start gap-2">
-                  <ShieldCheck className="h-4 w-4 text-warning mt-0.5" />
-                  <p className="text-sm text-muted-foreground">Applications can only be approved once their verification is Verified or Cleared. Flagged records share a student ID with another applicant.</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <Table>
-                  <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Applicant</TableHead><TableHead>Application</TableHead><TableHead>Student ID</TableHead><TableHead>Existing Scholarship</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
-                  </TableRow></TableHeader>
-                  <TableBody>
-                    {verifications.filter((v) => verifFilter === "all" || v.verification_status === verifFilter).length === 0 && (
-                      <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No verification records</TableCell></TableRow>
-                    )}
-                    {verifications.filter((v) => verifFilter === "all" || v.verification_status === verifFilter).map((v) => {
-                      const prof = profiles.find(p => p.id === v.user_id);
-                      const name = prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() : "Unknown";
-                      const app = applications.find((a) => a.id === v.application_id);
-                      return (
-                        <TableRow key={v.id}>
-                          <TableCell className="font-medium">{name}</TableCell>
-                          <TableCell className="text-xs">
-                            {app ? (<><div>{app.scholarships?.name || "—"}</div><div className="text-muted-foreground">{app.status}</div></>) : "—"}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">{v.student_id_number || "—"}</TableCell>
-                          <TableCell>
-                            {v.has_existing_scholarship ? <Badge variant="destructive">Yes</Badge> : <Badge variant="outline">No</Badge>}
-                            {v.existing_scholarship_details && <p className="text-xs text-muted-foreground mt-1 max-w-[200px]">{v.existing_scholarship_details}</p>}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={v.verification_status === "Verified" ? "default" : v.verification_status === "Flagged" ? "destructive" : "secondary"}>
-                              {v.verification_status}
-                            </Badge>
-                            {v.notes && <p className="text-xs text-muted-foreground mt-1 max-w-[200px] whitespace-pre-line">{v.notes}</p>}
-                          </TableCell>
-                          <TableCell className="text-right space-x-1">
-                            {(v.verification_status === "Pending" || v.verification_status === "Flagged") && (
-                              <Button size="sm" onClick={() => { setVerifNotes(""); setVerifAction({ v, status: "Verified" }); }}>Verify</Button>
-                            )}
-                            {v.verification_status === "Pending" && (
-                              <Button size="sm" variant="destructive" onClick={() => { setVerifNotes(""); setVerifAction({ v, status: "Flagged" }); }}>Flag</Button>
-                            )}
-                            {v.verification_status === "Flagged" && (
-                              <Button size="sm" variant="outline" onClick={() => { setVerifNotes(""); setVerifAction({ v, status: "Cleared" }); }}>Clear</Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </Card>
-              <Dialog open={!!verifAction} onOpenChange={(o) => { if (!o) setVerifAction(null); }}>
-                <DialogContent>
-                  <DialogHeader><DialogTitle>Mark as {verifAction?.status}</DialogTitle></DialogHeader>
-                  <div className="space-y-2">
-                    <Label className="text-xs">Notes (optional)</Label>
-                    <Textarea value={verifNotes} onChange={(e) => setVerifNotes(e.target.value)} placeholder="Reason or evidence..." />
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setVerifAction(null)}>Cancel</Button>
-                    <Button onClick={submitVerification}>Confirm</Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </div>
-          )}
-
           {/* AUDIT LOGS */}
           {activeSection === "audit-logs" && (
             <div className="space-y-4 animate-fade-in">
@@ -2389,7 +2271,6 @@ export default function AdminDashboardPage() {
           <DialogHeader><DialogTitle>Student Details</DialogTitle></DialogHeader>
           {viewStudent && (() => {
             const stuApps = applications.filter((a) => a.user_id === viewStudent.id);
-            const ver = verificationForUser(viewStudent.id);
             const field = (label: string, value: React.ReactNode) => (
               <div><Label className="text-muted-foreground text-xs">{label}</Label><div className="font-medium">{value || "—"}</div></div>
             );
@@ -2414,7 +2295,6 @@ export default function AdminDashboardPage() {
                       <Badge variant={viewStudent.grade_verified_at ? "default" : "secondary"}>{viewStudent.grade_verified_at ? `Verified${viewStudent.grade_term ? ` · ${viewStudent.grade_term}` : ""}` : "Self-declared"}</Badge>
                     </span>) : null)}
                   {field("Account", <Badge variant={viewStudent.is_active ? "default" : "secondary"}>{viewStudent.is_active ? "Active" : "Inactive"}</Badge>)}
-                  {field("Verification", ver ? <Badge variant={ver.verification_status === "Verified" ? "default" : ver.verification_status === "Flagged" ? "destructive" : "secondary"}>{ver.verification_status}</Badge> : null)}
                 </div>
                 <div>
                   <Label className="text-xs">Applications ({stuApps.length})</Label>
@@ -2441,15 +2321,15 @@ export default function AdminDashboardPage() {
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <span><span className="font-medium">{g.grade}</span> · {g.term} · {new Date(g.created_at).toLocaleDateString()}</span>
                               <span className="flex items-center gap-1.5">
-                                <Badge variant={g.status === "Verified" ? "default" : "secondary"} className={g.status === "Rejected" ? "text-destructive" : undefined}>{g.status}</Badge>
+                                <Badge variant={g.status === "Verified" ? "default" : "secondary"} className={g.status === "Disapproved" ? "text-destructive" : undefined}>{g.status}</Badge>
                                 <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openStoredFile(g.file_path, "No grade report on file")}>View report</Button>
                                 {g.status === "Pending" && (<>
                                   <Button size="sm" className="h-7 text-xs" disabled={payBusy} onClick={() => reviewGrade(g, "Verified")}>Verify</Button>
-                                  <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={payBusy} onClick={() => { setGradeNote(""); setRejectGrade(g); }}>Reject</Button>
+                                  <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={payBusy} onClick={() => { setGradeNote(""); setDisapproveGrade(g); }}>Disapprove</Button>
                                 </>)}
                               </span>
                             </div>
-                            {g.status === "Rejected" && g.review_note && <p className="mt-1 text-xs text-destructive">Reason: {g.review_note}</p>}
+                            {g.status === "Disapproved" && g.review_note && <p className="mt-1 text-xs text-destructive">Reason: {g.review_note}</p>}
                           </li>
                         ))}
                       </ul>
@@ -2499,18 +2379,18 @@ export default function AdminDashboardPage() {
           })()}
         </DialogContent>
       </Dialog>
-      <Dialog open={!!rejectGrade} onOpenChange={(o) => { if (!o) setRejectGrade(null); }}>
+      <Dialog open={!!disapproveGrade} onOpenChange={(o) => { if (!o) setDisapproveGrade(null); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Reject the grade submission</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Disapprove the grade submission</DialogTitle></DialogHeader>
           <div>
             <Label className="text-xs">Reason (shown to the student, who will be asked to resubmit)</Label>
             <Textarea value={gradeNote} onChange={(e) => setGradeNote(e.target.value)} placeholder="e.g. The grade report is unreadable or doesn't show the average." />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRejectGrade(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setDisapproveGrade(null)}>Cancel</Button>
             <Button variant="destructive" disabled={payBusy || !gradeNote.trim()} onClick={async () => {
-              if (rejectGrade && await reviewGrade(rejectGrade, "Rejected", gradeNote)) setRejectGrade(null);
-            }}>Reject grade</Button>
+              if (disapproveGrade && await reviewGrade(disapproveGrade, "Disapproved", gradeNote)) setDisapproveGrade(null);
+            }}>Disapprove grade</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2531,18 +2411,18 @@ export default function AdminDashboardPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!rejectReceipt} onOpenChange={(o) => { if (!o) setRejectReceipt(null); }}>
+      <Dialog open={!!disapproveReceipt} onOpenChange={(o) => { if (!o) setDisapproveReceipt(null); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Reject the student&apos;s receipt</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Disapprove the student&apos;s receipt</DialogTitle></DialogHeader>
           <div>
             <Label className="text-xs">Reason (shown to the student, who will be asked to resubmit)</Label>
             <Textarea value={receiptNote} onChange={(e) => setReceiptNote(e.target.value)} placeholder="e.g. The signature is missing — please upload the signed voucher." />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRejectReceipt(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setDisapproveReceipt(null)}>Cancel</Button>
             <Button variant="destructive" disabled={payBusy || !receiptNote.trim()} onClick={async () => {
-              if (rejectReceipt && await reviewReceipt(rejectReceipt, "Rejected", receiptNote)) setRejectReceipt(null);
-            }}>Reject receipt</Button>
+              if (disapproveReceipt && await reviewReceipt(disapproveReceipt, "Disapproved", receiptNote)) setDisapproveReceipt(null);
+            }}>Disapprove receipt</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2573,18 +2453,18 @@ export default function AdminDashboardPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!rejectDoc} onOpenChange={(o) => { if (!o) setRejectDoc(null); }}>
+      <Dialog open={!!disapproveDoc} onOpenChange={(o) => { if (!o) setDisapproveDoc(null); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Reject {rejectDoc?.type}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Disapprove {disapproveDoc?.type}</DialogTitle></DialogHeader>
           <div>
             <Label className="text-xs">Reason (shown to the student)</Label>
-            <Textarea value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} placeholder="e.g. The photo is blurry — please upload a clear copy." />
+            <Textarea value={disapproveNote} onChange={(e) => setDisapproveNote(e.target.value)} placeholder="e.g. The photo is blurry — please upload a clear copy." />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRejectDoc(null)}>Cancel</Button>
-            <Button variant="destructive" disabled={reviewingDoc || !rejectNote.trim()} onClick={async () => {
-              if (rejectDoc && await reviewDocument(rejectDoc, "Rejected", rejectNote)) setRejectDoc(null);
-            }}>Reject document</Button>
+            <Button variant="outline" onClick={() => setDisapproveDoc(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={reviewingDoc || !disapproveNote.trim()} onClick={async () => {
+              if (disapproveDoc && await reviewDocument(disapproveDoc, "Disapproved", disapproveNote)) setDisapproveDoc(null);
+            }}>Disapprove document</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

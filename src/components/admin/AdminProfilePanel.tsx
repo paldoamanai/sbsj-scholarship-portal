@@ -270,7 +270,6 @@ export default function AdminProfilePanel({ profile, email, userId, role, auditL
         <CardContent>
           <NotificationPreferences userId={userId} email={email} categories={[
             { key: "application", label: "Applications", hint: "New applications submitted" },
-            { key: "verification", label: "Verification", hint: "Duplicate ID flags" },
             { key: "payment", label: "Payments", hint: "Receipts, method choices and unpaid approvals" },
           ]} />
         </CardContent>

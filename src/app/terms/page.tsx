@@ -17,7 +17,7 @@ const sections = [
     title: "Applications and awards",
     body: [
       "Submitting an application does not guarantee an award. Decisions follow each program's published requirements, available slots and budget.",
-      "Providing false, altered or duplicate information may lead to rejection, cancellation of an award, or recovery of funds already released.",
+      "Providing false, altered or duplicate information may lead to disapproval, cancellation of an award, or recovery of funds already released.",
       "Application periods, requirements and amounts may change. The details shown on the portal at the time you apply apply to you.",
     ],
   },

@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import {
   FileText, CheckCircle, XCircle, Clock, Users, Banknote, Plus, Bell, ArrowRight, GraduationCap,
-  RefreshCw, Loader2, AlertTriangle, ShieldCheck, Wallet, CalendarClock, TrendingUp, TrendingDown, Minus,
+  RefreshCw, Loader2, AlertTriangle, Wallet, CalendarClock, TrendingUp, TrendingDown, Minus,
   FileDown, ScrollText, Table2, BarChart3, UserX,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,14 +22,13 @@ type Props = {
   /** Registered students who haven't submitted an application yet; counted as applicants. */
   notApplied?: Tables<"profiles">[];
   payments: Tables<"payments">[];
-  verifications: Tables<"scholar_verifications">[];
   auditLogs: Tables<"audit_logs">[];
   firstName?: string | null;
   refreshing: boolean;
   lastUpdated: Date | null;
   loadError: string | null;
   onRefresh: () => void;
-  onNavigate: (section: string, opts?: { status?: string; verif?: string }) => void;
+  onNavigate: (section: string, opts?: { status?: string }) => void;
   onViewApp: (a: OverviewApp) => void;
 };
 
@@ -38,7 +37,7 @@ const initials = (first?: string | null, last?: string | null) => `${(first || "
 const DAY = 86400000;
 const PERIODS: Record<string, string> = { all: "All time", "30d": "Last 30 days", "6m": "Last 6 months", year: "This year" };
 const STATUS_COLOR: Record<string, string> = {
-  Approved: "hsl(var(--success))", Rejected: "hsl(var(--destructive))", Pending: "hsl(var(--warning))", Waitlisted: "hsl(var(--muted-foreground))",
+  Approved: "hsl(var(--success))", Disapproved: "hsl(var(--destructive))", Pending: "hsl(var(--warning))", Waitlisted: "hsl(var(--muted-foreground))",
 };
 
 function periodStart(period: string): Date | null {
@@ -158,7 +157,7 @@ function Trend({ current, previous }: { current: number; previous: number | null
 }
 
 export default function OverviewPanel({
-  applications, scholarships, profiles, notApplied = [], payments, verifications, auditLogs,
+  applications, scholarships, profiles, notApplied = [], payments, auditLogs,
   firstName, refreshing, lastUpdated, loadError, onRefresh, onNavigate, onViewApp,
 }: Props) {
   const [period, setPeriod] = useState("all");
@@ -177,7 +176,7 @@ export default function OverviewPanel({
     const prevApps = prevSince ? applications.filter((a) => inPrev(a.created_at)) : null;
     const total = curApps.length;
     const approved = cnt(curApps, "Approved");
-    const rejected = cnt(curApps, "Rejected");
+    const disapproved = cnt(curApps, "Disapproved");
     const pending = cnt(curApps, "Pending");
     const waitlisted = cnt(curApps, "Waitlisted");
     const notYetApplied = notApplied.filter((p) => inCur(p.created_at)).length;
@@ -205,7 +204,7 @@ export default function OverviewPanel({
     });
 
     const statusPie = [
-      { name: "Approved", value: approved }, { name: "Rejected", value: rejected },
+      { name: "Approved", value: approved }, { name: "Disapproved", value: disapproved },
       { name: "Pending", value: pending }, { name: "Waitlisted", value: waitlisted },
     ].filter((d) => d.value > 0);
 
@@ -236,22 +235,20 @@ export default function OverviewPanel({
 
     const paidAppIds = new Set(payments.filter((p) => p.status !== "Cancelled").map((p) => p.application_id).filter(Boolean));
     const awaiting = applications.filter((a) => a.status === "Approved" && !paidAppIds.has(a.id));
-    const flagged = verifications.filter((v) => v.verification_status === "Flagged").length;
-    const unverified = verifications.filter((v) => v.verification_status === "Pending").length;
 
     return {
-      total, approved, rejected, pending, waitlisted, notYetApplied, notYetAppliedPrev, applicants, applicantsPrev, paidScholars, prevApps, prevTotal: prevApps?.length ?? null,
-      prevApproved: prevApps ? cnt(prevApps, "Approved") : null, prevRejected: prevApps ? cnt(prevApps, "Rejected") : null,
+      total, approved, disapproved, pending, waitlisted, notYetApplied, notYetAppliedPrev, applicants, applicantsPrev, paidScholars, prevApps, prevTotal: prevApps?.length ?? null,
+      prevApproved: prevApps ? cnt(prevApps, "Approved") : null, prevDisapproved: prevApps ? cnt(prevApps, "Disapproved") : null,
       prevPending: prevApps ? cnt(prevApps, "Pending") : null,
       disbCur, disbPrev, newStudents, newStudentsPrev, perMonth, months, statusPie, distribution: (() => { const all = [...dist.values()].sort((x, y) => y.value - x.value); if (all.length <= 6) return all; const rest = all.slice(5).reduce((t, r) => t + r.value, 0); return [...all.slice(0, 5), { name: "Other programs", value: rest }]; })(),
       monthTotal: perMonth.reduce((t, m) => t + m.count, 0), monthAvg: perMonth.reduce((t, m) => t + m.count, 0) / perMonth.length, monthPeak: perMonth.reduce((b, m) => (m.count > b.count ? m : b), perMonth[0]),
       active, approvedBy, applicantsBy, closingSoon, pastDeadline, fullPrograms,
-      budget, disbursedAll, queued, remaining, queuedCount: queuedList.length, awaiting, flagged, unverified,
+      budget, disbursedAll, queued, remaining, queuedCount: queuedList.length, awaiting,
       approvalRate: total ? Math.round((approved / total) * 100) : 0,
-      rejectionRate: total ? Math.round((rejected / total) * 100) : 0,
+      disapprovalRate: total ? Math.round((disapproved / total) * 100) : 0,
       activeStudents: profiles.filter((p) => p.is_active).length,
     };
-  }, [applications, scholarships, profiles, notApplied, payments, verifications, period]);
+  }, [applications, scholarships, profiles, notApplied, payments, period]);
 
   const pendingApps = useMemo(() => applications.filter((a) => a.status === "Pending").slice(0, 5), [applications]);
   const recent = useMemo(() => auditLogs.slice(0, 8), [auditLogs]);
@@ -262,14 +259,12 @@ export default function OverviewPanel({
     { label: "Not Yet Applied", value: data.notYetApplied, sub: "registered, no application", icon: UserX, color: "text-warning", trend: <Trend current={data.notYetApplied} previous={data.notYetAppliedPrev} />, go: () => onNavigate("applications", { status: "not_applied" }) },
     { label: "Pending", value: data.pending, sub: data.waitlisted ? `+ ${data.waitlisted} waitlisted` : "Needs review", icon: Clock, color: "text-warning", trend: <Trend current={data.pending} previous={data.prevPending} />, go: () => onNavigate("applications", { status: "pending" }) },
     { label: "Approved", value: data.approved, sub: `${data.approvalRate}% approval rate`, icon: CheckCircle, color: "text-success", trend: <Trend current={data.approved} previous={data.prevApproved} />, go: () => onNavigate("applications", { status: "approved" }) },
-    { label: "Rejected", value: data.rejected, sub: `${data.rejectionRate}% rejection rate`, icon: XCircle, color: "text-destructive", trend: <Trend current={data.rejected} previous={data.prevRejected} />, go: () => onNavigate("applications", { status: "rejected" }) },
+    { label: "Disapproved", value: data.disapproved, sub: `${data.disapprovalRate}% disapproval rate`, icon: XCircle, color: "text-destructive", trend: <Trend current={data.disapproved} previous={data.prevDisapproved} />, go: () => onNavigate("applications", { status: "disapproved" }) },
     { label: "Students", value: profiles.length, sub: `${data.activeStudents} active · ${data.newStudents} new`, icon: Users, color: "text-primary", trend: <Trend current={data.newStudents} previous={data.newStudentsPrev} />, go: () => onNavigate("students") },
     { label: "Disbursed", value: formatPHP(data.disbCur), sub: `${data.paidScholars} scholar${data.paidScholars === 1 ? "" : "s"} paid · ${PERIODS[period]}`, icon: Banknote, color: "text-success", trend: <Trend current={data.disbCur} previous={data.disbPrev} />, go: () => onNavigate("disbursement"), small: true },
   ];
 
   const attention = [
-    { show: data.flagged > 0, icon: ShieldCheck, tone: "text-destructive", text: `${data.flagged} flagged verification${data.flagged === 1 ? "" : "s"}`, cta: "Review", go: () => onNavigate("verification", { verif: "Flagged" }) },
-    { show: data.unverified > 0, icon: ShieldCheck, tone: "text-warning", text: `${data.unverified} scholar${data.unverified === 1 ? "" : "s"} awaiting verification`, cta: "Verify", go: () => onNavigate("verification", { verif: "Pending" }) },
     { show: data.awaiting.length > 0, icon: Wallet, tone: "text-warning", text: `${data.awaiting.length} approved application${data.awaiting.length === 1 ? "" : "s"} with no payment`, cta: "Disburse", go: () => onNavigate("disbursement") },
     { show: data.queuedCount > 0, icon: Banknote, tone: "text-primary", text: `${data.queuedCount} payment${data.queuedCount === 1 ? "" : "s"} pending or processing (${formatPHP(data.queued)})`, cta: "Open", go: () => onNavigate("disbursement") },
     { show: data.pending > 0, icon: Clock, tone: "text-warning", text: `${data.pending} application${data.pending === 1 ? "" : "s"} waiting for review`, cta: "Review", go: () => onNavigate("applications", { status: "pending" }) },
@@ -320,7 +315,6 @@ export default function OverviewPanel({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={() => onNavigate("scholarships")} className="cursor-pointer"><Plus className="mr-1 h-4 w-4" />Create Scholarship</Button>
-          <Button size="sm" variant="outline" onClick={() => onNavigate("verification", { verif: "Flagged" })} className="cursor-pointer"><ShieldCheck className="mr-1 h-4 w-4" />Review flagged{data.flagged > 0 ? ` (${data.flagged})` : ""}</Button>
           <Button size="sm" variant="outline" onClick={() => onNavigate("disbursement")} className="cursor-pointer"><Banknote className="mr-1 h-4 w-4" />Disburse pending</Button>
           <Button size="sm" variant="outline" onClick={() => onNavigate("reports")} className="cursor-pointer"><FileDown className="mr-1 h-4 w-4" />Export report</Button>
         </div>
@@ -418,7 +412,7 @@ export default function OverviewPanel({
           <div className="pt-2">
             <p className="mb-3 text-3xl font-bold font-display tabular-nums">{data.approvalRate}%<span className="ml-2 text-sm font-normal text-muted-foreground">approved</span></p>
             <SegmentedBar total={data.total} ariaLabel={`Application status: ${data.statusPie.map((d) => `${d.value} ${d.name}`).join(", ")}`}
-              segments={["Approved", "Pending", "Waitlisted", "Rejected"].map((n) => ({ name: n, value: data.statusPie.find((d) => d.name === n)?.value ?? 0, color: STATUS_COLOR[n] }))} />
+              segments={["Approved", "Pending", "Waitlisted", "Disapproved"].map((n) => ({ name: n, value: data.statusPie.find((d) => d.name === n)?.value ?? 0, color: STATUS_COLOR[n] }))} />
           </div>
         </ChartCard>
       </div>

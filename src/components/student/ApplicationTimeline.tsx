@@ -25,7 +25,7 @@ export function buildTimeline(app: App, payments: Payment[]): Step[] {
     { key: "submitted", title: app.is_renewal ? "Renewal submitted" : "Application submitted", date: app.created_at, state: "done" },
   ];
 
-  if (app.status === "Rejected") {
+  if (app.status === "Disapproved") {
     steps.push({ key: "decision", title: "Not approved", date: app.updated_at, state: "bad",
       detail: app.notes || "Your application was not approved this time. You can apply again next year." });
     return steps;
@@ -51,7 +51,7 @@ export function buildTimeline(app: App, payments: Payment[]): Step[] {
     const last = [...disbursed].sort((a, b) => (b.disbursed_at ?? "").localeCompare(a.disbursed_at ?? ""))[0];
     steps.push({ key: "disbursed", title: "Payment released", date: last.disbursed_at, state: "done",
       detail: `${pesoFixed(disbursed.reduce((t, p) => t + p.amount, 0))} disbursed${open.length ? `, ${open.length} more scheduled` : ""}` });
-    const unconfirmed = disbursed.filter((p) => !p.student_receipt_at || p.receipt_review_status === "Rejected");
+    const unconfirmed = disbursed.filter((p) => !p.student_receipt_at || p.receipt_review_status === "Disapproved");
     const waiting = disbursed.filter((p) => p.student_receipt_at && p.receipt_review_status === "Pending");
     steps.push(unconfirmed.length > 0
       ? { key: "receipt", title: "Submit your signed receipt", state: "current", detail: `${unconfirmed.length} payment${unconfirmed.length === 1 ? "" : "s"} still need${unconfirmed.length === 1 ? "s" : ""} your receipt.` }

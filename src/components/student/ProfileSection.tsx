@@ -351,11 +351,11 @@ export default function ProfileSection({ profile, userId, userEmail, application
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <span><strong>{g.grade}</strong> · {g.term} · {formatDate(g.created_at)}</span>
                       <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
-                        g.status === "Verified" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : g.status === "Rejected" ? "bg-red-50 text-red-700 border-red-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
+                        g.status === "Verified" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : g.status === "Disapproved" ? "bg-red-50 text-red-700 border-red-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
                         {g.status === "Pending" ? "Pending review" : g.status}
                       </span>
                     </div>
-                    {g.status === "Rejected" && g.review_note && <p className="text-xs text-red-700 mt-1">Reason: {g.review_note}</p>}
+                    {g.status === "Disapproved" && g.review_note && <p className="text-xs text-red-700 mt-1">Reason: {g.review_note}</p>}
                   </li>
                 ))}
               </ul>
