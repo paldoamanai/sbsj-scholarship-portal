@@ -64,14 +64,15 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── Per-year limit (max_scholarships_per_student, default 1) ──
+  // ── One application per program per year ──
+  // Students may apply to (and be approved for) every open program; each program decides on its own.
   const currentYear = new Date().getFullYear();
   const yearStart = `${currentYear}-01-01T00:00:00.000Z`;
   const yearEnd   = `${currentYear + 1}-01-01T00:00:00.000Z`;
 
-  const { count, error: checkError } = await supabase
+  const { data: yearApps, error: checkError } = await supabase
     .from("applications")
-    .select("id", { count: "exact", head: true })
+    .select("scholarship_id")
     .eq("user_id", user.id)
     .neq("status", "Withdrawn")
     .gte("created_at", yearStart)
@@ -81,17 +82,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: checkError.message }, { status: 500 });
   }
 
-  const limit = settings.max_scholarships_per_student;
-  if ((count ?? 0) >= limit) {
+  if (yearApps?.some((a) => a.scholarship_id === input.scholarship_id)) {
     return NextResponse.json(
-      {
-        error: `You have already submitted ${limit === 1 ? "a scholarship application" : `${limit} scholarship applications`} for ${currentYear}. You may apply again starting January ${currentYear + 1}.`,
-        code: "ANNUAL_LIMIT_REACHED",
-      },
+      { error: "You have already applied to this program this year.", code: "ALREADY_APPLIED" },
       { status: 409 }
     );
   }
-  // Minimum grade, application window, required documents, renewal rules and the same limit are also
+  // Minimum grade, application window, required documents, renewal rules and the same check are also
   // enforced by a database trigger, which is what actually protects the table.
 
   const { data, error } = await supabase

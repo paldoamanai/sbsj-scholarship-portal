@@ -53,7 +53,7 @@ function periodStart(period: string): Date | null {
 type TableSpec = { head: string[]; rows: (string | number)[][] };
 
 // Every chart can flip to a table (accessibility + exact values).
-function ChartCard({ title, subtitle, table, empty, children, className }: {
+export function ChartCard({ title, subtitle, table, empty, children, className }: {
   title: string; subtitle?: string; table: TableSpec; empty?: boolean; children: React.ReactNode; className?: string;
 }) {
   const [asTable, setAsTable] = useState(false);
@@ -104,7 +104,7 @@ function MonthTooltip({ active, payload, label }: { active?: boolean; payload?: 
 }
 
 // Horizontal ranked bars with direct value labels — clearer than a pie for many categories.
-function RankedBars({ rows, unit }: { rows: { name: string; value: number }[]; unit: string }) {
+export function RankedBars({ rows, unit }: { rows: { name: string; value: number }[]; unit: string }) {
   const max = Math.max(1, ...rows.map((r) => r.value));
   const total = rows.reduce((t, r) => t + r.value, 0);
   return (

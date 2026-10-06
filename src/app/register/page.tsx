@@ -1,7 +1,7 @@
 "use client";
 
 import { useHistorySync } from "@/hooks/use-history-sync";
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Layout from "@/components/Layout";
@@ -14,21 +14,25 @@ import {
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import {
-  User, School, Lock, Upload, ChevronRight, ChevronLeft, AlertTriangle, Loader2, GraduationCap, Eye, EyeOff, CalendarIcon,
+  User, School, Lock, Upload, ChevronRight, ChevronLeft, AlertTriangle, Loader2, Eye, EyeOff, CalendarIcon, MailCheck,
 } from "lucide-react";
-import { format } from "date-fns";
+import { format, subYears } from "date-fns";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { rememberCredential } from "@/lib/credentials";
 import { DOC_MIME, uploadUserDocument } from "@/lib/documents";
 import { YEAR_LEVEL_OPTIONS, coursesFor, isCollege, isSHS, schoolsFor } from "@/lib/academics";
 import { useSystemSettings } from "@/hooks/use-system-settings";
-import { availabilityInfo, peso, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
 import type { RegistrationProfileFields } from "@/lib/registration-profile";
+import { savePendingDocuments } from "@/lib/pending-documents";
+import { PASSWORD_HINT, passwordProblem, passwordScore } from "@/validations/auth";
+import Captcha, { captchaEnabled } from "@/components/Captcha";
 
-const stepLabels = ["Account", "Personal Info", "School Info", "Documents", "Apply"];
+const stepLabels = ["Account", "Personal Info", "School Info", "Documents"];
+const LAST_STEP = stepLabels.length - 1;
 
 const PREREQUISITE_DOCS = ["Valid ID", "Grades"] as const;
 
@@ -40,17 +44,43 @@ const requiredDocuments = [
   "Birth Certificate",
 ];
 
+const MIN_AGE = 12;
+
+const STRENGTH = [
+  { label: "", bar: "bg-muted" },
+  { label: "Weak", bar: "bg-destructive" },
+  { label: "Fair", bar: "bg-orange-500" },
+  { label: "Good", bar: "bg-yellow-500" },
+  { label: "Strong", bar: "bg-success" },
+];
+
+/** Turn Supabase signup errors into something a student can act on. */
+function signupErrorMessage(message: string | undefined): string {
+  const m = (message ?? "").toLowerCase();
+  if (m.includes("already registered") || m.includes("already been registered")) return "This email is already registered. Log in instead, or use Forgot password.";
+  if (m.includes("database error")) return "This student ID number may already be registered to another account. Check it, or contact the office.";
+  if (m.includes("captcha")) return "The bot check failed or expired. Please try again.";
+  if (m.includes("rate limit") || m.includes("too many")) return "Too many attempts. Please wait a few minutes and try again.";
+  return message || "Something went wrong. Please try again.";
+}
+
 export default function RegisterPage() {
   const router = useRouter();
   const { settings } = useSystemSettings();
   const minGrade = settings.min_grade_requirement || 85;
+  const maxUploadBytes = settings.max_upload_mb * 1024 * 1024;
   const [step, setStep] = useState(0);
   const maxStep = useRef(0);
   maxStep.current = Math.max(maxStep.current, step);
   // Swipe/browser back and forward move between steps, but only to steps already completed.
   useHistorySync("sbsjStep", step, setStep, (s) => s <= maxStep.current);
   const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // Set once the account exists but the email still has to be confirmed.
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [docsKept, setDocsKept] = useState(false);
+  const [resending, setResending] = useState(false);
 
   // Step 0 — Account
   const [email, setEmail] = useState("");
@@ -76,30 +106,22 @@ export default function RegisterPage() {
 
   // Step 3 — Documents
   const [docFiles, setDocFiles] = useState<Record<string, File | null>>({});
+  const [agreed, setAgreed] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaKey, setCaptchaKey] = useState(0);
 
-  // Step 4 — Scholarship selection
-  const [selectedScholarship, setSelectedScholarship] = useState("");
-  const [scholarships, setScholarships] = useState<PublicScholarship[]>([]);
-  const [scholarsLoading, setScholarsLoading] = useState(false);
-  const [scholarsError, setScholarsError] = useState(false);
-
-  // Coming from "Apply Now" on the public pages with a program already chosen.
-  useEffect(() => {
-    const program = new URLSearchParams(window.location.search).get("program");
-    if (program) setSelectedScholarship(program);
-  }, []);
-
-  useEffect(() => {
-    if (step === 4) {
-      setScholarsLoading(true);
-      setScholarsError(false);
-      fetch("/api/scholarships")
-        .then((r) => r.json())
-        .then((data) => { if (Array.isArray(data)) setScholarships(data); })
-        .catch(() => setScholarsError(true))
-        .finally(() => setScholarsLoading(false));
+  const pickFile = (doc: string, file: File | null) => {
+    if (file && !DOC_MIME.includes(file.type)) {
+      toast.error(`${doc}: use a PDF, JPG or PNG file.`);
+      return;
     }
-  }, [step]);
+    if (file && file.size > maxUploadBytes) {
+      toast.error(`${doc} is too large (max ${settings.max_upload_mb} MB).`);
+      return;
+    }
+    setDocFiles((prev) => ({ ...prev, [doc]: file }));
+    setErrors((p) => ({ ...p, docs: "" }));
+  };
 
   const update = (field: string, value: string) => {
     setForm((p) => ({ ...p, [field]: value }));
@@ -116,7 +138,8 @@ export default function RegisterPage() {
 
     if (step === 0) {
       if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = "Valid email required";
-      if (!password || password.length < 8) errs.password = "Min 8 characters";
+      const pwProblem = passwordProblem(password);
+      if (pwProblem) errs.password = pwProblem;
       if (password !== confirmPassword) errs.confirmPassword = "Passwords do not match";
     } else if (step === 1) {
       if (!form.lastName.trim()) errs.lastName = "Required";
@@ -124,6 +147,8 @@ export default function RegisterPage() {
       if (!form.sex) errs.sex = "Required";
       if (!form.civilStatus) errs.civilStatus = "Required";
       if (!dob) errs.dob = "Required";
+      else if (dob > new Date()) errs.dob = "Date of birth can't be in the future";
+      else if (dob > subYears(new Date(), MIN_AGE)) errs.dob = `You must be at least ${MIN_AGE} years old to register`;
       if (!form.phone.trim() || !/^(09|\+639)\d{9}$/.test(form.phone.replace(/\s/g, "")))
         errs.phone = "Valid PH phone required";
       if (!form.barangay.trim()) errs.barangay = "Required";
@@ -139,13 +164,34 @@ export default function RegisterPage() {
       const missing = PREREQUISITE_DOCS.filter((doc) => !docFiles[doc]);
       if (missing.length > 0)
         errs.docs = `Please upload the following required documents before proceeding: ${missing.join(" and ")}.`;
+      const tooBig = Object.entries(docFiles).filter(([, f]) => f && f.size > maxUploadBytes).map(([d]) => d);
+      if (tooBig.length > 0) errs.docs = `${tooBig.join(", ")} ${tooBig.length > 1 ? "are" : "is"} larger than ${settings.max_upload_mb} MB.`;
+      if (!agreed) errs.agreed = "You must agree to the Terms and Privacy Policy to register";
+      if (captchaEnabled && !captchaToken) errs.captcha = "Please complete the bot check";
     }
 
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
 
-  const next = () => { if (validateStep()) setStep((s) => s + 1); };
+  // The student ID must not belong to another account (the database enforces this too).
+  const studentIdTaken = async () => {
+    setChecking(true);
+    const { data, error } = await createClient().rpc("student_id_available", { _student_id: form.studentIdNumber });
+    setChecking(false);
+    if (error) return false; // let the database decide at signup
+    if (data === false) {
+      setErrors((p) => ({ ...p, studentIdNumber: "This student ID number is already registered. Log in to your existing account or contact the office." }));
+      return true;
+    }
+    return false;
+  };
+
+  const next = async () => {
+    if (!validateStep()) return;
+    if (step === 1 && (await studentIdTaken())) return;
+    setStep((s) => s + 1);
+  };
   const back = () => { if (step > 0) window.history.back(); };
 
   const handleSubmit = async () => {
@@ -176,15 +222,29 @@ export default function RegisterPage() {
       password,
       options: {
         emailRedirectTo: `${window.location.origin}/auth/callback`,
+        captchaToken: captchaToken ?? undefined,
         data: {
           ...profileFields,
           average_grade: String(profileFields.average_grade),
+          terms_accepted_at: new Date().toISOString(),
         },
       },
     });
+    // Captcha tokens are single-use.
+    if (captchaEnabled) setCaptchaKey((k) => k + 1);
 
     if (authError || !authData.user) {
-      toast.error("Registration failed", { description: authError?.message });
+      toast.error("Registration failed", { description: signupErrorMessage(authError?.message) });
+      setLoading(false);
+      return;
+    }
+
+    // With email confirmation on, Supabase doesn't reveal that an email is taken: it returns a user
+    // with no identities and sends nothing.
+    if (!authData.session && (authData.user.identities?.length ?? 0) === 0) {
+      setErrors((p) => ({ ...p, email: "This email is already registered" }));
+      toast.error("This email is already registered", { description: "Log in instead, or use Forgot password on the login page." });
+      setStep(0);
       setLoading(false);
       return;
     }
@@ -195,13 +255,12 @@ export default function RegisterPage() {
     rememberCredential(email, password);
 
     // Email confirmation is enabled — user is not authenticated yet, so RLS-protected
-    // writes would fail. The auth trigger still inserts the profile from metadata.
+    // writes would fail. The auth trigger still inserts the profile from metadata, and the documents
+    // are kept in this browser and uploaded on the first dashboard visit after logging in.
     if (!authData.session) {
-      toast.success("Account created!", {
-        description: "Check your email to verify your account, then log in to upload documents and apply.",
-      });
+      setDocsKept(await savePendingDocuments(email, docFiles));
+      setSentTo(email);
       setLoading(false);
-      router.push("/login");
       return;
     }
 
@@ -233,23 +292,31 @@ export default function RegisterPage() {
       });
     }
 
-    // 4. The application itself (statement, household details, certification) is completed in the
-    // dashboard; hand over the program picked here so it is already selected.
-    const target = selectedScholarship
-      ? `/student-dashboard?section=application&apply=${encodeURIComponent(selectedScholarship)}`
-      : "/student-dashboard";
-
+    // 4. Applying for a program (statement, household details, certification) is done from the dashboard.
     toast.success("Registration submitted successfully!", {
-      description: selectedScholarship ? "Finish your application in your dashboard." : "Please check your email for verification.",
+      description: "You can now apply for a scholarship from your dashboard.",
     });
-    router.push(target);
+    router.push("/student-dashboard");
     router.refresh();
     setLoading(false);
   };
 
+  const resendConfirmation = async () => {
+    if (!sentTo) return;
+    setResending(true);
+    const { error } = await createClient().auth.resend({
+      type: "signup",
+      email: sentTo,
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback`, captchaToken: captchaToken ?? undefined },
+    });
+    setResending(false);
+    if (error) toast.error("Could not resend the email", { description: signupErrorMessage(error.message) });
+    else toast.success("Verification email sent again", { description: `Check ${sentTo}, including the Spam folder.` });
+  };
+
   const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (step === 4) handleSubmit();
+    if (step === LAST_STEP) { if (validateStep()) handleSubmit(); }
     else next();
   };
 
@@ -257,6 +324,55 @@ export default function RegisterPage() {
 
   const FieldError = ({ field }: { field: string }) =>
     errors[field] ? <p className="text-xs text-destructive mt-1">{errors[field]}</p> : null;
+
+  if (sentTo) {
+    return (
+      <Layout>
+        <div className="container max-w-md py-10 sm:py-16">
+          <Card className="overflow-hidden">
+            <div className="h-1.5 bg-gradient-primary" />
+            <CardHeader className="text-center">
+              <div className="flex justify-center mb-3">
+                <div className="h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center">
+                  <MailCheck className="h-7 w-7 text-primary" />
+                </div>
+              </div>
+              <CardTitle className="font-display text-2xl">Check your email</CardTitle>
+              <CardDescription>
+                We sent a verification link to <span className="font-medium text-foreground break-all">{sentTo}</span>.
+                Open it to activate your account, then log in.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className={cn(
+                "rounded-lg border px-4 py-3 text-sm",
+                docsKept ? "border-primary/20 bg-primary/5 text-foreground" : "border-destructive/40 bg-destructive/5 text-destructive",
+              )}>
+                {docsKept
+                  ? "Your documents are saved in this browser and will upload automatically the first time you log in here. If you log in on another device, upload them from your dashboard."
+                  : "Your documents could not be saved in this browser. Upload them from your dashboard after you log in."}
+              </div>
+              <Button className="w-full bg-gradient-primary shadow-primary" onClick={() => router.push("/login")}>
+                Go to Login
+              </Button>
+              {captchaEnabled && <Captcha key={captchaKey} onToken={setCaptchaToken} />}
+              <p className="text-center text-sm text-muted-foreground">
+                Didn&apos;t get it? Check your Spam folder or{" "}
+                <button
+                  type="button"
+                  onClick={async () => { await resendConfirmation(); if (captchaEnabled) setCaptchaKey((k) => k + 1); }}
+                  disabled={resending || (captchaEnabled && !captchaToken)}
+                  className="text-primary hover:underline disabled:opacity-50"
+                >
+                  {resending ? "sending…" : "resend the email"}
+                </button>.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout>
@@ -294,7 +410,6 @@ export default function RegisterPage() {
               {step === 1 && <><User className="h-5 w-5 text-primary" /> Personal Information</>}
               {step === 2 && <><School className="h-5 w-5 text-primary" /> School Information</>}
               {step === 3 && <><Upload className="h-5 w-5 text-primary" /> Document Upload</>}
-              {step === 4 && <><GraduationCap className="h-5 w-5 text-primary" /> Select Scholarship</>}
             </CardTitle>
             <CardDescription>Fill in all required fields to proceed.</CardDescription>
           </CardHeader>
@@ -332,7 +447,17 @@ export default function RegisterPage() {
                       {showPassword ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                     </button>
                   </div>
-                  <FieldError field="password" />
+                  {password && (
+                    <div className="mt-2 flex items-center gap-2" aria-live="polite">
+                      <div className="flex flex-1 gap-1">
+                        {[1, 2, 3, 4].map((i) => (
+                          <div key={i} className={cn("h-1 flex-1 rounded-full", i <= passwordScore(password) ? STRENGTH[passwordScore(password)].bar : "bg-muted")} />
+                        ))}
+                      </div>
+                      <span className="w-12 text-right text-xs text-muted-foreground">{STRENGTH[passwordScore(password)].label}</span>
+                    </div>
+                  )}
+                  {errors.password ? <FieldError field="password" /> : <p className="text-xs text-muted-foreground mt-1">{PASSWORD_HINT}</p>}
                 </div>
                 <div>
                   <Label>Confirm Password *</Label>
@@ -565,7 +690,7 @@ export default function RegisterPage() {
             {step === 3 && (
               <div className="space-y-4">
                 <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
-                  <span className="font-semibold text-primary">Valid ID</span> and <span className="font-semibold text-primary">Grades</span> are required to proceed. The remaining documents can be uploaded later from your dashboard.
+                  <span className="font-semibold text-primary">Valid ID</span> and <span className="font-semibold text-primary">Grades</span> are required to proceed. The remaining documents can be uploaded later from your dashboard. PDF, JPG or PNG, up to {settings.max_upload_mb} MB each.
                 </div>
 
                 {/* Prerequisites */}
@@ -598,9 +723,8 @@ export default function RegisterPage() {
                           className="hidden"
                           accept=".pdf,.jpg,.jpeg,.png"
                           onChange={(e) => {
-                            const file = e.target.files?.[0] ?? null;
-                            setDocFiles((prev) => ({ ...prev, [doc]: file }));
-                            setErrors((p) => ({ ...p, docs: "" }));
+                            pickFile(doc, e.target.files?.[0] ?? null);
+                            e.target.value = "";
                           }}
                         />
                         <span className="inline-flex w-full sm:w-auto items-center justify-center gap-1 rounded-md border px-3 py-2.5 sm:py-1.5 text-sm font-medium hover:bg-muted cursor-pointer">
@@ -632,8 +756,8 @@ export default function RegisterPage() {
                           className="hidden"
                           accept=".pdf,.jpg,.jpeg,.png"
                           onChange={(e) => {
-                            const file = e.target.files?.[0] ?? null;
-                            setDocFiles((prev) => ({ ...prev, [doc]: file }));
+                            pickFile(doc, e.target.files?.[0] ?? null);
+                            e.target.value = "";
                           }}
                         />
                         <span className="inline-flex w-full sm:w-auto items-center justify-center gap-1 rounded-md border px-3 py-2.5 sm:py-1.5 text-sm font-medium hover:bg-muted cursor-pointer">
@@ -651,94 +775,6 @@ export default function RegisterPage() {
                     {errors.docs}
                   </div>
                 )}
-              </div>
-            )}
-
-            {/* STEP 4: Select Scholarship */}
-            {step === 4 && (
-              <div className="space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  Pick a scholarship program below, or skip and apply later from your dashboard. You will finish the application (your statement and certification) in your dashboard right after registering.
-                </p>
-
-                {/* Loading */}
-                {scholarsLoading && (
-                  <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Loading available scholarships…
-                  </div>
-                )}
-
-                {/* Error */}
-                {scholarsError && (
-                  <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                    <AlertTriangle className="h-4 w-4 shrink-0" />
-                    Failed to load scholarships. Check your connection and try again.
-                  </div>
-                )}
-
-                {/* Scholarship cards */}
-                {!scholarsLoading && !scholarsError && (
-                  scholarships.length === 0 ? (
-                    <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                      <GraduationCap className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                      No active scholarships at the moment. You can apply later from your dashboard.
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {scholarships.map((s) => {
-                        const isSelected = selectedScholarship === s.id;
-                        const avail = availabilityInfo(s);
-                        const reqs = requirementLines(s);
-                        const deadline = s.deadline
-                          ? new Date(s.deadline).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })
-                          : "Open";
-                        return (
-                          <button
-                            key={s.id}
-                            type="button"
-                            disabled={!avail.canApply}
-                            onClick={() => setSelectedScholarship(isSelected ? "" : s.id)}
-                            className={`w-full text-left rounded-xl border p-4 transition-all duration-200 ${avail.canApply ? "cursor-pointer" : "opacity-60 cursor-not-allowed"} ${
-                              isSelected
-                                ? "border-primary bg-primary/5 shadow-sm"
-                                : "border-border hover:border-primary/40 hover:bg-muted/30"
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex-1 space-y-1">
-                                <p className={`text-sm font-semibold ${isSelected ? "text-primary" : "text-foreground"}`}>
-                                  {s.name}
-                                </p>
-                                {s.description && (
-                                  <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
-                                    {s.description}
-                                  </p>
-                                )}
-                                {(reqs.length > 0 || s.eligibility) && (
-                                  <p className="text-xs text-muted-foreground">
-                                    <span className="font-medium text-foreground">Eligibility:</span> {[...reqs, s.eligibility].filter(Boolean).join(" · ")}
-                                  </p>
-                                )}
-                                <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground">
-                                  <span>📅 Deadline: <span className="text-foreground font-medium">{deadline}</span></span>
-                                  {Number(s.amount) > 0 && <span>💰 <span className="text-foreground font-medium">{peso(s.amount)}</span> per scholar</span>}
-                                  <span>👥 {slotsLabel(s)}</span>
-                                  {!avail.canApply && <span className="font-semibold text-destructive">{avail.label}</span>}
-                                </div>
-                              </div>
-                              <div className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors ${
-                                isSelected ? "border-primary bg-primary" : "border-border"
-                              }`}>
-                                {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )
-                )}
 
                 {/* Review summary */}
                 <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
@@ -751,12 +787,31 @@ export default function RegisterPage() {
                     <p>Grade: <span className="text-foreground">{academic.averageGrade}</span></p>
                     <p>Docs uploaded: <span className="text-foreground">{Object.values(docFiles).filter(Boolean).length}/{requiredDocuments.length}</span></p>
                   </div>
-                  {selectedScholarship && (
-                    <p className="text-sm pt-1 border-t border-border/50">
-                      Applying for: <span className="font-semibold text-primary">{scholarships.find((s) => s.id === selectedScholarship)?.name}</span>
-                    </p>
-                  )}
                 </div>
+
+                <div>
+                  <label className="flex items-start gap-3 text-sm text-foreground cursor-pointer">
+                    <Checkbox
+                      checked={agreed}
+                      onCheckedChange={(v) => { setAgreed(v === true); setErrors((p) => ({ ...p, agreed: "" })); }}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      I certify that the information and documents I provided are true and correct, and I agree to the{" "}
+                      <Link href="/terms" target="_blank" className="text-primary hover:underline">Terms of Use</Link> and the{" "}
+                      <Link href="/privacy" target="_blank" className="text-primary hover:underline">Privacy Policy</Link>, including the
+                      processing of my personal data for this scholarship program.
+                    </span>
+                  </label>
+                  <FieldError field="agreed" />
+                </div>
+
+                {captchaEnabled && (
+                  <div>
+                    <Captcha key={captchaKey} onToken={(t) => { setCaptchaToken(t); if (t) setErrors((p) => ({ ...p, captcha: "" })); }} />
+                    <FieldError field="captcha" />
+                  </div>
+                )}
               </div>
             )}
 
@@ -769,8 +824,9 @@ export default function RegisterPage() {
               ) : (
                 <div />
               )}
-              {step < 4 ? (
-                <Button type="button" onClick={next} className="flex-1 sm:flex-none bg-gradient-primary shadow-primary">
+              {step < LAST_STEP ? (
+                <Button type="button" onClick={next} disabled={checking} className="flex-1 sm:flex-none bg-gradient-primary shadow-primary">
+                  {checking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Next <ChevronRight className="ml-1 h-4 w-4" />
                 </Button>
               ) : (

@@ -34,7 +34,7 @@ export async function updateSession(request: NextRequest) {
   const path = request.nextUrl.pathname;
 
   const protectedRoutes = ["/student-dashboard", "/admin"];
-  const authRoutes = ["/login", "/register"];
+  const authRoutes = ["/login", "/register", "/forgot-password"];
   // Endpoints that return or change the signed-in person's data.
   const protectedApis = ["/api/applications", "/api/notifications", "/api/payments"];
 

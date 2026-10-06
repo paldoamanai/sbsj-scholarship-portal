@@ -31,6 +31,10 @@ export interface AppSettings {
   max_renewals: number;
   payment_pickup_location: string;
   payment_pickup_instructions: string;
+  report_prepared_by: string;
+  report_prepared_title: string;
+  report_approved_by: string;
+  report_approved_title: string;
 }
 
 export const SETTING_DEFAULTS: AppSettings = {
@@ -60,6 +64,10 @@ export const SETTING_DEFAULTS: AppSettings = {
   max_renewals: 3,
   payment_pickup_location: "",
   payment_pickup_instructions: "Please bring a valid ID.",
+  report_prepared_by: "",
+  report_prepared_title: "",
+  report_approved_by: "",
+  report_approved_title: "",
 };
 
 export type SettingKey = keyof AppSettings;
@@ -111,6 +119,10 @@ export function parseSettings(rows: { key: string; value: Json }[] | null | unde
     facebook_url: str(raw.facebook_url, d.facebook_url),
     payment_pickup_location: str(raw.payment_pickup_location, d.payment_pickup_location),
     payment_pickup_instructions: str(raw.payment_pickup_instructions, d.payment_pickup_instructions),
+    report_prepared_by: str(raw.report_prepared_by, d.report_prepared_by),
+    report_prepared_title: str(raw.report_prepared_title, d.report_prepared_title),
+    report_approved_by: str(raw.report_approved_by, d.report_approved_by),
+    report_approved_title: str(raw.report_approved_title, d.report_approved_title),
   };
 }
 
@@ -164,6 +176,11 @@ export function validateSetting(key: SettingKey, value: unknown): string | null 
     case "payment_pickup_location":
     case "payment_pickup_instructions":
       return String(value).length <= 500 ? null : "Keep this under 500 characters";
+    case "report_prepared_by":
+    case "report_prepared_title":
+    case "report_approved_by":
+    case "report_approved_title":
+      return String(value).length <= 120 ? null : "Keep this under 120 characters";
     case "facebook_url": {
       const v = String(value).trim();
       return v === "" || /^https?:\/\/\S+$/i.test(v) ? null : "Enter a full link starting with https://";

@@ -21,7 +21,7 @@ import {
   Menu, X, Search, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock,
   FileDown, Receipt, Loader2, User, Upload, ArrowRight,
-   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle,
+   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -29,7 +29,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { scholarshipSchema } from "@/validations/scholarship";
 import ProfileImage from "@/components/ProfileImage";
-import { YEAR_LEVELS } from "@/lib/scholarships";
+import { YEAR_LEVELS, programChecks, type RequirementCheck } from "@/lib/scholarships";
 import NotificationInbox, { NOTIFICATION_PAGE } from "@/components/notifications/NotificationInbox";
 import AnnouncementsPanel from "@/components/admin/AnnouncementsPanel";
 import ReminderJobsCard from "@/components/admin/ReminderJobsCard";
@@ -39,6 +39,12 @@ import NotificationPreferences from "@/components/notifications/NotificationPref
 import OverviewPanel from "@/components/admin/OverviewPanel";
 import AdminProfilePanel from "@/components/admin/AdminProfilePanel";
 import SettingsPanel from "@/components/admin/SettingsPanel";
+import StaffPanel from "@/components/admin/StaffPanel";
+import ReportsPanel from "@/components/admin/ReportsPanel";
+import {
+  ALL_FILTERS, buildReport, getRange, logsToSection, personName, renderExcel, renderPDF,
+  type DocSummary, type ReportData, type ReportDef, type StaffMember,
+} from "@/lib/reports";
 import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
@@ -52,6 +58,7 @@ const sidebarItems = [
   { icon: BarChart3, label: "Reports", key: "reports" },
   { icon: ScrollText, label: "Audit Logs", key: "audit-logs" },
   { icon: Bell, label: "Notifications", key: "notifications" },
+  { icon: ShieldCheck, label: "Staff", key: "staff" }, // super admins only (see canManageSettings)
   { icon: SettingsIcon, label: "Settings", key: "settings" },
   { icon: User, label: "Profile", key: "profile" },
 ];
@@ -82,26 +89,7 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
 }
 
 // ── Reports / audit helpers ──
-type DocSummary = { id: string; user_id: string; application_id: string | null; document_type: string; status: string; uploaded_at: string };
 type AdminDoc = { id: string; name: string; type: string; url: string; status: string; note: string | null; size: number | null; uploadedAt: string };
-type ReportSection = { name: string; head: string[]; rows: (string | number)[][]; money?: string[] };
-// The in-page report view shows this many rows per section; exports always include every row.
-const REPORT_VIEW_ROWS = 200;
-type ReportDef = { title: string; filters: string[]; sections: ReportSection[]; count: number; countLabel: string };
-
-function getRange(period: string, from: string, to: string): { since: Date | null; until: Date | null } {
-  const now = new Date();
-  if (period === "year") return { since: new Date(now.getFullYear(), 0, 1), until: null };
-  if (period === "6m") return { since: new Date(now.getFullYear(), now.getMonth() - 5, 1), until: null };
-  if (period === "30d") return { since: new Date(now.getTime() - 30 * 86400000), until: null };
-  if (period === "custom") {
-    return {
-      since: from ? new Date(`${from}T00:00:00`) : null,
-      until: to ? new Date(`${to}T23:59:59.999`) : null,
-    };
-  }
-  return { since: null, until: null };
-}
 
 // Older audit rows stored their values as JSON-encoded strings; newer ones are real JSON.
 function parseJson(v: Json | null | undefined): unknown {
@@ -114,7 +102,6 @@ function asObj(v: Json | null | undefined): Record<string, unknown> {
   return x === null ? {} : { value: x };
 }
 const fmtVal = (v: unknown) => (v === null || v === undefined ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v));
-const jsonText = (v: Json | null | undefined) => { const x = parseJson(v); return x === null ? "—" : typeof x === "string" ? x : JSON.stringify(x); };
 
 export default function AdminDashboardPage() {
   const router = useRouter();
@@ -134,9 +121,6 @@ export default function AdminDashboardPage() {
   const [fundPeriod, setFundPeriod] = useState("all"); // shared by Fund Management and Reports
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [reportProgram, setReportProgram] = useState("all");
-  const [reportPayStatus, setReportPayStatus] = useState("all");
-  const [viewReport, setViewReport] = useState<string | null>(null);
   const [auditSearch, setAuditSearch] = useState("");
   const [auditAction, setAuditAction] = useState("all");
   const [auditEntity, setAuditEntity] = useState("all");
@@ -167,8 +151,16 @@ export default function AdminDashboardPage() {
   const [studentSearch, setStudentSearch] = useState("");
   const [studentFilter, setStudentFilter] = useState("all");
   const [studentSort, setStudentSort] = useState("name");
+  const [studentProgram, setStudentProgram] = useState("all");
+  const [studentDisb, setStudentDisb] = useState("all");
   const [studentPage, setStudentPage] = useState(1);
   const [viewStudent, setViewStudent] = useState<Tables<"profiles"> | null>(null);
+  // Student Management: quick edit of a scholar's payment reference number and disbursement status.
+  const [editDisb, setEditDisb] = useState<Tables<"profiles"> | null>(null);
+  const [editDisbPayId, setEditDisbPayId] = useState("");
+  const [editDisbRef, setEditDisbRef] = useState("");
+  const [editDisbStatus, setEditDisbStatus] = useState("Pending");
+  const [editDisbReason, setEditDisbReason] = useState("");
   const [studentDocs, setStudentDocs] = useState<AdminDoc[]>([]);
   const [studentDocsLoading, setStudentDocsLoading] = useState(false);
 
@@ -186,11 +178,14 @@ export default function AdminDashboardPage() {
   const [reviewingDoc, setReviewingDoc] = useState(false);
   const [docsLoading, setDocsLoading] = useState(false);
   const [auditLogs, setAuditLogs] = useState<Tables<"audit_logs">[]>([]);
+  const [staff, setStaff] = useState<StaffMember[]>([]);
   const [systemSettings, setSystemSettings] = useState<Tables<"system_settings">[]>([]);
   const [adminProfile, setAdminProfile] = useState<Tables<"profiles"> | null>(null);
   const [adminEmail, setAdminEmail] = useState("");
   const [adminUserId, setAdminUserId] = useState("");
   const [adminRole, setAdminRole] = useState("admin");
+  // A super admin, or any admin while no super admin exists (migration 020). Gates Settings edits and Staff.
+  const [canManageSettings, setCanManageSettings] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -217,10 +212,12 @@ export default function AdminDashboardPage() {
   useEffect(() => { loadData(); }, []);
 
   // Profiles of students only — staff accounts (anyone with a non-student role) are excluded.
+  // Staff are kept aside (with their role) so reports can name who disbursed, reviewed or changed something.
   const withoutStaff = async (rows: Tables<"profiles">[]) => {
-    const { data } = await supabase.from("user_roles").select("user_id").neq("role", "student");
-    const staff = new Set((data ?? []).map((r: { user_id: string }) => r.user_id));
-    return rows.filter((p) => !staff.has(p.id));
+    const { data } = await supabase.from("user_roles").select("user_id, role").neq("role", "student");
+    const roles = new Map((data ?? []).map((r: { user_id: string; role: string }) => [r.user_id, r.role]));
+    setStaff(rows.filter((p) => roles.has(p.id)).map((p) => ({ id: p.id, name: personName(p), email: p.email, role: roles.get(p.id)! })));
+    return rows.filter((p) => !roles.has(p.id));
   };
 
   const joinProfiles = (apps: (Tables<"applications"> & { scholarships: { name: string } | null })[], rows: Tables<"profiles">[]) => {
@@ -239,6 +236,8 @@ export default function AdminDashboardPage() {
     const role = (roleData as { role?: string } | null)?.role;
     if (!isAdminRole(role)) { router.push("/student-dashboard"); return; }
     setAdminRole(role as string);
+    const { data: canManage } = await supabase.rpc("can_manage_settings", { _user_id: user.id });
+    setCanManageSettings(canManage === true);
 
     const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
@@ -599,6 +598,8 @@ export default function AdminDashboardPage() {
     if (win) win.location.href = data.signedUrl; else window.location.href = data.signedUrl;
   };
   const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment");
+  // Compare reference numbers the way people type them: case, spaces and dashes don't matter.
+  const refKey = (r: string) => r.toUpperCase().replace(/[\s\-_./#]/g, "");
   const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The student hasn't submitted a receipt");
 
   // Verify or disapprove a grade a student submitted. Verifying replaces their average grade; the student is notified.
@@ -703,12 +704,28 @@ export default function AdminDashboardPage() {
   const auditDef = (): ReportDef => ({
     title: "Audit Log", count: filteredLogs.length, countLabel: "entries",
     filters: [`${filteredLogs.length} of ${auditLogs.length} loaded entries`, ...(auditAction !== "all" ? [`Action: ${auditAction}`] : []), ...(auditEntity !== "all" ? [`Entity: ${auditEntity}`] : []), ...(auditFrom || auditTo ? [`Dates: ${auditFrom || "…"} to ${auditTo || "…"}`] : [])],
-    sections: [logsToSection(filteredLogs)],
+    sections: [logsToSection(filteredLogs, reportData())],
   });
 
   const STUDENT_PAGE_SIZE = 10;
   // The Students section lists scholars only: accounts with at least one approved application.
   // Everyone else is reached through Applicants.
+  // A student's payments, newest first; the "current" one is the newest that isn't cancelled.
+  const studentPayments = (userId: string) => payments
+    .filter((pm) => pm.user_id === userId)
+    .sort((x, y) => y.created_at.localeCompare(x.created_at));
+  const currentPayment = (userId: string) => {
+    const list = studentPayments(userId);
+    return list.find((pm) => pm.status !== "Cancelled") ?? list[0];
+  };
+
+  // A scholar's approved applications (newest first) and the award for each.
+  const approvedApps = (userId: string) => applications.filter((a) => a.user_id === userId && a.status === "Approved");
+  const appAward = (a: typeof applications[0]) => Number(a.amount_approved ?? scholarships.find((x) => x.id === a.scholarship_id)?.amount ?? 0);
+  const disbursedTotal = (userId: string) => payments
+    .filter((pm) => pm.user_id === userId && pm.status === "Disbursed")
+    .reduce((t, pm) => t + Number(pm.amount), 0);
+
   const scholars = useMemo(() => {
     const ids = new Set(applications.filter((a) => a.status === "Approved").map((a) => a.user_id));
     return profiles.filter((p) => ids.has(p.id));
@@ -718,6 +735,11 @@ export default function AdminDashboardPage() {
     const list = scholars.filter((p) => {
       if (studentFilter === "active" && !p.is_active) return false;
       if (studentFilter === "inactive" && p.is_active) return false;
+      if (studentProgram !== "all" && !approvedApps(p.id).some((a) => a.scholarship_id === studentProgram)) return false;
+      if (studentDisb !== "all") {
+        const pay = currentPayment(p.id);
+        if (studentDisb === "none" ? !!pay : pay?.status !== studentDisb) return false;
+      }
       if (!q) return true;
       return [`${p.first_name} ${p.last_name}`, p.email, p.school_name, p.course, p.student_id_number]
         .some((f) => (f || "").toLowerCase().includes(q));
@@ -725,7 +747,8 @@ export default function AdminDashboardPage() {
     return list.sort((x, y) => studentSort === "grade"
       ? (y.average_grade ?? -1) - (x.average_grade ?? -1)
       : `${x.last_name} ${x.first_name}`.localeCompare(`${y.last_name} ${y.first_name}`));
-  }, [scholars, studentSearch, studentFilter, studentSort]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scholars, studentSearch, studentFilter, studentSort, studentProgram, studentDisb, payments]);
   const studentPages = Math.max(1, Math.ceil(filteredStudents.length / STUDENT_PAGE_SIZE));
   const pagedStudents = filteredStudents.slice((studentPage - 1) * STUDENT_PAGE_SIZE, studentPage * STUDENT_PAGE_SIZE);
 
@@ -739,35 +762,99 @@ export default function AdminDashboardPage() {
     loadData();
   };
 
+  const selectEditDisbPayment = (pm: Tables<"payments"> | undefined) => {
+    setEditDisbPayId(pm?.id ?? "");
+    setEditDisbRef(pm?.reference ?? "");
+    setEditDisbStatus(pm?.status ?? "Pending");
+    setEditDisbReason("");
+  };
+  const openEditDisb = (p: Tables<"profiles">) => { selectEditDisbPayment(currentPayment(p.id)); setEditDisb(p); };
+
+  const saveEditDisb = async () => {
+    const pm = payments.find((x) => x.id === editDisbPayId);
+    if (!pm) return;
+    const reference = editDisbRef.trim() || null;
+    // Marking disbursed needs a receipt upload, so hand off to the disbursement dialog.
+    if (editDisbStatus === "Disbursed") {
+      setDisbPaymentId(pm.id);
+      setDisbMethod((pm.preferred_method ?? pm.method) === "Cheque" ? "Cheque" : "Cash");
+      setDisbRef(reference ?? "");
+      setDisbReceipt(null);
+      setEditDisb(null);
+      setDisbDialog(true);
+      return;
+    }
+    const update: Partial<Tables<"payments">> = { reference };
+    if (editDisbStatus !== pm.status) update.status = editDisbStatus;
+    if (editDisbStatus === "Cancelled" && pm.status !== "Cancelled") update.cancel_reason = editDisbReason.trim() || null;
+    setPayBusy(true);
+    const { error } = await supabase.from("payments").update(update).eq("id", pm.id);
+    setPayBusy(false);
+    if (error) { toast.error(error.message); return; }
+    await logAudit("update_payment", "payments", pm.id, { status: pm.status, reference: pm.reference }, update);
+    toast.success("Disbursement updated");
+    setEditDisb(null);
+    loadData();
+  };
+
   const exportStudents = async () => {
     const XLSX = await import("xlsx");
-    const rows = filteredStudents.map((p) => ({
-      Name: `${p.first_name || ""} ${p.last_name || ""}`.trim(),
-      Email: p.email || "—",
-      "Student ID": p.student_id_number || "—",
-      School: p.school_name || "—",
-      Course: p.course || "—",
-      "Year Level": p.year_level || "—",
-      Grade: p.average_grade ?? "—",
-      Applications: applications.filter((a) => a.user_id === p.id).length,
-      Status: p.is_active ? "Active" : "Inactive",
-    }));
+    const rows = filteredStudents.map((p) => {
+      const apps = approvedApps(p.id);
+      const pay = currentPayment(p.id);
+      return {
+        Name: `${p.first_name || ""} ${p.middle_name || ""} ${p.last_name || ""}`.replace(/\s+/g, " ").trim(),
+        "Student ID": p.student_id_number || "—",
+        Email: p.email || "—",
+        Phone: p.phone || "—",
+        Address: [p.street_address, p.barangay, p.municipality, p.province, p.zip_code].filter(Boolean).join(", ") || "—",
+        Guardian: p.guardian_name || "—",
+        "Guardian Phone": p.guardian_phone || "—",
+        School: p.school_name || "—",
+        Course: p.course || "—",
+        "Year Level": p.year_level || "—",
+        Grade: p.average_grade ?? "—",
+        Program: apps.map((a) => a.scholarships?.name || "—").join(", ") || "—",
+        "Award (PHP)": apps.reduce((t, a) => t + appAward(a), 0),
+        "Reference No.": pay?.reference || "—",
+        "Disbursement Status": pay?.status || "No payment",
+        "Total Disbursed (PHP)": disbursedTotal(p.id),
+        "Approved / Total": `${apps.length} / ${applications.filter((a) => a.user_id === p.id).length}`,
+        Account: p.is_active ? "Active" : "Inactive",
+      };
+    });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Students");
     XLSX.writeFile(wb, "students.xlsx");
     toast.success("Excel downloaded");
   };
 
-  // Why an application can't be approved yet (null = it can). The database enforces the same rules.
-  const approveBlocker = (a: { id: string; user_id: string }): string | null => {
-    const outstanding = parseSettings(systemSettings).required_documents.flatMap((type) => {
-      // Latest copy wins: this application's own upload, or one still unattached.
+  // Each program (office) decides on its own: the student must pass that program's requirements and
+  // have every required document verified. Documents are shared by the student's applications for the year.
+  const requirementChecks = (a: { id: string; user_id: string; created_at: string; scholarship_id: string | null; is_renewal: boolean }): RequirementCheck[] => {
+    const settings = parseSettings(systemSettings);
+    const program = scholarships.find((sc) => sc.id === a.scholarship_id);
+    const profile = profiles.find((pr) => pr.id === a.user_id);
+    const year = new Date(a.created_at).getFullYear();
+    const sameYearIds = new Set(applications.filter((x) => x.user_id === a.user_id && new Date(x.created_at).getFullYear() === year).map((x) => x.id));
+    const docs = settings.required_documents.map((type): RequirementCheck => {
+      // Latest copy wins.
       const latest = allDocs
-        .filter((d) => d.user_id === a.user_id && d.document_type === type && (d.application_id === a.id || d.application_id === null))
+        .filter((d) => d.user_id === a.user_id && d.document_type === type && (d.application_id === null || sameYearIds.has(d.application_id)))
         .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
-      return latest?.status === "Verified" ? [] : [`${type} (${latest ? latest.status.toLowerCase() : "missing"})`];
+      return { key: `doc-${type}`, label: `${type} verified`, ok: latest?.status === "Verified", detail: latest ? latest.status : "Missing" };
     });
-    return outstanding.length ? `Verify all required documents first: ${outstanding.join(", ")}` : null;
+    const rules = program ? programChecks(program, profile, {
+      globalMinGrade: settings.min_grade_requirement, renewalMinGrade: settings.renewal_min_grade,
+      renewalEnabled: settings.renewal_enabled, isRenewal: a.is_renewal,
+    }) : [];
+    return [...rules, ...docs];
+  };
+
+  // Why an application can't be approved yet (null = it can). The database enforces the same rules.
+  const approveBlocker = (a: Parameters<typeof requirementChecks>[0]): string | null => {
+    const failed = requirementChecks(a).filter((c) => !c.ok);
+    return failed.length ? `Requirements not met: ${failed.map((c) => `${c.label} (${c.detail.toLowerCase()})`).join(", ")}` : null;
   };
   type AppRow = typeof applications[number];
   type AppDecision = "Approved" | "Disapproved" | "Waitlisted" | "Pending";
@@ -845,170 +932,28 @@ export default function AdminDashboardPage() {
     return true;
   };
 
-  // ── Reports ──
-  const periodLabel = () => {
-    if (fundPeriod === "year") return "This year";
-    if (fundPeriod === "6m") return "Last 6 months";
-    if (fundPeriod === "30d") return "Last 30 days";
-    if (fundPeriod === "custom") return `${fromDate || "…"} to ${toDate || "…"}`;
-    return "All time";
-  };
-  const programLabel = () => (reportProgram === "all" ? "All programs" : scholarships.find((sc) => sc.id === reportProgram)?.name || "Unknown program");
-  const personName = (p?: Tables<"profiles"> | null) => (p ? `${p.first_name || ""} ${p.last_name || ""}`.trim() || p.email || "—" : "—");
-
-  const logsToSection = (logs: Tables<"audit_logs">[]): ReportSection => ({
-    name: "Audit Log",
-    head: ["Date", "User", "Action", "Entity", "Entity ID", "Before", "After"],
-    rows: logs.map((l) => [new Date(l.created_at).toLocaleString(), l.user_email || "System", l.action, l.entity_type, l.entity_id || "—", jsonText(l.previous_value), jsonText(l.new_value)]),
+  // ── Report exports outside the Reports section (Fund Management, Audit Logs) ──
+  const reportData = (): ReportData => ({
+    applications, scholarships, profiles, staff, payments, auditLogs, payIssues, gradeUpdates: gradeReviews, dataRequests: dataReqs, documents: allDocs,
+    requiredDocuments: parseSettings(systemSettings).required_documents, minGrade: Number(parseSettings(systemSettings).min_grade_requirement),
   });
-
-  const buildReport = (key: string): ReportDef => {
-    const { since, until } = getRange(fundPeriod, fromDate, toDate);
-    const within = (d: string | null | undefined) => {
-      if (!d) return !since && !until;
-      const t = new Date(d);
-      return (!since || t >= since) && (!until || t <= until);
-    };
-    const inProgram = (schId: string | null | undefined) => reportProgram === "all" || schId === reportProgram;
-    const filters = [`Period: ${periodLabel()}`, `Program: ${programLabel()}`];
-    const count = (list: { length: number }) => list.length;
-
-    if (key === "scholars") {
-      const apps = applications.filter((a) => a.status === "Approved" && inProgram(a.scholarship_id) && within(a.updated_at));
-      return {
-        title: "List of Scholars", filters, count: count(apps), countLabel: "scholars",
-        sections: [{
-          name: "Scholars",
-          head: ["Name", "Email", "Student ID", "School", "Course", "Year Level", "Scholarship", "Approved On"],
-          rows: apps.map((a) => [personName(a.profiles), a.profiles?.email || "—", a.profiles?.student_id_number || "—", a.profiles?.school_name || "—", a.profiles?.course || "—", a.profiles?.year_level || "—", a.scholarships?.name || "—", new Date(a.updated_at).toLocaleDateString()]),
-        }],
-      };
-    }
-
-    if (key === "funds") {
-      const programs = fundData.byProgram.filter((r) => reportProgram === "all" || r.id === reportProgram);
-      const sections: ReportSection[] = [];
-      if (reportProgram === "all") {
-        sections.push({ name: "Payment Pipeline", head: ["Status", "Payments", "Amount"], rows: fundData.pipeline.map((r) => [r.status, r.count, r.amount]), money: ["Amount"] });
-      }
-      sections.push({ name: "By Scholarship Program", head: ["Scholarship", "Scholars Paid", "Disbursed", "Queued"], rows: programs.map((r) => [r.name, r.scholars, r.disbursed, r.queued]), money: ["Disbursed", "Queued"] });
-      if (reportProgram === "all") {
-        sections.push({ name: "By Payment Method", head: ["Method", "Payments", "Amount", "Share %"], rows: fundData.byMethod.map((r) => [r.method, r.count, r.amount, r.share]), money: ["Amount"] });
-      }
-      return { title: "Fund Utilization Report", filters, count: count(programs), countLabel: "programs", sections };
-    }
-
-    if (key === "disbursements") {
-      const programOf = (p: Tables<"payments">) => applications.find((a) => a.id === p.application_id)?.scholarship_id;
-      const list = payments.filter((p) => {
-        if (!within(p.disbursed_at || p.scheduled_date || p.created_at)) return false;
-        if (!inProgram(programOf(p))) return false;
-        return reportPayStatus === "all" ? p.status !== "Cancelled" : p.status === reportPayStatus;
-      });
-      const totals = (["Pending", "Processing", "Disbursed", "Cancelled"] as const)
-        .map((st) => { const l = list.filter((p) => p.status === st); return [st, l.length, l.reduce((t, p) => t + Number(p.amount || 0), 0)] as (string | number)[]; })
-        .filter((r) => (r[1] as number) > 0);
-      return {
-        title: "Disbursement Summary",
-        filters: [...filters, `Payments: ${reportPayStatus === "all" ? "All except cancelled" : reportPayStatus}`],
-        count: count(list), countLabel: "payments",
-        sections: [
-          {
-            name: "Payments",
-            head: ["Student", "Program", "Reference", "Method", "Status", "Scheduled", "Disbursed", "Amount"],
-            rows: list.map((p) => [payStudent(p), payProgram(p), p.reference || "—", p.method || "—", p.status, p.scheduled_date || "—", p.disbursed_at ? new Date(p.disbursed_at).toLocaleDateString() : "—", Number(p.amount)]),
-            money: ["Amount"],
-          },
-          { name: "Totals by Status", head: ["Status", "Payments", "Amount"], rows: totals, money: ["Amount"] },
-        ],
-      };
-    }
-
-    if (key === "audit") {
-      const logs = auditLogs.filter((l) => within(l.created_at));
-      return { title: "Audit Trail", filters: [`Period: ${periodLabel()}`], count: count(logs), countLabel: "entries", sections: [logsToSection(logs)] };
-    }
-
-    // statistics
-    const apps = applications.filter((a) => inProgram(a.scholarship_id) && within(a.created_at));
-    const by = (st: string) => apps.filter((a) => a.status === st).length;
-    const approved = by("Approved");
-    const group = (label: (a: typeof apps[number]) => string): (string | number)[][] => {
-      const m = new Map<string, { total: number; approved: number }>();
-      apps.forEach((a) => {
-        const k = label(a) || "Not specified";
-        const v = m.get(k) ?? { total: 0, approved: 0 };
-        v.total += 1; if (a.status === "Approved") v.approved += 1;
-        m.set(k, v);
-      });
-      return [...m.entries()].sort((x, y) => y[1].total - x[1].total).map(([k, v]) => [k, v.total, v.approved]);
-    };
+  const exportOpts = (landscape = false) => {
+    const s = parseSettings(systemSettings);
     return {
-      title: "Applicant Statistics", filters, count: count(apps), countLabel: "applications",
-      sections: [
-        { name: "Summary", head: ["Metric", "Value"], rows: [["Total Applications", apps.length], ["Approved", approved], ["Disapproved", by("Disapproved")], ["Pending", by("Pending")], ["Waitlisted", by("Waitlisted")], ["Approval Rate (of all)", `${apps.length ? ((approved / apps.length) * 100).toFixed(1) : 0}%`]] },
-        { name: "By Scholarship Program", head: ["Scholarship", "Total", "Approved", "Disapproved", "Pending", "Waitlisted"], rows: scholarships.filter((sc) => inProgram(sc.id)).map((sc) => { const l = apps.filter((a) => a.scholarship_id === sc.id); const c = (st: string) => l.filter((a) => a.status === st).length; return [sc.name, l.length, c("Approved"), c("Disapproved"), c("Pending"), c("Waitlisted")]; }) },
-        { name: "By Sex", head: ["Sex", "Applicants", "Approved"], rows: group((a) => a.profiles?.sex || "") },
-        { name: "By Year Level", head: ["Year Level", "Applicants", "Approved"], rows: group((a) => a.profiles?.year_level || "") },
-        { name: "By School", head: ["School", "Applicants", "Approved"], rows: group((a) => a.profiles?.school_name || "") },
-      ],
+      landscape, generatedBy: adminEmail, programName: s.program_name,
+      signatories: { preparedBy: s.report_prepared_by, preparedTitle: s.report_prepared_title, approvedBy: s.report_approved_by, approvedTitle: s.report_approved_title },
     };
   };
-
-  const renderPDF = async (def: ReportDef, file: string, landscape = false) => {
-    const { default: jsPDF } = await import("jspdf");
-    const { default: autoTable } = await import("jspdf-autotable");
-    const doc = new jsPDF(landscape ? { orientation: "landscape" } : undefined);
-    const pageH = doc.internal.pageSize.getHeight();
-    doc.setFontSize(16);
-    doc.text("SB San Jose Scholarship Portal", 14, 15);
-    doc.setFontSize(12);
-    doc.text(def.title, 14, 22);
-    doc.setFontSize(9);
-    doc.text(`Generated ${new Date().toLocaleString()}${adminEmail ? ` by ${adminEmail}` : ""}`, 14, 28);
-    doc.text(def.filters.join("   |   "), 14, 33);
-    let y = 40;
-    for (const sec of def.sections) {
-      if (y > pageH - 30) { doc.addPage(); y = 15; }
-      doc.setFontSize(11);
-      doc.text(sec.name, 14, y);
-      autoTable(doc, {
-        startY: y + 3,
-        head: [sec.head],
-        body: sec.rows.map((r) => r.map((c, i) => (sec.money?.includes(sec.head[i]) && typeof c === "number" ? formatPHP(c) : String(c)))),
-        styles: { fontSize: 8 },
-      });
-      y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10;
+  const exportDef = async (def: ReportDef, file: string, kind: "pdf" | "xlsx", landscape = false) => {
+    try {
+      if (kind === "pdf") await renderPDF(def, `${file}.pdf`, exportOpts(landscape));
+      else await renderExcel(def, `${file}.xlsx`, exportOpts());
+      toast.success(kind === "pdf" ? "PDF downloaded" : "Excel downloaded");
+    } catch (e) {
+      toast.error("Export failed", { description: e instanceof Error ? e.message : String(e) });
     }
-    const pages = doc.getNumberOfPages();
-    for (let i = 1; i <= pages; i++) {
-      doc.setPage(i);
-      doc.setFontSize(8);
-      doc.text(`Page ${i} of ${pages}`, doc.internal.pageSize.getWidth() - 30, pageH - 8);
-    }
-    doc.save(file);
-    toast.success("PDF downloaded");
   };
-
-  const renderExcel = async (def: ReportDef, file: string) => {
-    const XLSX = await import("xlsx");
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[def.title], [`Generated ${new Date().toLocaleString()}`], ...def.filters.map((f) => [f])]), "About");
-    const used = new Set<string>(["About"]);
-    for (const sec of def.sections) {
-      let name = sec.name.replace(/[\\/?*[\]:]/g, "").slice(0, 31) || "Sheet";
-      let n = 2;
-      while (used.has(name)) name = `${sec.name.slice(0, 28)} ${n++}`;
-      used.add(name);
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([sec.head, ...sec.rows]), name);
-    }
-    XLSX.writeFile(wb, file);
-    toast.success("Excel downloaded");
-  };
-
-  const exportPDF = (key: string) => renderPDF(buildReport(key), `${key}-report.pdf`, key === "disbursements" || key === "audit");
-  const exportExcel = (key: string) => renderExcel(buildReport(key), `${key}-report.xlsx`);
-
+  const fundsDef = () => buildReport("funds", reportData(), { ...ALL_FILTERS, period: fundPeriod, from: fromDate, to: toDate });
 
 
   const statusBadge = (status: string) => <StatusBadge status={status} />;
@@ -1184,7 +1129,7 @@ export default function AdminDashboardPage() {
           <button className="lg:hidden" onClick={() => setSidebarOpen(false)}><X className="h-5 w-5" /></button>
         </div>
         <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
-          {sidebarItems.map((item) => {
+          {sidebarItems.filter((item) => item.key !== "staff" || canManageSettings).map((item) => {
             const unread = item.key === "notifications" ? unreadTotal : 0;
             return (
               <button key={item.key} onClick={() => { setActiveSection(item.key); setSidebarOpen(false); }}
@@ -1387,6 +1332,17 @@ export default function AdminDashboardPage() {
                       <div>
                         <Label className="text-xs">Applicant statement</Label>
                         <p className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/40 px-3 py-2 text-sm">{viewApp.statement || "—"}</p>
+                      </div>
+                      <div>
+                        <Label className="text-xs">Requirements for {viewApp.scholarships?.name || "this program"}</Label>
+                        <ul className="mt-1 space-y-1 rounded-md border px-3 py-2">
+                          {requirementChecks(viewApp).map((c) => (
+                            <li key={c.key} className="flex items-start gap-2 text-sm">
+                              {c.ok ? <CheckCircle className="h-4 w-4 mt-0.5 shrink-0 text-success" /> : <XCircle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" />}
+                              <span><span className="font-medium">{c.label}</span> <span className="text-muted-foreground">· {c.detail}</span></span>
+                            </li>
+                          ))}
+                        </ul>
                       </div>
                       <div>
                         <Label className="text-xs">Documents</Label>
@@ -1600,6 +1556,24 @@ export default function AdminDashboardPage() {
                       <SelectItem value="inactive">Inactive</SelectItem>
                     </SelectContent>
                   </Select>
+                  <Select value={studentProgram} onValueChange={(v) => { setStudentProgram(v); setStudentPage(1); }}>
+                    <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All programs</SelectItem>
+                      {scholarships.map((sch) => <SelectItem key={sch.id} value={sch.id}>{sch.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Select value={studentDisb} onValueChange={(v) => { setStudentDisb(v); setStudentPage(1); }}>
+                    <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All disbursements</SelectItem>
+                      <SelectItem value="none">No payment yet</SelectItem>
+                      <SelectItem value="Pending">Pending</SelectItem>
+                      <SelectItem value="Processing">Processing</SelectItem>
+                      <SelectItem value="Disbursed">Disbursed</SelectItem>
+                      <SelectItem value="Cancelled">Cancelled</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <Select value={studentSort} onValueChange={setStudentSort}>
                     <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -1613,11 +1587,11 @@ export default function AdminDashboardPage() {
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Name</TableHead><TableHead>Student ID</TableHead><TableHead>School / Course</TableHead><TableHead>Year</TableHead><TableHead>Grade</TableHead><TableHead>Apps</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Name</TableHead><TableHead>Student ID</TableHead><TableHead>School / Course</TableHead><TableHead>Year</TableHead><TableHead>Grade</TableHead><TableHead title="Approved applications / total applications">Approved / Total</TableHead><TableHead>Program / Award</TableHead><TableHead>Reference No.</TableHead><TableHead>Disbursement</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">{scholars.length === 0 ? "No scholars yet. Applicants appear here once approved." : "No scholars match your search"}</TableCell></TableRow>}
-                    {pagedStudents.map((p) => (
+                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={11} className="text-center py-8 text-muted-foreground">{scholars.length === 0 ? "No scholars yet. Applicants appear here once approved." : "No scholars match your search"}</TableCell></TableRow>}
+                    {pagedStudents.map((p) => { const pay = currentPayment(p.id); const apps = approvedApps(p.id); return (
                       <TableRow key={p.id}>
                         <TableCell>
                           <p className="font-medium">{p.first_name} {p.last_name}</p><p className="text-xs text-muted-foreground">{p.email}</p>
@@ -1630,16 +1604,25 @@ export default function AdminDashboardPage() {
                         <TableCell className="text-xs"><p>{p.school_name || "—"}</p><p className="text-muted-foreground">{p.course || "—"}</p></TableCell>
                         <TableCell>{p.year_level || "—"}</TableCell>
                         <TableCell>{p.average_grade ?? "—"}</TableCell>
-                        <TableCell>{applications.filter((a) => a.user_id === p.id).length}</TableCell>
+                        <TableCell>{apps.length} / {applications.filter((a) => a.user_id === p.id).length}</TableCell>
+                        <TableCell className="text-xs">
+                          {apps.length === 0 ? "—" : (<>
+                            <p className="font-medium">{apps[0].scholarships?.name || "—"}{apps.length > 1 && <span className="text-muted-foreground font-normal"> +{apps.length - 1} more</span>}</p>
+                            <p className="text-muted-foreground">{formatPHP(apps.reduce((t, a) => t + appAward(a), 0))}{disbursedTotal(p.id) > 0 && ` · ${formatPHP(disbursedTotal(p.id))} paid`}</p>
+                          </>)}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{pay?.reference || "—"}</TableCell>
+                        <TableCell>{pay ? disbStatusBadge(pay.status) : <span className="text-xs text-muted-foreground">No payment</span>}</TableCell>
                         <TableCell><Badge variant={p.is_active ? "default" : "secondary"}>{p.is_active ? "Active" : "Inactive"}</Badge></TableCell>
                         <TableCell className="text-right space-x-1">
                           <Button size="icon" variant="ghost" title="View" onClick={() => setViewStudent(p)}><Eye className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" title="Edit reference number / disbursement status" onClick={() => openEditDisb(p)}><Pencil className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title={p.is_active ? "Deactivate" : "Activate"} onClick={() => toggleStudentActive(p)}>
                             <Power className={`h-4 w-4 ${p.is_active ? "text-destructive" : "text-success"}`} />
                           </Button>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ); })}
                   </TableBody>
                 </Table>
               </Card>
@@ -1672,8 +1655,8 @@ export default function AdminDashboardPage() {
                       <SelectItem value="custom">Custom range (Reports)</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Button variant="outline" onClick={() => exportPDF("funds")}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
-                  <Button variant="outline" onClick={() => exportExcel("funds")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
+                  <Button variant="outline" onClick={() => exportDef(fundsDef(), "funds-report", "pdf")}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
+                  <Button variant="outline" onClick={() => exportDef(fundsDef(), "funds-report", "xlsx")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
                 </div>
               </div>
 
@@ -1841,12 +1824,23 @@ export default function AdminDashboardPage() {
                             {p.status !== "Disbursed" ? <span className="text-muted-foreground">—</span>
                               : p.student_receipt_at ? (
                                 <div className="space-y-1">
-                                  {p.student_receipt_path ? (
+                                  {p.student_receipt_ref ? (
+                                    <div className="space-y-0.5">
+                                      <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
+                                        <CheckCircle className="h-3.5 w-3.5" /> Ref. <span className="font-mono">{p.student_receipt_ref}</span> · {new Date(p.student_receipt_at).toLocaleDateString()}
+                                      </span>
+                                      {p.reference && (
+                                        refKey(p.reference) === refKey(p.student_receipt_ref)
+                                          ? <p className="text-[11px] text-success">Matches the payment reference</p>
+                                          : <p className="text-[11px] text-muted-foreground">Payment reference: <span className="font-mono">{p.reference}</span></p>
+                                      )}
+                                    </div>
+                                  ) : p.student_receipt_path ? (
                                     <button type="button" onClick={() => viewStudentReceipt(p)} className="inline-flex items-center gap-1 text-xs font-medium text-success hover:underline cursor-pointer">
                                       <CheckCircle className="h-3.5 w-3.5" /> Received · {new Date(p.student_receipt_at).toLocaleDateString()}
                                     </button>
                                   ) : (
-                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-success" title="Student confirmed receiving the cash without attaching a file">
+                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-success" title="Student confirmed receiving the cash without a receipt number (before reference numbers were required)">
                                       <CheckCircle className="h-3.5 w-3.5" /> Confirmed (no file) · {new Date(p.student_receipt_at).toLocaleDateString()}
                                     </span>
                                   )}
@@ -1972,196 +1966,16 @@ export default function AdminDashboardPage() {
                 </DialogContent>
               </Dialog>
 
-              {/* Disburse dialog */}
-              <Dialog open={disbDialog} onOpenChange={setDisbDialog}>
-                <DialogContent className="max-w-md">
-                  <DialogHeader>
-                    <DialogTitle className="font-display">Confirm Disbursement</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-2">
-                    <div>
-                      <Label>Payment Method *</Label>
-                      <div className="grid grid-cols-2 gap-3 mt-2">
-                        {enabledMethods.map((m) => (
-                          <button
-                            key={m}
-                            type="button"
-                            disabled={disbLocked}
-                            onClick={() => { setDisbMethod(m); setDisbRef(""); }}
-                            className={`flex items-center justify-center gap-2 rounded-lg border p-3 text-sm font-medium transition-all cursor-pointer ${
-                              disbMethod === m
-                                ? "border-primary bg-primary/5 text-primary"
-                                : "border-border hover:border-primary/40"
-                            } ${disbLocked ? "opacity-60 cursor-not-allowed" : ""}`}
-                          >
-                            {m === "Cash" ? <Banknote className="h-4 w-4" /> : <Receipt className="h-4 w-4" />} {m}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    {disbLocked && (
-                      <p className="text-xs text-muted-foreground">The student chose <strong className="text-foreground">{disbPay?.preferred_method}</strong> for this payment, so the method is fixed.</p>
-                    )}
-                    <div>
-                      <Label>{disbMethod === "Cheque" ? "Cheque Number *" : "Reference Number"}</Label>
-                      <Input
-                        className="mt-1"
-                        placeholder={disbMethod === "Cheque" ? "e.g. CHK-2024-001" : "e.g. REF-001 (optional)"}
-                        value={disbRef}
-                        onChange={(e) => setDisbRef(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label>Receipt / Voucher *</Label>
-                      <p className="text-xs text-muted-foreground mb-2">Upload the signed receipt or disbursement voucher.</p>
-                      <label className="flex items-center gap-2 cursor-pointer rounded-lg border border-dashed p-3 hover:bg-muted/30 transition-colors">
-                        <Upload className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-sm text-muted-foreground">
-                          {disbReceipt ? disbReceipt.name : "Click to upload receipt (PDF / image)"}
-                        </span>
-                        <input
-                          type="file"
-                          accept=".pdf,.jpg,.jpeg,.png"
-                          className="hidden"
-                          onChange={(e) => setDisbReceipt(e.target.files?.[0] ?? null)}
-                        />
-                      </label>
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setDisbDialog(false)}>Cancel</Button>
-                    <Button
-                      className="bg-gradient-primary"
-                      disabled={disbLoading || !disbReceipt || (disbMethod === "Cheque" && !disbRef.trim())}
-                      onClick={confirmDisbursement}
-                    >
-                      {disbLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Confirm Disbursement
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
             </div>
           )}
 
           {/* REPORTS */}
           {activeSection === "reports" && (
-            <div className="space-y-4 animate-fade-in">
-              <h2 className="text-xl font-display font-bold">Reports & Analytics</h2>
-              <Card>
-                <CardContent className="py-4 flex gap-3 flex-wrap items-end">
-                  <div>
-                    <Label className="text-xs">Period</Label>
-                    <Select value={fundPeriod} onValueChange={setFundPeriod}>
-                      <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All time</SelectItem>
-                        <SelectItem value="year">This year</SelectItem>
-                        <SelectItem value="6m">Last 6 months</SelectItem>
-                        <SelectItem value="30d">Last 30 days</SelectItem>
-                        <SelectItem value="custom">Custom range</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {fundPeriod === "custom" && (<>
-                    <div><Label className="text-xs">From</Label><Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="w-40" /></div>
-                    <div><Label className="text-xs">To</Label><Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="w-40" /></div>
-                  </>)}
-                  <div>
-                    <Label className="text-xs">Program</Label>
-                    <Select value={reportProgram} onValueChange={setReportProgram}>
-                      <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All programs</SelectItem>
-                        {scholarships.map((sc) => <SelectItem key={sc.id} value={sc.id}>{sc.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label className="text-xs">Payments (disbursement report)</Label>
-                    <Select value={reportPayStatus} onValueChange={setReportPayStatus}>
-                      <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All except cancelled</SelectItem>
-                        <SelectItem value="Pending">Pending</SelectItem>
-                        <SelectItem value="Processing">Processing</SelectItem>
-                        <SelectItem value="Disbursed">Disbursed</SelectItem>
-                        <SelectItem value="Cancelled">Cancelled</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </CardContent>
-              </Card>
-              <p className="text-xs text-muted-foreground -mt-2">Period also applies to Fund Management. Each report shows how many rows your filters will export.</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {[
-                  { title: "List of Scholars", desc: "Approved scholars with contact, school and program", icon: Users, exportKey: "scholars" },
-                  { title: "Fund Utilization Report", desc: "Disbursed and queued funds per program, plus payment pipeline and methods", icon: Wallet, exportKey: "funds" },
-                  { title: "Disbursement Summary", desc: "Every payment with student, program, method and status, plus totals", icon: Banknote, exportKey: "disbursements" },
-                  { title: "Applicant Statistics", desc: "Applications and approval rates by program, sex, year level and school", icon: BarChart3, exportKey: "statistics" },
-                  { title: "Audit Trail", desc: "Every recorded admin and student action in the period", icon: ScrollText, exportKey: "audit" },
-                ].map((r) => {
-                  const def = buildReport(r.exportKey);
-                  return (
-                    <Card key={r.exportKey}>
-                      <CardHeader>
-                        <CardTitle className="text-base flex items-center gap-2"><r.icon className="h-4 w-4 text-primary" />{r.title}</CardTitle>
-                        <CardDescription>{r.desc}</CardDescription>
-                      </CardHeader>
-                      <CardContent className="flex items-center gap-2 flex-wrap">
-                        <Button size="sm" disabled={def.count === 0} onClick={() => setViewReport(r.exportKey)}><Eye className="mr-1 h-4 w-4" /> View</Button>
-                        <Button variant="outline" size="sm" disabled={def.count === 0} onClick={() => exportPDF(r.exportKey)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
-                        <Button variant="outline" size="sm" disabled={def.count === 0} onClick={() => exportExcel(r.exportKey)}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
-                        <span className="text-xs text-muted-foreground ml-auto">{def.count} {def.countLabel}</span>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-              <Dialog open={!!viewReport} onOpenChange={(o) => { if (!o) setViewReport(null); }}>
-                <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
-                  {viewReport && (() => {
-                    const def = buildReport(viewReport);
-                    const cell = (sec: ReportSection, c: string | number, i: number) => (sec.money?.includes(sec.head[i]) && typeof c === "number" ? formatPHP(c) : String(c));
-                    return (<>
-                      <DialogHeader>
-                        <DialogTitle>{def.title}</DialogTitle>
-                        <p className="text-xs text-muted-foreground">{def.filters.join(" · ")} · {def.count} {def.countLabel}</p>
-                      </DialogHeader>
-                      <div className="space-y-6">
-                        {def.sections.map((sec) => (
-                          <div key={sec.name} className="space-y-2">
-                            <h3 className="text-sm font-semibold">{sec.name}</h3>
-                            <div className="rounded-md border overflow-x-auto">
-                              <Table>
-                                <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                                  {sec.head.map((h) => <TableHead key={h} className={sec.money?.includes(h) ? "text-right" : undefined}>{h}</TableHead>)}
-                                </TableRow></TableHeader>
-                                <TableBody>
-                                  {sec.rows.length === 0 && <TableRow><TableCell colSpan={sec.head.length} className="text-center py-6 text-muted-foreground">No data for these filters</TableCell></TableRow>}
-                                  {sec.rows.slice(0, REPORT_VIEW_ROWS).map((r, ri) => (
-                                    <TableRow key={ri}>
-                                      {r.map((c, i) => <TableCell key={i} className={`text-xs ${sec.money?.includes(sec.head[i]) ? "text-right tabular-nums" : ""}`}>{cell(sec, c, i)}</TableCell>)}
-                                    </TableRow>
-                                  ))}
-                                </TableBody>
-                              </Table>
-                            </div>
-                            {sec.rows.length > REPORT_VIEW_ROWS && (
-                              <p className="text-xs text-muted-foreground">Showing the first {REPORT_VIEW_ROWS} of {sec.rows.length} rows. Export to see them all.</p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                      <DialogFooter>
-                        <Button variant="outline" onClick={() => exportPDF(viewReport)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
-                        <Button variant="outline" onClick={() => exportExcel(viewReport)}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
-                      </DialogFooter>
-                    </>);
-                  })()}
-                </DialogContent>
-              </Dialog>
-            </div>
+            <ReportsPanel
+              data={{ applications, scholarships, profiles, staff, payments, payIssues, gradeUpdates: gradeReviews, dataRequests: dataReqs, documents: allDocs }}
+              settings={parseSettings(systemSettings)} adminEmail={adminEmail}
+              period={fundPeriod} setPeriod={setFundPeriod} fromDate={fromDate} setFromDate={setFromDate} toDate={toDate} setToDate={setToDate}
+            />
           )}
 
           {/* NOTIFICATIONS */}
@@ -2190,8 +2004,8 @@ export default function AdminDashboardPage() {
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <h2 className="text-xl font-display font-bold">Audit Logs</h2>
                 <div className="flex gap-2 flex-wrap">
-                  <Button variant="outline" onClick={() => renderPDF(auditDef(), "audit-log.pdf", true)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
-                  <Button variant="outline" onClick={() => renderExcel(auditDef(), "audit-log.xlsx")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
+                  <Button variant="outline" onClick={() => exportDef(auditDef(), "audit-log", "pdf", true)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
+                  <Button variant="outline" onClick={() => exportDef(auditDef(), "audit-log", "xlsx")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
                 </div>
               </div>
               <div className="flex gap-2 flex-wrap items-center">
@@ -2303,15 +2117,164 @@ export default function AdminDashboardPage() {
             />
           )}
 
+          {/* STAFF (super admins only) */}
+          {activeSection === "staff" && canManageSettings && (
+            <StaffPanel userId={adminUserId} onChanged={() => loadData(true)} />
+          )}
+
           {/* SETTINGS */}
           {activeSection === "settings" && (
             <div className="space-y-4">
-              <SettingsPanel rows={systemSettings} auditLogs={auditLogs} onSave={saveSettings} />
+              <SettingsPanel rows={systemSettings} auditLogs={auditLogs} onSave={saveSettings} readOnly={!canManageSettings} />
               <ReminderJobsCard />
             </div>
           )}
         </main>
       </div>
+
+      {/* Student Management: edit reference number / disbursement status */}
+      <Dialog open={!!editDisb} onOpenChange={(o) => !o && setEditDisb(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="font-display">Edit Disbursement</DialogTitle></DialogHeader>
+          {editDisb && (() => {
+            const list = studentPayments(editDisb.id);
+            const pm = list.find((x) => x.id === editDisbPayId);
+            const locked = pm?.status === "Disbursed" || pm?.status === "Cancelled";
+            return (
+              <div className="space-y-4">
+                <div><Label className="text-muted-foreground text-xs">Student</Label><p className="font-medium">{`${editDisb.first_name || ""} ${editDisb.last_name || ""}`.trim() || editDisb.email}</p></div>
+                {list.length === 0 ? (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">This scholar has no payment yet. Schedule one first, then set its reference number and status.</p>
+                    <Button variant="outline" onClick={() => {
+                      const app = fundData.awaiting.find((a) => a.user_id === editDisb.id);
+                      setEditDisb(null); openNewPayment(app?.id ?? ""); setActiveSection("disbursement");
+                    }}>Schedule payment <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>
+                  </div>
+                ) : (<>
+                  {list.length > 1 && (
+                    <div>
+                      <Label>Payment</Label>
+                      <Select value={editDisbPayId} onValueChange={(id) => selectEditDisbPayment(list.find((x) => x.id === id))}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {list.map((x) => (
+                            <SelectItem key={x.id} value={x.id}>{payProgram(x)} · {formatPHP(Number(x.amount))} · {x.status}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {pm && list.length === 1 && <p className="text-sm text-muted-foreground">{payProgram(pm)} · {formatPHP(Number(pm.amount))} · {pm.method || "—"}</p>}
+                  <div>
+                    <Label>{pm?.method === "Cheque" ? "Cheque number" : "Reference number"}</Label>
+                    <Input value={editDisbRef} onChange={(e) => setEditDisbRef(e.target.value)} disabled={locked} placeholder={pm?.method === "Cheque" ? "e.g. CHK-2024-001" : "e.g. REF-001"} />
+                  </div>
+                  <div>
+                    <Label>Disbursement status</Label>
+                    <Select value={editDisbStatus} onValueChange={setEditDisbStatus} disabled={locked}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {pm?.status === "Pending" && <SelectItem value="Pending">Pending</SelectItem>}
+                        <SelectItem value="Processing">Processing</SelectItem>
+                        <SelectItem value="Disbursed">Disbursed</SelectItem>
+                        <SelectItem value="Cancelled">Cancelled</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {locked && <p className="text-xs text-muted-foreground flex items-center gap-1"><Lock className="h-3.5 w-3.5" /> {pm?.status} payments are locked and can&apos;t be edited.</p>}
+                  {!locked && editDisbStatus === "Disbursed" && <p className="text-xs text-muted-foreground">You&apos;ll be asked to upload the receipt / voucher to confirm the disbursement.</p>}
+                  {!locked && editDisbStatus === "Cancelled" && (
+                    <div>
+                      <Label className="text-xs">Cancellation reason (shown to the student, optional)</Label>
+                      <Textarea rows={2} maxLength={300} value={editDisbReason} onChange={(e) => setEditDisbReason(e.target.value)} />
+                    </div>
+                  )}
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setEditDisb(null)}>Close</Button>
+                    {!locked && (
+                      <Button className="bg-gradient-primary" disabled={payBusy || !pm} onClick={saveEditDisb}>
+                        {payBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        {editDisbStatus === "Disbursed" ? "Continue" : "Save Changes"}
+                      </Button>
+                    )}
+                  </DialogFooter>
+                </>)}
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* Disburse dialog */}
+      <Dialog open={disbDialog} onOpenChange={setDisbDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display">Confirm Disbursement</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label>Payment Method *</Label>
+              <div className="grid grid-cols-2 gap-3 mt-2">
+                {enabledMethods.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    disabled={disbLocked}
+                    onClick={() => { setDisbMethod(m); setDisbRef(""); }}
+                    className={`flex items-center justify-center gap-2 rounded-lg border p-3 text-sm font-medium transition-all cursor-pointer ${
+                      disbMethod === m
+                        ? "border-primary bg-primary/5 text-primary"
+                        : "border-border hover:border-primary/40"
+                    } ${disbLocked ? "opacity-60 cursor-not-allowed" : ""}`}
+                  >
+                    {m === "Cash" ? <Banknote className="h-4 w-4" /> : <Receipt className="h-4 w-4" />} {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {disbLocked && (
+              <p className="text-xs text-muted-foreground">The student chose <strong className="text-foreground">{disbPay?.preferred_method}</strong> for this payment, so the method is fixed.</p>
+            )}
+            <div>
+              <Label>{disbMethod === "Cheque" ? "Cheque Number *" : "Reference Number"}</Label>
+              <Input
+                className="mt-1"
+                placeholder={disbMethod === "Cheque" ? "e.g. CHK-2024-001" : "e.g. REF-001 (optional)"}
+                value={disbRef}
+                onChange={(e) => setDisbRef(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label>Receipt / Voucher *</Label>
+              <p className="text-xs text-muted-foreground mb-2">Upload the signed receipt or disbursement voucher.</p>
+              <label className="flex items-center gap-2 cursor-pointer rounded-lg border border-dashed p-3 hover:bg-muted/30 transition-colors">
+                <Upload className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">
+                  {disbReceipt ? disbReceipt.name : "Click to upload receipt (PDF / image)"}
+                </span>
+                <input
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  className="hidden"
+                  onChange={(e) => setDisbReceipt(e.target.files?.[0] ?? null)}
+                />
+              </label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDisbDialog(false)}>Cancel</Button>
+            <Button
+              className="bg-gradient-primary"
+              disabled={disbLoading || !disbReceipt || (disbMethod === "Cheque" && !disbRef.trim())}
+              onClick={confirmDisbursement}
+            >
+              {disbLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Confirm Disbursement
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
@@ -2325,6 +2288,7 @@ export default function AdminDashboardPage() {
               <div className="space-y-5">
                 <div className="grid grid-cols-2 gap-3">
                   {field("Name", `${viewStudent.first_name || ""} ${viewStudent.middle_name || ""} ${viewStudent.last_name || ""}`.replace(/\s+/g, " ").trim())}
+                  {field("Student ID", <span className="font-mono">{viewStudent.student_id_number || "—"}</span>)}
                   {field("Email", viewStudent.email)}
                   {field("Phone", viewStudent.phone)}
                   {field("Sex · Civil status", [viewStudent.sex, viewStudent.civil_status].filter(Boolean).join(" · "))}
@@ -2333,7 +2297,6 @@ export default function AdminDashboardPage() {
                   {field("Address", [viewStudent.street_address, viewStudent.barangay, viewStudent.municipality, viewStudent.province, viewStudent.zip_code].filter(Boolean).join(", "))}
                   {field("Guardian", [viewStudent.guardian_name, viewStudent.guardian_relationship && `(${viewStudent.guardian_relationship})`].filter(Boolean).join(" "))}
                   {field("Guardian phone", viewStudent.guardian_phone)}
-                  {field("Student ID", viewStudent.student_id_number)}
                   {field("School", viewStudent.school_name)}
                   {field("Course", viewStudent.course)}
                   {field("Year Level", viewStudent.year_level)}
@@ -2356,6 +2319,44 @@ export default function AdminDashboardPage() {
                     </ul>
                   )}
                 </div>
+                {(() => {
+                  const pays = studentPayments(viewStudent.id);
+                  return (
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs">Payments ({pays.length}){pays.length > 0 && <span className="font-normal text-muted-foreground"> · {formatPHP(disbursedTotal(viewStudent.id))} disbursed</span>}</Label>
+                        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { const v = viewStudent; setViewStudent(null); openEditDisb(v); }}>
+                          <Pencil className="mr-1 h-3.5 w-3.5" /> Edit disbursement
+                        </Button>
+                      </div>
+                      {pays.length === 0 ? <p className="text-sm text-muted-foreground">No payments yet</p> : (
+                        <ul className="mt-1 space-y-1">
+                          {pays.map((pm) => (
+                            <li key={pm.id} className="rounded-md border px-3 py-1.5 text-sm">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <span>
+                                  <span className="font-medium">{formatPHP(Number(pm.amount))}</span> · {payProgram(pm)}
+                                  <span className="text-xs text-muted-foreground"> · {pm.method || "—"} · Ref: <span className="font-mono">{pm.reference || "—"}</span></span>
+                                </span>
+                                <span className="flex items-center gap-1.5">
+                                  {pm.status === "Disbursed" && (
+                                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => viewReceipt(pm)}><Receipt className="mr-1 h-3.5 w-3.5" /> Receipt</Button>
+                                  )}
+                                  {disbStatusBadge(pm.status)}
+                                </span>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                {pm.status === "Disbursed" && pm.disbursed_at ? `Disbursed ${new Date(pm.disbursed_at).toLocaleDateString()}` : pm.scheduled_date ? `Scheduled ${pm.scheduled_date}` : `Created ${new Date(pm.created_at).toLocaleDateString()}`}
+                                {pm.status === "Disbursed" && ` · Student receipt: ${pm.student_receipt_at ? pm.receipt_review_status : "awaiting"}`}
+                                {pm.status === "Cancelled" && pm.cancel_reason && ` · ${pm.cancel_reason}`}
+                              </p>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })()}
                 {(() => {
                   const grades = gradeReviews.filter((g) => g.user_id === viewStudent.id);
                   if (grades.length === 0) return null;

@@ -6,7 +6,7 @@ import { ArrowRight, ArrowUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSignedIn } from "@/hooks/use-signed-in";
 
-/** Landing-page helpers that appear after scrolling: a mobile "Apply Now" bar and a back-to-top button. */
+/** Landing-page helpers that appear after scrolling: a mobile "Register Now" bar and a back-to-top button. */
 export default function FloatingActions() {
   const router = useRouter();
   const signedIn = useSignedIn();
@@ -35,7 +35,7 @@ export default function FloatingActions() {
           onClick={() => router.push(signedIn ? "/student-dashboard?section=application" : "/register")}
           className="w-full h-11 bg-gradient-primary shadow-primary cursor-pointer"
         >
-          {signedIn ? "Go to My Application" : "Apply Now"} <ArrowRight className="ml-2 h-4 w-4" />
+          {signedIn ? "Go to My Application" : "Register Now"} <ArrowRight className="ml-2 h-4 w-4" />
         </Button>
       </div>
 

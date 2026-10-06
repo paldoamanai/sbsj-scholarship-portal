@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -39,10 +39,12 @@ import { profileFromUserMetadata } from "@/lib/registration-profile";
 import { useSystemSettings } from "@/hooks/use-system-settings";
 import { applicationsBlockedReason } from "@/lib/settings";
 import { STATEMENT_MIN, STATEMENT_MAX } from "@/validations/application";
-import { DOC_MIME, documentPath, safeFileName, uploadUserDocument } from "@/lib/documents";
-import { availabilityInfo, requirementLines, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
+import { DOC_MIME, documentPath, uploadUserDocument } from "@/lib/documents";
+import { uploadPendingDocuments } from "@/lib/pending-documents";
+import { availabilityInfo, programChecks, requirementLines, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
 import { formatDate, peso, pesoFixed } from "@/lib/format";
 import ApplicationTimeline from "@/components/student/ApplicationTimeline";
+import ApplicationHistory, { DisapprovalReason } from "@/components/student/ApplicationHistory";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Payment = Tables<"payments">;
@@ -61,55 +63,37 @@ function DocStatusBadge({ status }: { status: string }) {
 
 // ── Section heading ────────────────────────────────────────────────────────────
 // ── Disbursement section ───────────────────────────────────────────────────────
-// Shared receipt-upload logic. The file goes to private storage first; the database then checks it
-// exists, its type and size, and refuses a second submission (unless staff disapproved the first).
-const RECEIPT_TYPES = ["application/pdf", "image/jpeg", "image/png"];
+// Shared receipt-submission logic. The student types the reference number printed on the voucher /
+// acknowledgment receipt they signed; the database checks it and refuses a second submission
+// (unless staff disapproved the first).
+const RECEIPT_REF = /^[A-Za-z0-9][A-Za-z0-9 /#._-]{2,39}$/;
 
-function useReceiptUpload(onUploaded: () => void) {
+function useReceiptSubmit(onSubmitted: () => void) {
   const supabase = createClient();
-  const { settings } = useSystemSettings();
-  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
-  const [receiptFiles, setReceiptFiles] = useState<Record<string, File | null>>({});
+  const [submittingFor, setSubmittingFor] = useState<string | null>(null);
+  const [refs, setRefs] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
 
-  const pickFile = (paymentId: string, file: File | null) => {
-    if (file && !RECEIPT_TYPES.includes(file.type)) { toast.error("Upload a PDF, JPG or PNG file."); return; }
-    if (file && file.size === 0) { toast.error("That file is empty."); return; }
-    if (file && file.size > settings.max_upload_mb * 1024 * 1024) { toast.error(`File is too large (max ${settings.max_upload_mb} MB).`); return; }
-    setReceiptFiles((prev) => ({ ...prev, [paymentId]: file }));
-  };
-
-  // With a file: upload it and attach it. Without one (Cash only): record the confirmation.
-  const upload = async (paymentId: string) => {
-    const file = receiptFiles[paymentId];
-    if (!file && !confirmed[paymentId]) return;
-    setUploadingFor(paymentId);
+  const submit = async (paymentId: string) => {
+    const ref = (refs[paymentId] ?? "").trim();
+    if (!RECEIPT_REF.test(ref)) { toast.error("Enter the reference number exactly as printed on your receipt (3–40 letters or numbers)."); return; }
+    if (!confirmed[paymentId]) return;
+    setSubmittingFor(paymentId);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { toast.error("Please log in again."); return; }
-      let path: string | null = null;
-      if (file) {
-        path = `${user.id}/receipts/${paymentId}/${Date.now()}-${safeFileName(file.name)}`;
-        const { error: uploadError } = await supabase.storage.from("documents").upload(path, file, { contentType: file.type });
-        if (uploadError) { toast.error("Upload failed", { description: uploadError.message }); return; }
-      }
-      const { error } = await supabase.rpc("submit_student_receipt", { _payment_id: paymentId, _path: path });
-      if (error) {
-        if (path) await supabase.storage.from("documents").remove([path]);
-        toast.error("Could not submit", { description: error.message });
-        return;
-      }
-      toast.success(file ? "Receipt submitted." : "Cash receipt confirmed.");
-      setReceiptFiles((prev) => ({ ...prev, [paymentId]: null }));
+      const { error } = await supabase.rpc("submit_student_receipt", { _payment_id: paymentId, _reference: ref });
+      if (error) { toast.error("Could not submit", { description: error.message }); return; }
+      toast.success("Receipt reference submitted.");
+      setRefs((prev) => ({ ...prev, [paymentId]: "" }));
       setConfirmed((prev) => ({ ...prev, [paymentId]: false }));
-      onUploaded();
+      onSubmitted();
     } catch {
       toast.error("Failed to submit.");
     } finally {
-      setUploadingFor(null);
+      setSubmittingFor(null);
     }
   };
 
+  // Receipts sent as photos before the switch to reference numbers can still be opened.
   const view = async (path: string | null) => {
     if (!path) return;
     const win = window.open("", "_blank");
@@ -118,7 +102,7 @@ function useReceiptUpload(onUploaded: () => void) {
     if (win) win.location.href = data.signedUrl; else window.location.href = data.signedUrl;
   };
 
-  return { receiptFiles, uploadingFor, confirmed, setConfirmed, pickFile, upload, view };
+  return { refs, setRefs, submittingFor, confirmed, setConfirmed, submit, view };
 }
 
 // Lets the student say whether they'd like Cash or Cheque for a payment that isn't disbursed yet.
@@ -153,7 +137,7 @@ function MethodPreference({ payment, onChanged, compact = false }: { payment: Pa
   );
 }
 
-type ReceiptCtl = ReturnType<typeof useReceiptUpload>;
+type ReceiptCtl = ReturnType<typeof useReceiptSubmit>;
 
 const ISSUE_KINDS: Record<string, string> = {
   not_received: "I didn't receive this payment",
@@ -161,24 +145,27 @@ const ISSUE_KINDS: Record<string, string> = {
   other: "Something else",
 };
 
-// Everything a student sees to acknowledge a disbursed payment. Cash: file OR a confirmation; Cheque: file.
-// A submitted receipt is final unless the office disapproved it, in which case a new one can be sent.
+// Everything a student sees to acknowledge a disbursed payment: the reference number on the receipt they
+// signed, plus a confirmation of the amount. Final unless the office disapproved it.
 function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl }) {
-  const { receiptFiles, uploadingFor, confirmed, setConfirmed, pickFile, upload, view } = ctl;
-  const isCash = p.method === "Cash";
+  const { refs, setRefs, submittingFor, confirmed, setConfirmed, submit, view } = ctl;
   const disapproved = p.receipt_review_status === "Disapproved";
 
   if (p.student_receipt_at && !disapproved) {
     const accepted = p.receipt_review_status === "Accepted";
     return (
       <div className="space-y-1">
-        {p.student_receipt_path ? (
+        {p.student_receipt_ref ? (
+          <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
+            <CheckCircle className="h-3.5 w-3.5" /> Receipt ref. <span className="font-mono">{p.student_receipt_ref}</span> · {formatDate(p.student_receipt_at)}
+          </span>
+        ) : p.student_receipt_path ? (
           <button type="button" onClick={() => view(p.student_receipt_path)} className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium hover:underline cursor-pointer">
             <CheckCircle className="h-3.5 w-3.5" /> Submitted {formatDate(p.student_receipt_at)} · View
           </button>
         ) : (
           <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
-            <CheckCircle className="h-3.5 w-3.5" /> Cash receipt confirmed {formatDate(p.student_receipt_at)}
+            <CheckCircle className="h-3.5 w-3.5" /> Receipt confirmed {formatDate(p.student_receipt_at)}
           </span>
         )}
         <p className={`text-[11px] font-semibold ${accepted ? "text-emerald-700" : "text-amber-700"}`}>{accepted ? "Accepted by the office" : "Waiting for the office to review"}</p>
@@ -186,9 +173,9 @@ function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl 
     );
   }
 
-  const file = receiptFiles[p.id];
+  const ref = refs[p.id] ?? "";
   const checked = !!confirmed[p.id];
-  const canSubmit = !!file || (isCash && checked);
+  const canSubmit = RECEIPT_REF.test(ref.trim()) && checked;
   return (
     <div className="space-y-2 min-w-[230px]">
       {disapproved && (
@@ -197,34 +184,25 @@ function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl 
         </p>
       )}
       <p className="text-xs text-muted-foreground">
-        {isCash
-          ? "Upload a photo of the voucher you signed when you received the cash, or confirm below."
-          : "Upload a photo of the signed cheque voucher or acknowledgment."}
+        {p.method === "Cash"
+          ? "Enter the reference number printed on the cash voucher you signed when you received the money."
+          : "Enter the reference number printed on the cheque voucher or acknowledgment receipt you signed."}
       </p>
       <div className="flex items-center gap-1.5">
-        <label className="cursor-pointer flex items-center gap-1 text-xs text-muted-foreground border border-border rounded-lg px-2 py-1 hover:bg-muted transition-colors min-w-0">
-          <Upload className="h-3 w-3 shrink-0" />
-          <span className="truncate">{file ? file.name : "Choose file"}</span>
-          <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png"
-            onChange={(e) => {
-              const input = e.target;
-              const f = input.files?.[0] ?? null;
-              input.value = ""; // so picking the same file again still fires onChange
-              if (f) pickFile(p.id, f);
-            }} />
-        </label>
+        <Input value={ref} maxLength={40} placeholder="Receipt reference no." aria-label="Receipt reference number"
+          onChange={(e) => setRefs((prev) => ({ ...prev, [p.id]: e.target.value }))}
+          onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) submit(p.id); }}
+          className="h-7 text-xs rounded-lg font-mono uppercase placeholder:normal-case placeholder:font-sans" />
         <Button size="sm" className="h-7 px-2 text-xs bg-primary hover:bg-primary text-white rounded-lg shrink-0"
-          disabled={!canSubmit || uploadingFor === p.id} onClick={() => upload(p.id)}>
-          {uploadingFor === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : file ? "Submit receipt" : "Confirm received"}
+          disabled={!canSubmit || submittingFor === p.id} onClick={() => submit(p.id)}>
+          {submittingFor === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Submit"}
         </Button>
       </div>
-      {isCash && (
-        <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
-          <input type="checkbox" className="mt-0.5" checked={checked}
-            onChange={(e) => setConfirmed((prev) => ({ ...prev, [p.id]: e.target.checked }))} />
-          <span>I confirm I received {pesoFixed(p.amount)} in cash.</span>
-        </label>
-      )}
+      <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
+        <input type="checkbox" className="mt-0.5" checked={checked}
+          onChange={(e) => setConfirmed((prev) => ({ ...prev, [p.id]: e.target.checked }))} />
+        <span>I confirm I received {pesoFixed(p.amount)}{p.method === "Cash" ? " in cash" : p.method === "Cheque" ? " by cheque" : ""}.</span>
+      </label>
     </div>
   );
 }
@@ -239,7 +217,7 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
 }) {
   const supabase = createClient();
   const { settings } = useSystemSettings();
-  const ctl = useReceiptUpload(onChanged);
+  const ctl = useReceiptSubmit(onChanged);
   const [issueFor, setIssueFor] = useState<Payment | null>(null);
   const [issueKind, setIssueKind] = useState("not_received");
   const [issueText, setIssueText] = useState("");
@@ -267,11 +245,11 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
 
   const downloadCsv = () => {
     const rows = [
-      ["Reference", "Amount", "Method", "Status", "Scheduled", "Disbursed", "Receipt", "Receipt review"],
+      ["Reference", "Amount", "Method", "Status", "Scheduled", "Disbursed", "Receipt ref.", "Receipt review"],
       ...payments.map((p) => [
         p.reference ?? "", p.amount.toFixed(2), p.method ?? "", p.status, p.scheduled_date ?? "",
         p.disbursed_at ? p.disbursed_at.slice(0, 10) : "",
-        p.student_receipt_at ? (p.student_receipt_path ? "File" : "Confirmed") : "",
+        p.student_receipt_at ? (p.student_receipt_ref ?? (p.student_receipt_path ? "File" : "Confirmed")) : "",
         p.student_receipt_at ? p.receipt_review_status : "",
       ]),
     ];
@@ -323,9 +301,9 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
 
       {payments.some((p) => p.status === "Disbursed" && (!p.student_receipt_at || p.receipt_review_status === "Disapproved")) && (
         <div className="flex items-start gap-3 bg-accent border border-primary/20 rounded-xl px-4 py-3">
-          <Upload className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+          <Receipt className="h-4 w-4 text-primary mt-0.5 shrink-0" />
           <p className="text-sm text-primary">
-            For each disbursed payment, <strong>upload your signed receipt</strong>. For cash, you can also simply <strong>confirm you received it</strong>.
+            For each disbursed payment, <strong>enter the reference number</strong> printed on the receipt you signed and <strong>confirm you received it</strong>.
           </p>
         </div>
       )}
@@ -481,6 +459,8 @@ export default function StudentDashboardPage() {
   const [applyIncome, setApplyIncome]               = useState("");
   const [applySize, setApplySize]                   = useState("");
   const [applyCertified, setApplyCertified]         = useState(false);
+  // The application the View / Edit / Withdraw dialogs act on.
+  const [selectedAppId, setSelectedAppId]           = useState<string | null>(null);
   const [viewOpen, setViewOpen]                     = useState(false);
   const [editOpen, setEditOpen]                     = useState(false);
   const [editSaving, setEditSaving]                 = useState(false);
@@ -513,10 +493,31 @@ export default function StudentDashboardPage() {
     // arrive, so opening on a stale default could show the form even when applications are closed.
     if (openApplyOnLoad && !loading && settingsLoaded) {
       setOpenApplyOnLoad(false);
-      if (!currentApp && !applyBlocked) setApplyDialogOpen(true);
+      if (canApplyMore && !appliedProgramIds.has(applyScholarshipId)) setApplyDialogOpen(true);
+      else setApplyScholarshipId("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openApplyOnLoad, loading, settingsLoaded]);
+
+  // Documents picked at registration while email confirmation was pending are kept in this browser;
+  // upload them once the student's data and the upload limit have loaded.
+  const pendingDocsDone = useRef(false);
+  useEffect(() => {
+    if (pendingDocsDone.current || loading || !settingsLoaded || !userId || !userEmail) return;
+    pendingDocsDone.current = true;
+    uploadPendingDocuments(supabase, {
+      userId, email: userEmail,
+      existingTypes: new Set(documents.map((d) => d.document_type)),
+      maxBytes: settings.max_upload_mb * 1024 * 1024,
+    }).then(({ uploaded, failed }) => {
+      if (uploaded.length > 0) {
+        toast.success("Documents from your registration were uploaded", { description: uploaded.join(", ") });
+        refreshDocuments(userId);
+      }
+      if (failed.length > 0) toast.warning("Some registration documents could not be uploaded", { description: `Upload ${failed.join(", ")} again below.` });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, settingsLoaded, userId, userEmail]);
 
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -673,11 +674,23 @@ export default function StudentDashboardPage() {
   }, [userId]);
 
   const currentYear  = new Date().getFullYear();
-  // A withdrawn application no longer counts: the student can apply again.
-  const currentApp   = applications.find((app) => app.status !== "Withdrawn" && new Date(app.created_at).getFullYear() === currentYear);
+  // This year's applications. A withdrawn one no longer counts: that program can be applied to again.
+  const yearApps     = applications.filter((app) => app.status !== "Withdrawn" && new Date(app.created_at).getFullYear() === currentYear);
+  const yearAppIds   = new Set(yearApps.map((a) => a.id));
+  // Students may apply to, and be approved for, every open program; each program decides on its own.
+  const approvedApps = yearApps.filter((a) => a.status === "Approved");
+  const approvedApp  = approvedApps[0];
+  const openApp      = yearApps.find((a) => a.status === "Pending" || a.status === "Waitlisted");
+  // The application the dashboard focuses on: the approved one, else the latest still in review.
+  const currentApp   = approvedApp ?? openApp ?? yearApps[0];
+  const appliedProgramIds = new Set(yearApps.map((a) => a.scholarship_id).filter((id): id is string => !!id));
   const isDisbursed  = currentApp?.disbursement_status === "Disbursed";
-  const isApproved   = currentApp?.status === "Approved";
+  const isApproved   = !!approvedApp;
   const locked       = isApproved || isDisbursed;
+  // Open programs this student hasn't applied to yet this year.
+  const programsToApply = scholarships.filter((s) => availabilityInfo(s).canApply && !appliedProgramIds.has(s.id));
+  const canApplyMore = !applyBlocked;
+  const selectedApp  = applications.find((a) => a.id === selectedAppId);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -685,8 +698,6 @@ export default function StudentDashboardPage() {
     router.refresh();
   };
 
-  const lockedToast = () => toast.error("Locked: you already have an approved or disbursed scholarship.");
-  const guard = (fn: () => void) => () => (locked ? lockedToast() : fn());
 
   const displayName = profile
     ? `${profile.first_name || ""} ${profile.last_name || ""}`.trim()
@@ -695,11 +706,12 @@ export default function StudentDashboardPage() {
   const unreadCount = unreadTotal;
   useUnreadTitle(unreadTotal);
   const requiredDocTypes = settings.required_documents;
-  // Documents that count for the application in progress: filed with it, or still unattached
-  // (uploaded ahead of applying). Documents tied to older applications don't count. Latest wins.
+  // Documents are shared by all of this year's applications: filed with any of them, or still
+  // unattached (uploaded ahead of applying). Documents tied to older years don't count. Latest wins.
+  const inDocSet = (d: Tables<"documents">) => !d.application_id || yearAppIds.has(d.application_id);
   const docByType = new Map<string, Tables<"documents">>();
   [...documents]
-    .filter((d) => !d.application_id || d.application_id === currentApp?.id)
+    .filter(inDocSet)
     .sort((a, b) => a.uploaded_at.localeCompare(b.uploaded_at))
     .forEach((d) => docByType.set(d.document_type, d));
   // A disapproved document has to be replaced, so it doesn't count as uploaded.
@@ -707,8 +719,8 @@ export default function StudentDashboardPage() {
   const docsUploaded = requiredDocTypes.filter(docOk).length;
   const missingDocs = requiredDocTypes.filter(t => !docOk(t));
 
-  // Renewal: an earlier approved application means this one would be a renewal.
-  const approvedBefore = applications.filter((a) => a.status === "Approved").length;
+  // Renewal: approved for the chosen program in an earlier year means this one renews it.
+  const approvedBefore = applications.filter((a) => a.status === "Approved" && a.scholarship_id === applyScholarshipId && new Date(a.created_at).getFullYear() < currentYear).length;
   const isRenewing = approvedBefore > 0;
   const minGrade = isRenewing ? settings.renewal_min_grade : settings.min_grade_requirement;
   const myGrade = profile?.average_grade ?? null;
@@ -735,7 +747,7 @@ export default function StudentDashboardPage() {
 
   // The program behind the current application (shown on the Application tab).
   const appProgram = scholarships.find((sc) => sc.id === currentApp?.scholarship_id);
-  const appRenewal = currentApp?.is_renewal ?? isRenewing;
+  const appRenewal = currentApp?.is_renewal ?? false;
   const appMinGrade = Math.max(appRenewal ? settings.renewal_min_grade : settings.min_grade_requirement, Number(appProgram?.min_grade ?? 0));
   const appReqLines = appProgram ? requirementLines(appProgram, appRenewal ? settings.renewal_min_grade : settings.min_grade_requirement) : appMinGrade > 0 ? [`Average grade of at least ${appMinGrade}`] : [];
   const appAward = currentApp?.amount_approved ?? appProgram?.amount;
@@ -781,12 +793,12 @@ export default function StudentDashboardPage() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const result = await uploadUserDocument(supabase, { userId: user.id, docType, file, applicationId: currentApp?.id });
+      const result = await uploadUserDocument(supabase, { userId: user.id, docType, file, applicationId: openApp?.id });
       if ("error" in result) { toast.error("Upload failed", { description: result.error }); return; }
       const row = result.row;
 
       // Replace: drop the older copies of this document (the database only allows it once a newer one exists).
-      const older = documents.filter((d) => d.document_type === docType && d.id !== row.id && (!d.application_id || d.application_id === currentApp?.id));
+      const older = documents.filter((d) => d.document_type === docType && d.id !== row.id && inDocSet(d));
       for (const d of older) {
         const { data: gone } = await supabase.from("documents").delete().eq("id", d.id).select("id");
         const oldPath = documentPath(d);
@@ -849,10 +861,10 @@ export default function StudentDashboardPage() {
   };
 
   const saveApplicationEdit = async () => {
-    if (!currentApp) return;
+    if (!selectedApp) return;
     setEditSaving(true);
     try {
-      const res = await fetch(`/api/applications/${currentApp.id}`, {
+      const res = await fetch(`/api/applications/${selectedApp.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ statement: appStatement.trim(), household_income: numOrNull(appIncome), household_size: numOrNull(appSize) }),
@@ -870,10 +882,10 @@ export default function StudentDashboardPage() {
   };
 
   const withdrawApplication = async () => {
-    if (!currentApp) return;
+    if (!selectedApp) return;
     setWithdrawing(true);
     try {
-      const res = await fetch(`/api/applications/${currentApp.id}`, { method: "DELETE" });
+      const res = await fetch(`/api/applications/${selectedApp.id}`, { method: "DELETE" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) { toast.error(json.error ?? "Could not withdraw the application."); return; }
       toast.success("Application withdrawn");
@@ -887,56 +899,149 @@ export default function StudentDashboardPage() {
   };
 
   // ── Section: Application ───────────────────────────────────────────────────
+  const openApply = (programId = "") => { setApplyScholarshipId(programId); setApplyDialogOpen(true); };
+  const viewApplication = (id: string) => { setSelectedAppId(id); setViewOpen(true); };
+  const editApplication = (a: typeof applications[number]) => {
+    setSelectedAppId(a.id);
+    setAppStatement(a.statement ?? "");
+    setAppIncome(a.household_income?.toString() ?? "");
+    setAppSize(a.household_size?.toString() ?? "");
+    setEditOpen(true);
+  };
+  const withdrawPrompt = (a: typeof applications[number]) => { setSelectedAppId(a.id); setWithdrawOpen(true); };
+
+  // Documents shown with an application: this year's shared set, or what was filed with an older one.
+  const docsFor = (a: typeof applications[number]) => {
+    if (yearAppIds.has(a.id)) return [...docByType.values()];
+    const latest = new Map<string, Tables<"documents">>();
+    [...documents].filter((d) => d.application_id === a.id)
+      .sort((x, y) => x.uploaded_at.localeCompare(y.uploaded_at))
+      .forEach((d) => latest.set(d.document_type, d));
+    return [...latest.values()];
+  };
+
+  // Does the student pass this application's program requirements? Same rules the office checks on approval.
+  const requirementsChecklist = (app: typeof applications[number]) => {
+    const program = scholarships.find((sc) => sc.id === app.scholarship_id);
+    if (!program) return null;
+    const checks = [
+      ...programChecks(program, profile, {
+        globalMinGrade: settings.min_grade_requirement, renewalMinGrade: settings.renewal_min_grade,
+        renewalEnabled: settings.renewal_enabled, isRenewal: app.is_renewal,
+      }),
+      ...requiredDocTypes.map((t) => {
+        const d = docByType.get(t);
+        return { key: `doc-${t}`, label: t, ok: d?.status === "Verified", detail: !d ? "Not uploaded" : d.status === "Pending" ? "Waiting for the office to verify" : d.status };
+      }),
+    ];
+    const passing = checks.filter((c) => c.ok).length;
+    return (
+      <div className="rounded-xl border border-border p-3 sm:p-4">
+        <p className="text-xs font-semibold text-foreground mb-2">
+          Requirements for {program.name} · {passing} of {checks.length} met
+        </p>
+        <ul className="space-y-1.5">
+          {checks.map((c) => (
+            <li key={c.key} className="flex items-start gap-2 text-xs">
+              {c.ok ? <CheckCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-emerald-600" /> : <X className="h-3.5 w-3.5 mt-0.5 shrink-0 text-red-600" />}
+              <span><span className="font-medium text-foreground">{c.label}</span> <span className="text-muted-foreground">· {c.detail}</span></span>
+            </li>
+          ))}
+        </ul>
+        {passing < checks.length && <p className="text-[11px] text-muted-foreground mt-2">The office can approve this application once every requirement is met.</p>}
+      </div>
+    );
+  };
+
   const Application = () => (
     <div className="space-y-5">
       {locked && (
         <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
           <Lock className="h-4 w-4 text-amber-600 shrink-0" />
-          <p className="text-sm text-amber-800">Your scholarship has been {isDisbursed ? "disbursed" : "approved"}. The application is now read-only.</p>
+          <p className="text-sm text-amber-800">
+            You are approved for <strong>{approvedApps.map((a) => a.scholarships?.name ?? "a scholarship").join(", ")}</strong>. Your school details and documents are now locked, but you can still apply to other open programs. Each program reviews you against its own requirements.
+          </p>
         </div>
       )}
-      {currentApp ? (
-        <>
-        <Panel>
+
+      {/* Apply: any open program not applied to yet */}
+      <Panel className="p-4 sm:p-6">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="min-w-0">
+            <SectionTitle>Apply for a scholarship</SectionTitle>
+            <p className="text-sm text-muted-foreground -mt-3">
+              You can apply to every open program. Each program (office) checks your application against its own requirements, so you can be approved for more than one.
+            </p>
+          </div>
+          <Button disabled={!canApplyMore || programsToApply.length === 0} onClick={() => openApply()} className="bg-primary hover:bg-primary text-white rounded-xl px-5">
+            <FileText className="mr-2 h-4 w-4" /> New application
+          </Button>
+        </div>
+        {applyBlocked ? (
+          <div className="mt-4 flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+            <span>{applyBlocked}</span>
+          </div>
+        ) : programsToApply.length === 0 ? (
+          <p className="mt-4 text-sm text-muted-foreground">
+            {yearApps.length > 0 ? "You have applied to every open program. New programs will show up here when they open." : "No programs are open right now. New programs will show up here when they open."}
+          </p>
+        ) : (
+          <ul className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {programsToApply.map((s) => (
+              <li key={s.id} className="flex items-center justify-between gap-2 rounded-xl border border-border px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground truncate">{s.name}</p>
+                  <p className="text-xs text-muted-foreground">{[Number(s.amount) > 0 ? peso(s.amount) : null, s.deadline ? `Closes ${formatDate(s.deadline)}` : null].filter(Boolean).join(" · ") || "Open now"}</p>
+                </div>
+                <Button size="sm" variant="outline" className="rounded-lg text-xs border-primary/30 text-primary hover:bg-accent shrink-0" onClick={() => openApply(s.id)}>Apply</Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      {/* This year's applications */}
+      {yearApps.map((a) => (
+        <Panel key={a.id} className={a.id === approvedApp?.id ? "border-emerald-200" : ""}>
           <div className="px-4 py-4 sm:px-6 sm:py-5 border-b border-muted flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <SectionTitle>My Application</SectionTitle>
-              <p className="text-sm text-muted-foreground -mt-3">{currentApp.scholarships?.name}</p>
+            <div className="min-w-0">
+              <SectionTitle>{a.scholarships?.name ?? "Scholarship"}</SectionTitle>
+              <p className="text-sm text-muted-foreground -mt-3">Submitted {formatDate(a.created_at)}</p>
             </div>
             <div className="flex items-center gap-2">
-              {currentApp.is_renewal && (
+              {a.is_renewal && (
                 <span className="inline-flex items-center rounded-full border border-primary/20 bg-accent px-2.5 py-0.5 text-xs font-semibold text-primary">Renewal</span>
               )}
-              <StatusBadge status={currentApp.status} />
+              <StatusBadge status={a.status} />
             </div>
           </div>
-          <div className="p-4 sm:p-6">
-            <div className="mb-5"><ApplicationTimeline app={currentApp} payments={payments} /></div>
+          <div className="p-4 sm:p-6 space-y-5">
+            <ApplicationTimeline app={a} payments={payments} />
+            {(a.status === "Pending" || a.status === "Waitlisted") && requirementsChecklist(a)}
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" className="text-xs border-border rounded-xl hover:bg-muted"
-                disabled={locked || currentApp.status !== "Pending"}
-                onClick={guard(() => {
-                  setAppStatement(currentApp.statement ?? "");
-                  setAppIncome(currentApp.household_income?.toString() ?? "");
-                  setAppSize(currentApp.household_size?.toString() ?? "");
-                  setEditOpen(true);
-                })}>
-                <Pencil className="mr-1 h-3 w-3" /> Edit
-              </Button>
-              {(currentApp.status === "Pending" || currentApp.status === "Waitlisted") && (
+              {a.status === "Pending" && (
+                <Button size="sm" variant="outline" className="text-xs border-border rounded-xl hover:bg-muted"
+                  onClick={() => editApplication(a)}>
+                  <Pencil className="mr-1 h-3 w-3" /> Edit
+                </Button>
+              )}
+              {(a.status === "Pending" || a.status === "Waitlisted") && (
                 <Button size="sm" variant="outline" className="text-xs border-red-200 text-red-600 hover:bg-red-50 rounded-xl"
-                  disabled={locked} onClick={guard(() => setWithdrawOpen(true))}>
+                  onClick={() => withdrawPrompt(a)}>
                   <Trash2 className="mr-1 h-3 w-3" /> Withdraw
                 </Button>
               )}
-              <Button size="sm" variant="outline" className="text-xs border-border rounded-xl hover:bg-muted" onClick={() => setViewOpen(true)}>
+              <Button size="sm" variant="outline" className="text-xs border-border rounded-xl hover:bg-muted" onClick={() => viewApplication(a.id)}>
                 <Eye className="mr-1 h-3 w-3" /> View
               </Button>
             </div>
           </div>
         </Panel>
+      ))}
 
-        {/* Program details (was the separate Scholarship tab) */}
+      {/* Program details for the application in focus (was the separate Scholarship tab) */}
+      {currentApp && currentApp.status !== "Disapproved" && (
         <Panel>
           <div className="px-4 py-4 sm:px-6 sm:py-5 border-b border-muted">
             <SectionTitle>About this program</SectionTitle>
@@ -986,222 +1091,190 @@ export default function StudentDashboardPage() {
             </div>
           </div>
         </Panel>
+      )}
 
-        {/* View */}
-        <Dialog open={viewOpen} onOpenChange={setViewOpen}>
-          <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader><DialogTitle className="font-display">Application details</DialogTitle></DialogHeader>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div><p className="text-xs text-muted-foreground mb-1">Program</p><p className="font-semibold">{currentApp.scholarships?.name || "—"}</p></div>
-              <div><p className="text-xs text-muted-foreground mb-1">Status</p><StatusBadge status={currentApp.status} /></div>
-              <div><p className="text-xs text-muted-foreground mb-1">Submitted</p><p className="font-semibold">{new Date(currentApp.created_at).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}</p></div>
-              <div><p className="text-xs text-muted-foreground mb-1">Type</p><p className="font-semibold">{currentApp.is_renewal ? "Renewal" : "New application"}</p></div>
-              <div><p className="text-xs text-muted-foreground mb-1">School</p><p className="font-semibold">{currentApp.school_name || "—"}</p></div>
-              <div><p className="text-xs text-muted-foreground mb-1">Course · Year</p><p className="font-semibold">{[currentApp.course, currentApp.year_level].filter(Boolean).join(" · ") || "—"}</p></div>
-              <div><p className="text-xs text-muted-foreground mb-1">Average grade</p><p className="font-semibold">{currentApp.average_grade ?? "—"}</p></div>
-              <div><p className="text-xs text-muted-foreground mb-1">Amount approved</p><p className="font-semibold">{peso(currentApp.amount_approved)}</p></div>
-              <div><p className="text-xs text-muted-foreground mb-1">Household income</p><p className="font-semibold">{peso(currentApp.household_income)}</p></div>
-              <div><p className="text-xs text-muted-foreground mb-1">Household size</p><p className="font-semibold">{currentApp.household_size ?? "—"}</p></div>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Statement</p>
-              <p className="text-sm whitespace-pre-wrap rounded-xl bg-muted/50 px-3 py-2">{currentApp.statement || "—"}</p>
-            </div>
-            {currentApp.notes && (
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Remarks from the scholarship office</p>
-                <p className="text-sm whitespace-pre-wrap rounded-xl bg-muted/50 px-3 py-2">{currentApp.notes}</p>
+      {/* Every application, all years */}
+      <Panel>
+        <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Application history</SectionTitle></div>
+        <ApplicationHistory applications={applications} onView={viewApplication} />
+      </Panel>
+
+      {/* View */}
+      <Dialog open={viewOpen && !!selectedApp} onOpenChange={setViewOpen}>
+        <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle className="font-display">Application details</DialogTitle></DialogHeader>
+          {selectedApp && (
+            <>
+              <DisapprovalReason app={selectedApp} />
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div><p className="text-xs text-muted-foreground mb-1">Program</p><p className="font-semibold">{selectedApp.scholarships?.name || "—"}</p></div>
+                <div><p className="text-xs text-muted-foreground mb-1">Status</p><StatusBadge status={selectedApp.status} /></div>
+                <div><p className="text-xs text-muted-foreground mb-1">Submitted</p><p className="font-semibold">{new Date(selectedApp.created_at).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}</p></div>
+                <div><p className="text-xs text-muted-foreground mb-1">Type</p><p className="font-semibold">{selectedApp.is_renewal ? "Renewal" : "New application"}</p></div>
+                <div><p className="text-xs text-muted-foreground mb-1">School</p><p className="font-semibold">{selectedApp.school_name || "—"}</p></div>
+                <div><p className="text-xs text-muted-foreground mb-1">Course · Year</p><p className="font-semibold">{[selectedApp.course, selectedApp.year_level].filter(Boolean).join(" · ") || "—"}</p></div>
+                <div><p className="text-xs text-muted-foreground mb-1">Average grade</p><p className="font-semibold">{selectedApp.average_grade ?? "—"}</p></div>
+                <div><p className="text-xs text-muted-foreground mb-1">Amount approved</p><p className="font-semibold">{peso(selectedApp.amount_approved)}</p></div>
+                <div><p className="text-xs text-muted-foreground mb-1">Household income</p><p className="font-semibold">{peso(selectedApp.household_income)}</p></div>
+                <div><p className="text-xs text-muted-foreground mb-1">Household size</p><p className="font-semibold">{selectedApp.household_size ?? "—"}</p></div>
               </div>
-            )}
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Documents</p>
-              {docByType.size === 0 ? <p className="text-sm text-muted-foreground">None uploaded.</p> : (
-                <ul className="space-y-1">
-                  {[...docByType.values()].map((d) => (
-                    <li key={d.id}>
-                      <button type="button" onClick={() => openDocument(d)}
-                        className="w-full flex items-center justify-between rounded-lg border px-3 py-1.5 text-sm hover:bg-muted text-left cursor-pointer">
-                        <span className="truncate"><span className="font-medium">{d.document_type}</span> · {d.file_name}</span>
-                        <span className="flex items-center gap-2 shrink-0"><DocStatusBadge status={d.status} /><Eye className="h-3.5 w-3.5 text-muted-foreground" /></span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Statement</p>
+                <p className="text-sm whitespace-pre-wrap rounded-xl bg-muted/50 px-3 py-2">{selectedApp.statement || "—"}</p>
+              </div>
+              {selectedApp.notes && selectedApp.status !== "Disapproved" && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Remarks from the scholarship office</p>
+                  <p className="text-sm whitespace-pre-wrap rounded-xl bg-muted/50 px-3 py-2">{selectedApp.notes}</p>
+                </div>
               )}
-            </div>
-            {currentApp.certified_at && (
-              <p className="text-xs text-muted-foreground">Certified true and correct on {new Date(currentApp.certified_at).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}.</p>
-            )}
-          </DialogContent>
-        </Dialog>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Documents</p>
+                {docsFor(selectedApp).length === 0 ? <p className="text-sm text-muted-foreground">None on file.</p> : (
+                  <ul className="space-y-1">
+                    {docsFor(selectedApp).map((d) => (
+                      <li key={d.id}>
+                        <button type="button" onClick={() => openDocument(d)}
+                          className="w-full flex items-center justify-between rounded-lg border px-3 py-1.5 text-sm hover:bg-muted text-left cursor-pointer">
+                          <span className="truncate"><span className="font-medium">{d.document_type}</span> · {d.file_name}</span>
+                          <span className="flex items-center gap-2 shrink-0"><DocStatusBadge status={d.status} /><Eye className="h-3.5 w-3.5 text-muted-foreground" /></span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              {selectedApp.certified_at && (
+                <p className="text-xs text-muted-foreground">Certified true and correct on {new Date(selectedApp.certified_at).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}.</p>
+              )}
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
-        {/* Edit */}
-        <Dialog open={editOpen} onOpenChange={setEditOpen}>
-          <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader><DialogTitle className="font-display">Edit application</DialogTitle></DialogHeader>
+      {/* Edit */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle className="font-display">Edit application{selectedApp?.scholarships?.name ? ` · ${selectedApp.scholarships.name}` : ""}</DialogTitle></DialogHeader>
+          <div>
+            <Label className="text-sm font-medium mb-1.5 block">Statement *</Label>
+            <Textarea rows={6} value={appStatement} maxLength={STATEMENT_MAX} onChange={(e) => setAppStatement(e.target.value)} className="rounded-xl" />
+            <p className={`text-xs mt-1 ${appStatement.trim().length < STATEMENT_MIN ? "text-warning" : "text-muted-foreground"}`}>{appStatement.trim().length} / {STATEMENT_MAX} (minimum {STATEMENT_MIN})</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <Label className="text-sm font-medium mb-1.5 block">Statement *</Label>
-              <Textarea rows={6} value={appStatement} maxLength={STATEMENT_MAX} onChange={(e) => setAppStatement(e.target.value)} className="rounded-xl" />
-              <p className={`text-xs mt-1 ${appStatement.trim().length < STATEMENT_MIN ? "text-warning" : "text-muted-foreground"}`}>{appStatement.trim().length} / {STATEMENT_MAX} (minimum {STATEMENT_MIN})</p>
+              <Label className="text-sm font-medium mb-1.5 block">Monthly household income (₱)</Label>
+              <Input type="number" inputMode="decimal" min={0} value={appIncome} onChange={(e) => setAppIncome(e.target.value)} className="rounded-xl" />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <Label className="text-sm font-medium mb-1.5 block">Monthly household income (₱)</Label>
-                <Input type="number" inputMode="decimal" min={0} value={appIncome} onChange={(e) => setAppIncome(e.target.value)} className="rounded-xl" />
-              </div>
-              <div>
-                <Label className="text-sm font-medium mb-1.5 block">Household size</Label>
-                <Input type="number" inputMode="numeric" min={1} max={30} step={1} value={appSize} onChange={(e) => setAppSize(e.target.value)} className="rounded-xl" />
-              </div>
+            <div>
+              <Label className="text-sm font-medium mb-1.5 block">Household size</Label>
+              <Input type="number" inputMode="numeric" min={1} max={30} step={1} value={appSize} onChange={(e) => setAppSize(e.target.value)} className="rounded-xl" />
             </div>
-            <DialogFooter>
-              <Button variant="outline" className="rounded-xl" onClick={() => setEditOpen(false)}>Cancel</Button>
-              <Button className="bg-primary hover:bg-primary text-white rounded-xl" disabled={editSaving || appStatement.trim().length < STATEMENT_MIN} onClick={saveApplicationEdit}>
-                {editSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Save changes
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="rounded-xl" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button className="bg-primary hover:bg-primary text-white rounded-xl" disabled={editSaving || appStatement.trim().length < STATEMENT_MIN} onClick={saveApplicationEdit}>
+              {editSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Save changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-        {/* Withdraw */}
-        <AlertDialog open={withdrawOpen} onOpenChange={setWithdrawOpen}>
-          <AlertDialogContent className="rounded-2xl">
-            <AlertDialogHeader>
-              <AlertDialogTitle>Withdraw this application?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Your application for {currentApp.scholarships?.name} will be withdrawn. Your uploaded documents are kept, and you can apply again while applications are open.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel className="rounded-xl" disabled={withdrawing}>Keep application</AlertDialogCancel>
-              <AlertDialogAction className="rounded-xl bg-red-600 hover:bg-red-700 text-white" disabled={withdrawing}
-                onClick={(e) => { e.preventDefault(); withdrawApplication(); }}>
-                {withdrawing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Withdraw
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-        </>
-      ) : (
-        <Panel className="p-10 text-center">
-          <div className="h-14 w-14 rounded-2xl bg-accent flex items-center justify-center mx-auto mb-4">
-            <GraduationCap className="h-7 w-7 text-primary" />
+      {/* Withdraw */}
+      <AlertDialog open={withdrawOpen} onOpenChange={setWithdrawOpen}>
+        <AlertDialogContent className="rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Withdraw this application?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your application for {selectedApp?.scholarships?.name} will be withdrawn. Your other applications and your uploaded documents are kept, and you can apply to this program again while it is open.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-xl" disabled={withdrawing}>Keep application</AlertDialogCancel>
+            <AlertDialogAction className="rounded-xl bg-red-600 hover:bg-red-700 text-white" disabled={withdrawing}
+              onClick={(e) => { e.preventDefault(); withdrawApplication(); }}>
+              {withdrawing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Withdraw
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Apply */}
+      <Dialog open={applyDialogOpen} onOpenChange={setApplyDialogOpen}>
+        <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="font-display">{isRenewing ? "Renew Scholarship" : "Apply for Scholarship"}</DialogTitle>
+          </DialogHeader>
+          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+            <span>You can apply to every open program. <strong>Each program decides on its own</strong>: you are approved only if you meet that program&apos;s requirements{minGrade > 0 && <>, including an average grade of at least <strong>{minGrade}</strong></>}.</span>
           </div>
-          <div className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-1.5 text-sm font-semibold text-primary mb-3">
-            {settings.max_scholarships_per_student === 1 ? "1 scholarship application allowed per year" : `${settings.max_scholarships_per_student} scholarship applications allowed per year`}
-          </div>
-          {applyBlocked && (
-            <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800 text-left mb-4">
-              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
-              <span>{applyBlocked}</span>
+          {isRenewing && (
+            <div className="flex items-start gap-3 bg-accent border border-primary/20 rounded-xl px-4 py-3 text-sm text-foreground text-left">
+              <GraduationCap className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
+              <span>This is a <strong>renewal</strong> (renewal {Math.min(approvedBefore, settings.max_renewals)} of {settings.max_renewals} allowed). You were approved for this program before, so the renewal grade requirement applies{settings.renewal_min_grade > 0 ? <> ({settings.renewal_min_grade})</> : null}.</span>
             </div>
           )}
-          <p className="text-muted-foreground text-sm mb-6">You haven&apos;t submitted an application for {currentYear} yet.</p>
-          <Dialog open={applyDialogOpen} onOpenChange={setApplyDialogOpen}>
-            <DialogTrigger asChild>
-              <Button disabled={!!applyBlocked} className="bg-primary hover:bg-primary text-white rounded-xl px-6">
-                <FileText className="mr-2 h-4 w-4" /> Apply for Scholarship
+          {applyIssues.length > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 space-y-1">
+              {applyIssues.map((m) => <p key={m}>{m}</p>)}
+            </div>
+          )}
+          {missingDocs.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+              <p className="font-semibold mb-1">Upload your required documents first</p>
+              <p className="mb-2">Missing or disapproved: {missingDocs.join(", ")}.</p>
+              <Button size="sm" variant="outline" className="rounded-xl border-amber-300 text-amber-800 hover:bg-amber-100"
+                onClick={() => { setApplyDialogOpen(false); setActive("documents"); }}>
+                <Upload className="mr-1 h-3 w-3" /> Go to Documents
               </Button>
-            </DialogTrigger>
-            <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle className="font-display">{isRenewing ? "Renew Scholarship" : "Apply for Scholarship"}</DialogTitle>
-              </DialogHeader>
-              <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
-                <span>You may only submit <strong>{settings.max_scholarships_per_student === 1 ? "one application" : `${settings.max_scholarships_per_student} applications`} per year</strong>{minGrade > 0 && <> and need an average grade of at least <strong>{minGrade}</strong></>}. Choose your scholarship program carefully.</span>
-              </div>
-              {isRenewing && (
-                <div className="flex items-start gap-3 bg-accent border border-primary/20 rounded-xl px-4 py-3 text-sm text-foreground text-left">
-                  <GraduationCap className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
-                  <span>This is a <strong>renewal</strong> (renewal {Math.min(approvedBefore, settings.max_renewals)} of {settings.max_renewals} allowed). Your earlier scholarship was approved, so the renewal grade requirement applies{settings.renewal_min_grade > 0 ? <> ({settings.renewal_min_grade})</> : null}.</span>
-                </div>
-              )}
-              {applyIssues.length > 0 && (
-                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 space-y-1">
-                  {applyIssues.map((m) => <p key={m}>{m}</p>)}
-                </div>
-              )}
-              {missingDocs.length > 0 && (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-                  <p className="font-semibold mb-1">Upload your required documents first</p>
-                  <p className="mb-2">Missing or disapproved: {missingDocs.join(", ")}.</p>
-                  <Button size="sm" variant="outline" className="rounded-xl border-amber-300 text-amber-800 hover:bg-amber-100"
-                    onClick={() => { setApplyDialogOpen(false); setActive("documents"); }}>
-                    <Upload className="mr-1 h-3 w-3" /> Go to Documents
-                  </Button>
-                </div>
-              )}
-              <div>
-                <Label className="text-sm font-medium text-foreground mb-1.5 block">Scholarship Program *</Label>
-                <Select value={applyScholarshipId} onValueChange={setApplyScholarshipId}>
-                  <SelectTrigger className="rounded-xl border-border"><SelectValue placeholder="Select program" /></SelectTrigger>
-                  <SelectContent>
-                    {scholarships.filter((s) => availabilityInfo(s).canApply || s.id === applyScholarshipId).map((s) => (
-                      <SelectItem key={s.id} value={s.id} disabled={!availabilityInfo(s).canApply}>
-                        {s.name}{Number(s.amount) > 0 ? ` · ${peso(s.amount)}` : ""}{!availabilityInfo(s).canApply ? ` (${availabilityInfo(s).label})` : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-sm font-medium text-foreground mb-1.5 block">Why do you need this scholarship? *</Label>
-                <Textarea rows={5} value={applyStatement} maxLength={STATEMENT_MAX} className="rounded-xl"
-                  placeholder="Tell us about your situation, your goals and how this scholarship will help."
-                  onChange={(e) => setApplyStatement(e.target.value)} />
-                <p className={`text-xs mt-1 ${applyStatement.trim().length < STATEMENT_MIN ? "text-warning" : "text-muted-foreground"}`}>{applyStatement.trim().length} / {STATEMENT_MAX} (minimum {STATEMENT_MIN})</p>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <Label className="text-sm font-medium text-foreground mb-1.5 block">Monthly household income (₱)</Label>
-                  <Input type="number" inputMode="decimal" min={0} value={applyIncome} onChange={(e) => setApplyIncome(e.target.value)} className="rounded-xl" placeholder="Optional" />
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-foreground mb-1.5 block">Household size</Label>
-                  <Input type="number" inputMode="numeric" min={1} max={30} step={1} value={applySize} onChange={(e) => setApplySize(e.target.value)} className="rounded-xl" placeholder="Optional" />
-                </div>
-              </div>
-              <label className="flex items-start gap-3 text-sm text-foreground cursor-pointer">
-                <Checkbox checked={applyCertified} onCheckedChange={(v) => setApplyCertified(v === true)} className="mt-0.5" />
-                <span>I certify that the information and documents I have provided are true and correct.</span>
-              </label>
-              <DialogFooter>
-                <Button
-                  disabled={!!applyBlocked || !applyScholarshipId || applyLoading || applyIssues.length > 0 || missingDocs.length > 0 || applyStatement.trim().length < STATEMENT_MIN || !applyCertified}
-                  className="bg-primary hover:bg-primary text-white rounded-xl w-full"
-                  onClick={submitApplication}>
-                  {applyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {isRenewing ? "Submit Renewal" : "Submit Application"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </Panel>
-      )}
-
-      {applications.length > 0 && (
-        <Panel>
-          <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>All my applications</SectionTitle></div>
-          <ul className="divide-y divide-border">
-            {applications.map((a) => (
-              <li key={a.id} className="px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3 flex-wrap">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-foreground">
-                    {a.scholarships?.name ?? "Scholarship"}
-                    {a.is_renewal && <span className="ml-2 rounded-full border border-primary/20 bg-accent px-2 py-0.5 text-[10px] font-semibold text-primary">Renewal</span>}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {[a.academic_year, a.semester].filter(Boolean).join(" · ") || new Date(a.created_at).getFullYear()} · Submitted {formatDate(a.created_at)}
-                    {a.status === "Approved" && a.amount_approved != null ? ` · Award ${peso(a.amount_approved)}` : ""}
-                  </p>
-                </div>
-                <StatusBadge status={a.status} />
-              </li>
-            ))}
-          </ul>
-        </Panel>
-      )}
+            </div>
+          )}
+          <div>
+            <Label className="text-sm font-medium text-foreground mb-1.5 block">Scholarship Program *</Label>
+            <Select value={applyScholarshipId} onValueChange={setApplyScholarshipId}>
+              <SelectTrigger className="rounded-xl border-border"><SelectValue placeholder="Select program" /></SelectTrigger>
+              <SelectContent>
+                {scholarships.filter((s) => (availabilityInfo(s).canApply && !appliedProgramIds.has(s.id)) || s.id === applyScholarshipId).map((s) => (
+                  <SelectItem key={s.id} value={s.id} disabled={!availabilityInfo(s).canApply || appliedProgramIds.has(s.id)}>
+                    {s.name}{Number(s.amount) > 0 ? ` · ${peso(s.amount)}` : ""}{appliedProgramIds.has(s.id) ? " (already applied)" : !availabilityInfo(s).canApply ? ` (${availabilityInfo(s).label})` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-sm font-medium text-foreground mb-1.5 block">Why do you need this scholarship? *</Label>
+            <Textarea rows={5} value={applyStatement} maxLength={STATEMENT_MAX} className="rounded-xl"
+              placeholder="Tell us about your situation, your goals and how this scholarship will help."
+              onChange={(e) => setApplyStatement(e.target.value)} />
+            <p className={`text-xs mt-1 ${applyStatement.trim().length < STATEMENT_MIN ? "text-warning" : "text-muted-foreground"}`}>{applyStatement.trim().length} / {STATEMENT_MAX} (minimum {STATEMENT_MIN})</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <Label className="text-sm font-medium text-foreground mb-1.5 block">Monthly household income (₱)</Label>
+              <Input type="number" inputMode="decimal" min={0} value={applyIncome} onChange={(e) => setApplyIncome(e.target.value)} className="rounded-xl" placeholder="Optional" />
+            </div>
+            <div>
+              <Label className="text-sm font-medium text-foreground mb-1.5 block">Household size</Label>
+              <Input type="number" inputMode="numeric" min={1} max={30} step={1} value={applySize} onChange={(e) => setApplySize(e.target.value)} className="rounded-xl" placeholder="Optional" />
+            </div>
+          </div>
+          <label className="flex items-start gap-3 text-sm text-foreground cursor-pointer">
+            <Checkbox checked={applyCertified} onCheckedChange={(v) => setApplyCertified(v === true)} className="mt-0.5" />
+            <span>I certify that the information and documents I have provided are true and correct.</span>
+          </label>
+          <DialogFooter>
+            <Button
+              disabled={!canApplyMore || !applyScholarshipId || appliedProgramIds.has(applyScholarshipId) || applyLoading || applyIssues.length > 0 || missingDocs.length > 0 || applyStatement.trim().length < STATEMENT_MIN || !applyCertified}
+              className="bg-primary hover:bg-primary text-white rounded-xl w-full"
+              onClick={submitApplication}>
+              {applyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {isRenewing ? "Submit Renewal" : "Submit Application"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 
@@ -1211,7 +1284,7 @@ export default function StudentDashboardPage() {
       {locked && (
         <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
           <Lock className="h-4 w-4 text-red-600 shrink-0" />
-          <p className="text-sm text-red-700">Documents are locked because your scholarship has been approved.</p>
+          <p className="text-sm text-red-700">Documents are locked because a scholarship has been approved. Your verified documents still count for your other applications.</p>
         </div>
       )}
 
@@ -1386,7 +1459,7 @@ export default function StudentDashboardPage() {
       if (sec) { const key = SECTION_ALIASES[sec] ?? sec; if (sidebarItems.some((i) => i.key === key)) setActive(key); }
       // Reminder links carry the program to apply for.
       const apply = u.searchParams.get("apply");
-      if (apply && !currentApp && !applyBlocked) { setApplyScholarshipId(apply); setApplyDialogOpen(true); }
+      if (apply && canApplyMore && !appliedProgramIds.has(apply)) { setApplyScholarshipId(apply); setApplyDialogOpen(true); }
     } else {
       router.push(link);
     }
@@ -1399,7 +1472,7 @@ export default function StudentDashboardPage() {
     switch (active) {
       case "overview":
       default:              return (
-        <Overview displayName={displayName} profile={profile} applications={applications} currentApp={currentApp} payments={payments}
+        <Overview displayName={displayName} profile={profile} applications={applications} currentApp={currentApp} yearApps={yearApps} canApplyMore={canApplyMore} payments={payments}
           issues={issues} gradeUpdates={gradeUpdates} scholarships={scholarships} notifications={notifications} settings={settings}
           applyBlocked={applyBlocked} approvedTotal={approvedTotal} locked={locked} isDisbursed={isDisbursed} currentYear={currentYear}
           docStatus={{
@@ -1407,7 +1480,8 @@ export default function StudentDashboardPage() {
             disapproved: requiredDocTypes.filter((t) => docByType.get(t)?.status === "Disapproved").map((t) => ({ type: t, note: docByType.get(t)?.review_note ?? null })),
           }}
           onNavigate={setActive}
-          onApply={(id) => { setApplyScholarshipId(id); setApplyDialogOpen(true); setActive("application"); }}
+          onApply={(id) => { openApply(id); setActive("application"); }}
+          onViewApplication={(id) => { setActive("application"); viewApplication(id); }}
           unreadCount={unreadTotal} onOpenNotification={openNotification} onMarkAllRead={markAllRead} />
       );
       case "application":   return Application(); // called, not rendered: inputs inside must keep focus
