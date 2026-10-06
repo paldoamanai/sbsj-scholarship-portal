@@ -85,6 +85,8 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
 type DocSummary = { id: string; user_id: string; application_id: string | null; document_type: string; status: string; uploaded_at: string };
 type AdminDoc = { id: string; name: string; type: string; url: string; status: string; note: string | null; size: number | null; uploadedAt: string };
 type ReportSection = { name: string; head: string[]; rows: (string | number)[][]; money?: string[] };
+// The in-page report view shows this many rows per section; exports always include every row.
+const REPORT_VIEW_ROWS = 200;
 type ReportDef = { title: string; filters: string[]; sections: ReportSection[]; count: number; countLabel: string };
 
 function getRange(period: string, from: string, to: string): { since: Date | null; until: Date | null } {
@@ -134,6 +136,7 @@ export default function AdminDashboardPage() {
   const [toDate, setToDate] = useState("");
   const [reportProgram, setReportProgram] = useState("all");
   const [reportPayStatus, setReportPayStatus] = useState("all");
+  const [viewReport, setViewReport] = useState<string | null>(null);
   const [auditSearch, setAuditSearch] = useState("");
   const [auditAction, setAuditAction] = useState("all");
   const [auditEntity, setAuditEntity] = useState("all");
@@ -2106,6 +2109,7 @@ export default function AdminDashboardPage() {
                         <CardDescription>{r.desc}</CardDescription>
                       </CardHeader>
                       <CardContent className="flex items-center gap-2 flex-wrap">
+                        <Button size="sm" disabled={def.count === 0} onClick={() => setViewReport(r.exportKey)}><Eye className="mr-1 h-4 w-4" /> View</Button>
                         <Button variant="outline" size="sm" disabled={def.count === 0} onClick={() => exportPDF(r.exportKey)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
                         <Button variant="outline" size="sm" disabled={def.count === 0} onClick={() => exportExcel(r.exportKey)}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
                         <span className="text-xs text-muted-foreground ml-auto">{def.count} {def.countLabel}</span>
@@ -2114,6 +2118,49 @@ export default function AdminDashboardPage() {
                   );
                 })}
               </div>
+              <Dialog open={!!viewReport} onOpenChange={(o) => { if (!o) setViewReport(null); }}>
+                <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
+                  {viewReport && (() => {
+                    const def = buildReport(viewReport);
+                    const cell = (sec: ReportSection, c: string | number, i: number) => (sec.money?.includes(sec.head[i]) && typeof c === "number" ? formatPHP(c) : String(c));
+                    return (<>
+                      <DialogHeader>
+                        <DialogTitle>{def.title}</DialogTitle>
+                        <p className="text-xs text-muted-foreground">{def.filters.join(" · ")} · {def.count} {def.countLabel}</p>
+                      </DialogHeader>
+                      <div className="space-y-6">
+                        {def.sections.map((sec) => (
+                          <div key={sec.name} className="space-y-2">
+                            <h3 className="text-sm font-semibold">{sec.name}</h3>
+                            <div className="rounded-md border overflow-x-auto">
+                              <Table>
+                                <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
+                                  {sec.head.map((h) => <TableHead key={h} className={sec.money?.includes(h) ? "text-right" : undefined}>{h}</TableHead>)}
+                                </TableRow></TableHeader>
+                                <TableBody>
+                                  {sec.rows.length === 0 && <TableRow><TableCell colSpan={sec.head.length} className="text-center py-6 text-muted-foreground">No data for these filters</TableCell></TableRow>}
+                                  {sec.rows.slice(0, REPORT_VIEW_ROWS).map((r, ri) => (
+                                    <TableRow key={ri}>
+                                      {r.map((c, i) => <TableCell key={i} className={`text-xs ${sec.money?.includes(sec.head[i]) ? "text-right tabular-nums" : ""}`}>{cell(sec, c, i)}</TableCell>)}
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                            {sec.rows.length > REPORT_VIEW_ROWS && (
+                              <p className="text-xs text-muted-foreground">Showing the first {REPORT_VIEW_ROWS} of {sec.rows.length} rows. Export to see them all.</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => exportPDF(viewReport)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
+                        <Button variant="outline" onClick={() => exportExcel(viewReport)}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
+                      </DialogFooter>
+                    </>);
+                  })()}
+                </DialogContent>
+              </Dialog>
             </div>
           )}
 
