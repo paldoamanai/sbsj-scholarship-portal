@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AppDialog, DialogField } from "@/components/AppDialog";
 import { Panel, SectionTitle } from "@/components/student/ui";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/format";
@@ -161,22 +161,19 @@ export default function AccountSettings({ userId, userEmail, profile, dataReques
         </div>
       </Panel>
 
-      <Dialog open={delOpen} onOpenChange={setDelOpen}>
-        <DialogContent className="rounded-2xl">
-          <DialogHeader><DialogTitle className="font-display">Request account deletion</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">The office will review your request and reply here. Deleting your account removes your profile, applications and documents, and can&apos;t be undone.</p>
-          <div>
-            <Label className="text-sm font-medium mb-1.5 block">Reason (optional)</Label>
-            <Textarea rows={3} maxLength={1000} className="rounded-xl" value={delReason} onChange={(e) => setDelReason(e.target.value)} />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" className="rounded-xl" onClick={() => setDelOpen(false)}>Cancel</Button>
-            <Button className="rounded-xl bg-red-600 hover:bg-red-700 text-white" disabled={delBusy} onClick={requestDeletion}>
-              {delBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Send request
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AppDialog open={delOpen} onOpenChange={(o) => { if (!delBusy) setDelOpen(o); }} size="sm" className="rounded-2xl"
+        title="Request account deletion"
+        description="The office will review your request and reply here. Deleting your account removes your profile, applications and documents, and can't be undone."
+        footer={<>
+          <Button variant="outline" className="rounded-xl" disabled={delBusy} onClick={() => setDelOpen(false)}>Cancel</Button>
+          <Button variant="destructive" className="rounded-xl" disabled={delBusy} onClick={requestDeletion}>
+            {delBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Send request
+          </Button>
+        </>}>
+        <DialogField label="Reason (optional)" htmlFor="delete-reason">
+          <Textarea id="delete-reason" rows={3} maxLength={1000} className="rounded-xl" value={delReason} onChange={(e) => setDelReason(e.target.value)} />
+        </DialogField>
+      </AppDialog>
     </div>
   );
 }

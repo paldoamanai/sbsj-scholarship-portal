@@ -8,12 +8,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import {
@@ -30,8 +27,10 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { scholarshipSchema } from "@/validations/scholarship";
 import ProfileImage from "@/components/ProfileImage";
-import { YEAR_LEVELS, programChecks, type RequirementCheck } from "@/lib/scholarships";
-import { BARANGAYS, HOME_MUNICIPALITY } from "@/lib/barangays";
+import { programChecks, type RequirementCheck } from "@/lib/scholarships";
+import { HOME_MUNICIPALITY } from "@/lib/barangays";
+import { ScholarshipFormFields } from "@/components/admin/ScholarshipFormFields";
+import { AppDialog, ChoiceButton, Detail, DetailGrid, DialogField, DialogNote, DialogSection, ReasonDialog } from "@/components/AppDialog";
 import NotificationInbox, { NOTIFICATION_PAGE } from "@/components/notifications/NotificationInbox";
 import AnnouncementsPanel from "@/components/admin/AnnouncementsPanel";
 import ReminderJobsCard from "@/components/admin/ReminderJobsCard";
@@ -48,7 +47,7 @@ import {
   type DocSummary, type ReportData, type ReportDef, type StaffMember,
 } from "@/lib/reports";
 import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
-import { RELEASE_SCHEDULES, asSchedule, openTerms, secondSemesterGradeWarning, termAmount, termLabel, termsFor, type PaymentTerm } from "@/lib/release-schedule";
+import { asSchedule, openTerms, secondSemesterGradeWarning, termAmount, termLabel, termsFor, type PaymentTerm } from "@/lib/release-schedule";
 import { permissionsFor, ROLE_LABEL } from "@/lib/permissions";
 import { printReceiptSlip } from "@/lib/receipt-slip";
 import type { Tables, Json } from "@/integrations/supabase/types";
@@ -1763,25 +1762,61 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
 
-              <Dialog open={!!viewApp} onOpenChange={(open) => !open && setViewApp(null)}>
-                <DialogContent className="max-w-lg">
-                  <DialogHeader><DialogTitle>Application Details</DialogTitle></DialogHeader>
-                  {viewApp && (() => {
-                    const open = isOpenApp(viewApp);
-                    const awardOverride = open && awardInput.trim() !== "" ? Number(awardInput) : undefined;
-                    const awardValid = awardOverride === undefined || (Number.isFinite(awardOverride) && awardOverride > 0);
-                    const blocker = open ? (awardValid ? approveBlocker(viewApp, awardOverride) : "Enter an award greater than 0") : null;
-                    const cap = capacityFor(viewApp, awardOverride);
-                    const counts = countsForApp(viewApp);
-                    const currentDocs = viewDocs.filter(counts);
-                    const olderDocs = viewDocs.filter((d) => !counts(d));
-                    const livePay = hasLivePayment(viewApp.id);
-                    return (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-2 gap-3">
+              {(() => {
+                const va = viewApp;
+                const open = va ? isOpenApp(va) : false;
+                const awardOverride = open && awardInput.trim() !== "" ? Number(awardInput) : undefined;
+                const awardValid = awardOverride === undefined || (Number.isFinite(awardOverride) && awardOverride > 0);
+                const blocker = va && open ? (awardValid ? approveBlocker(va, awardOverride) : "Enter an award greater than 0") : null;
+                const cap = va ? capacityFor(va, awardOverride) : null;
+                const counts = va ? countsForApp(va) : null;
+                const currentDocs = counts ? viewDocs.filter(counts) : [];
+                const olderDocs = counts ? viewDocs.filter((d) => !counts(d)) : [];
+                const livePay = va ? hasLivePayment(va.id) : false;
+                const close = () => setViewApp(null);
+                return (
+                  <AppDialog open={!!va} onOpenChange={(o) => !o && close()} size="lg"
+                    title="Application Details"
+                    description={va ? <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">{personName(va.profiles)} · {va.scholarships?.name || "—"} {statusBadge(va.status)}</span> : undefined}
+                    footer={va && (open ? <>
+                      <Button variant="ghost" className="sm:mr-auto" onClick={() => { setChangesText(""); setChangesFor(va); }}>
+                        <Pencil className="mr-1 h-4 w-4" /> Request changes
+                      </Button>
+                      {va.status === "Pending" && (
+                        <Button variant="outline" onClick={async () => {
+                          if (await decideApplication(va, "Waitlisted", remarks)) { toast.info("Waitlisted"); close(); loadData(true); }
+                        }}><Hourglass className="mr-1 h-4 w-4" /> Waitlist</Button>
+                      )}
+                      <Button variant="destructive" disabled={!remarks.trim()} title={remarks.trim() ? undefined : "Write the reason in the message first — it is shown to the student"} onClick={async () => {
+                        if (await decideApplication(va, "Disapproved", remarks)) { toast.error("Disapproved"); close(); loadData(true); }
+                      }}><XCircle className="mr-1 h-4 w-4" /> Disapprove</Button>
+                      <Button disabled={!!blocker} title={blocker ?? undefined} onClick={async () => {
+                        if (await decideApplication(va, "Approved", remarks, awardOverride ?? null)) { toast.success("Approved!"); close(); loadData(true); }
+                      }}><CheckCircle className="mr-1 h-4 w-4" /> Approve</Button>
+                    </> : <>
+                      {va.status === "Approved" && (
+                        <Button variant="outline" className="text-destructive sm:mr-auto" disabled={livePay}
+                          title={livePay ? "This application has payments. Cancel them before revoking the approval" : undefined}
+                          onClick={() => { setRevokeNote(""); setRevokeApp(va); }}>
+                          <Undo2 className="mr-1 h-4 w-4" /> Revoke approval
+                        </Button>
+                      )}
+                      {va.status === "Disapproved" && (
+                        <Button variant="outline" className="sm:mr-auto" onClick={async () => {
+                          // The disapproval reason is cleared, so it isn't resent with a later decision.
+                          if (await decideApplication(va, "Pending", null)) { toast.success("Reopened"); close(); loadData(true); }
+                        }}><RotateCcw className="mr-1 h-4 w-4" /> Reopen for review</Button>
+                      )}
+                      <Button variant="outline" onClick={close}>Close</Button>
+                      {va.status === "Approved" && !livePay && can.finance && (
+                        <Button onClick={() => scheduleFor(va)}><Banknote className="mr-1 h-4 w-4" /> Schedule payment</Button>
+                      )}
+                    </>)}>
+                    {viewApp && (<>
+                      <DetailGrid>
                         <div>
-                          <Label className="text-muted-foreground text-xs">Applicant</Label>
-                          <p className="font-medium">{personName(viewApp.profiles)}</p>
+                          <dt className="text-xs text-muted-foreground">Applicant</dt>
+                          <dd className="mt-0.5 text-sm font-medium">{personName(viewApp.profiles)}</dd>
                           <div className="flex flex-wrap gap-x-3">
                             {profiles.some((p) => p.id === viewApp.user_id) && (
                               <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => setViewStudent(profiles.find((p) => p.id === viewApp.user_id) ?? null)}>View full profile</button>
@@ -1791,22 +1826,22 @@ export default function AdminDashboardPage() {
                             )}
                           </div>
                         </div>
-                        <div><Label className="text-muted-foreground text-xs">Email</Label><p className="font-medium break-all">{viewApp.profiles?.email || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">School</Label><p className="font-medium">{viewApp.profiles?.school_name || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Course</Label><p className="font-medium">{viewApp.profiles?.course || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Year Level</Label><p className="font-medium">{viewApp.profiles?.year_level || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Current grade</Label><p className="font-medium">{viewApp.profiles?.average_grade ?? "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Scholarship</Label><p className="font-medium">{viewApp.scholarships?.name || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Status</Label><div>{statusBadge(viewApp.status)}</div></div>
-                        <div><Label className="text-muted-foreground text-xs">Type</Label><p className="font-medium">{viewApp.is_renewal ? "Renewal" : "New application"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Term</Label><p className="font-medium">{[viewApp.academic_year, viewApp.semester].filter(Boolean).join(" · ") || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Grade when applied</Label><p className="font-medium">{viewApp.average_grade ?? "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Household income</Label><p className="font-medium">{viewApp.household_income != null ? `₱${Number(viewApp.household_income).toLocaleString("en-PH")}` : "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Household size</Label><p className="font-medium">{viewApp.household_size ?? "—"}</p></div>
+                        <Detail label="Email">{viewApp.profiles?.email || "—"}</Detail>
+                        <Detail label="School">{viewApp.profiles?.school_name || "—"}</Detail>
+                        <Detail label="Course">{viewApp.profiles?.course || "—"}</Detail>
+                        <Detail label="Year Level">{viewApp.profiles?.year_level || "—"}</Detail>
+                        <Detail label="Current grade">{viewApp.profiles?.average_grade ?? "—"}</Detail>
+                        <Detail label="Scholarship">{viewApp.scholarships?.name || "—"}</Detail>
+                        <Detail label="Status">{statusBadge(viewApp.status)}</Detail>
+                        <Detail label="Type">{viewApp.is_renewal ? "Renewal" : "New application"}</Detail>
+                        <Detail label="Term">{[viewApp.academic_year, viewApp.semester].filter(Boolean).join(" · ") || "—"}</Detail>
+                        <Detail label="Grade when applied">{viewApp.average_grade ?? "—"}</Detail>
+                        <Detail label="Household income">{viewApp.household_income != null ? `₱${Number(viewApp.household_income).toLocaleString("en-PH")}` : "—"}</Detail>
+                        <Detail label="Household size">{viewApp.household_size ?? "—"}</Detail>
                         {cap && (
                           <div>
-                            <Label className="text-muted-foreground text-xs">Program capacity</Label>
-                            <p className={`font-medium ${open && (cap.slotsFull || cap.overBudget) ? "text-destructive" : ""}`}>
+                            <dt className="text-xs text-muted-foreground">Program capacity</dt>
+                            <p className={`mt-0.5 text-sm font-medium ${open && (cap.slotsFull || cap.overBudget) ? "text-destructive" : ""}`}>
                               {cap.sch.slots > 0 ? `${cap.approved} of ${cap.sch.slots} slots filled` : `${cap.approved} approved (no slot limit)`}
                             </p>
                             {Number(cap.sch.total_budget) > 0 && (
@@ -1814,14 +1849,14 @@ export default function AdminDashboardPage() {
                             )}
                           </div>
                         )}
+                      </DetailGrid>
+                      <div>
+                        <h3 className="mb-1.5 text-sm font-semibold">Applicant statement</h3>
+                        <p className="whitespace-pre-wrap rounded-md border bg-muted/40 px-3 py-2 text-sm">{viewApp.statement || "—"}</p>
                       </div>
                       <div>
-                        <Label className="text-xs">Applicant statement</Label>
-                        <p className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/40 px-3 py-2 text-sm">{viewApp.statement || "—"}</p>
-                      </div>
-                      <div>
-                        <Label className="text-xs">Requirements for {viewApp.scholarships?.name || "this program"}</Label>
-                        <ul className="mt-1 space-y-1 rounded-md border px-3 py-2">
+                        <h3 className="mb-1.5 text-sm font-semibold">Requirements for {viewApp.scholarships?.name || "this program"}</h3>
+                        <ul className="space-y-1 rounded-md border px-3 py-2">
                           {requirementChecks(viewApp).map((c) => (
                             <li key={c.key} className="flex items-start gap-2 text-sm">
                               {c.ok ? <CheckCircle className="h-4 w-4 mt-0.5 shrink-0 text-success" /> : <XCircle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" />}
@@ -1831,7 +1866,7 @@ export default function AdminDashboardPage() {
                         </ul>
                       </div>
                       <div>
-                        <Label className="text-xs">Documents for this application</Label>
+                        <h3 className="mb-1.5 text-sm font-semibold">Documents for this application</h3>
                         {docList(currentDocs, docsLoading)}
                         {!docsLoading && olderDocs.length > 0 && (
                           <details className="mt-2 text-sm">
@@ -1845,7 +1880,7 @@ export default function AdminDashboardPage() {
 
                       {viewApp.status === "Approved" && (
                         <div>
-                          <Label className="text-xs">Award amount (₱)</Label>
+                          <h3 className="mb-1.5 text-sm font-semibold">Award amount (₱)</h3>
                           <div className="mt-1 flex gap-2">
                             <Input type="number" min={1} step="0.01" value={awardInput} onChange={(e) => setAwardInput(e.target.value)} disabled={!can.manage || hasDisbursed(viewApp.id)} />
                             {can.manage && <Button variant="outline" disabled={hasDisbursed(viewApp.id)} onClick={() => saveAward(viewApp)}>Save award</Button>}
@@ -1857,14 +1892,14 @@ export default function AdminDashboardPage() {
                       )}
                       {open && (
                         <div>
-                          <Label className="text-xs">Award amount (₱, optional)</Label>
+                          <h3 className="mb-1.5 text-sm font-semibold">Award amount (₱, optional)</h3>
                           <Input type="number" min={1} step="0.01" className="mt-1" value={awardInput} onChange={(e) => setAwardInput(e.target.value)}
                             placeholder={cap?.sch.amount ? `Program award: ${formatPHP(Number(cap.sch.amount))}` : "Program award"} />
                         </div>
                       )}
 
                       <div>
-                        <Label className="text-xs">{viewApp.status === "Disapproved" ? "Reason (shown to the student)" : "Message to the student"}</Label>
+                        <h3 className="mb-1.5 text-sm font-semibold">{viewApp.status === "Disapproved" ? "Reason (shown to the student)" : "Message to the student"}</h3>
                         <Textarea value={remarks} onChange={(e) => setRemarks(e.target.value)}
                           placeholder={open ? "Sent with your decision and shown on the student's application. Required to disapprove." : "Shown on the student's application."} />
                         {open && viewApp.notes && (
@@ -1889,7 +1924,7 @@ export default function AdminDashboardPage() {
                       </div>
 
                       <div>
-                        <Label className="text-xs">Internal notes (staff only — never shown to the student)</Label>
+                        <h3 className="mb-1.5 text-sm font-semibold">Internal notes (staff only — never shown to the student)</h3>
                         {appNotes.length > 0 && (
                           <ul className="mt-1 space-y-2">
                             {appNotes.map((n) => (
@@ -1912,56 +1947,21 @@ export default function AdminDashboardPage() {
                       </div>
 
                       {open && blocker && (
-                        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Can&apos;t approve yet. {blocker}.</p>
+                        <DialogNote tone="warning" icon={<AlertTriangle className="h-3.5 w-3.5" />}>Can&apos;t approve yet. {blocker}.</DialogNote>
                       )}
-                      {open && (
-                        <div className="flex gap-2 pt-2 flex-wrap">
-                          <Button className="flex-1" disabled={!!blocker} title={blocker ?? undefined} onClick={async () => {
-                            if (await decideApplication(viewApp, "Approved", remarks, awardOverride ?? null)) { toast.success("Approved!"); setViewApp(null); loadData(true); }
-                          }}><CheckCircle className="mr-1 h-4 w-4" /> Approve</Button>
-                          {viewApp.status === "Pending" && (
-                            <Button variant="outline" className="flex-1" onClick={async () => {
-                              if (await decideApplication(viewApp, "Waitlisted", remarks)) { toast.info("Waitlisted"); setViewApp(null); loadData(true); }
-                            }}><Hourglass className="mr-1 h-4 w-4" /> Waitlist</Button>
-                          )}
-                          <Button variant="destructive" className="flex-1" disabled={!remarks.trim()} title={remarks.trim() ? undefined : "Write the reason in the message first — it is shown to the student"} onClick={async () => {
-                            if (await decideApplication(viewApp, "Disapproved", remarks)) { toast.error("Disapproved"); setViewApp(null); loadData(true); }
-                          }}><XCircle className="mr-1 h-4 w-4" /> Disapprove</Button>
-                          {viewApp.changes_requested && (
-                            <p className="w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 whitespace-pre-wrap">
-                              <span className="font-semibold">Waiting on the student{viewApp.changes_requested_at ? ` since ${new Date(viewApp.changes_requested_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}` : ""}: </span>
-                              {viewApp.changes_requested}
-                            </p>
-                          )}
-                          <Button variant="ghost" className="w-full" onClick={() => { setChangesText(""); setChangesFor(viewApp); }}>
-                            <Pencil className="mr-1 h-4 w-4" /> Request changes from the student
-                          </Button>
-                        </div>
-                      )}
-                      {viewApp.status === "Approved" && !livePay && can.finance && (
-                        <Button className="w-full" onClick={() => scheduleFor(viewApp)}><Banknote className="mr-1 h-4 w-4" /> Schedule payment</Button>
-                      )}
-                      {viewApp.status === "Disapproved" && (
-                        <Button variant="outline" className="w-full" onClick={async () => {
-                          // The disapproval reason is cleared, so it isn't resent with a later decision.
-                          if (await decideApplication(viewApp, "Pending", null)) { toast.success("Reopened"); setViewApp(null); loadData(true); }
-                        }}><RotateCcw className="mr-1 h-4 w-4" /> Reopen for review</Button>
-                      )}
-                      {viewApp.status === "Approved" && (
-                        <Button variant="outline" className="w-full text-destructive" disabled={livePay}
-                          title={livePay ? "This application has payments. Cancel them before revoking the approval" : undefined}
-                          onClick={() => { setRevokeNote(""); setRevokeApp(viewApp); }}>
-                          <Undo2 className="mr-1 h-4 w-4" /> Revoke approval
-                        </Button>
+                      {open && viewApp.changes_requested && (
+                        <DialogNote tone="warning" icon={<Hourglass className="h-3.5 w-3.5" />}>
+                          <span className="font-semibold">Waiting on the student{viewApp.changes_requested_at ? ` since ${new Date(viewApp.changes_requested_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}` : ""}: </span>
+                          <span className="whitespace-pre-wrap">{viewApp.changes_requested}</span>
+                        </DialogNote>
                       )}
                       {viewApp.status === "Approved" && livePay && (
-                        <p className="text-xs text-muted-foreground">To revoke this approval, cancel its payments in Disbursement first.</p>
+                        <DialogNote>To revoke this approval, cancel its payments in Disbursement first.</DialogNote>
                       )}
-                    </div>
-                    );
-                  })()}
-                </DialogContent>
-              </Dialog>
+                    </>)}
+                  </AppDialog>
+                );
+              })()}
             </div>
           )}
 
@@ -1992,105 +1992,46 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
 
-              <Dialog open={schDialog !== null} onOpenChange={(o) => !o && setSchDialog(null)}>
-                <DialogContent>
-                  <DialogHeader><DialogTitle className="font-display">{schDialog && schDialog !== "new" ? "Edit Scholarship" : "Add New Scholarship"}</DialogTitle></DialogHeader>
-                  {schDialog && (() => {
-                    const cur = schDialog === "new" ? null : schDialog;
-                    return (
-                      <form key={cur?.id ?? "new"} onSubmit={saveScholarship} className="space-y-4">
-                        <div><Label>Name</Label><Input name="name" required defaultValue={cur?.name ?? ""} placeholder="Scholarship name" /></div>
-                        <div><Label>Description</Label><Textarea name="description" defaultValue={cur?.description ?? ""} placeholder="Description" /></div>
-                        <div><Label>Eligibility</Label><Textarea name="eligibility" defaultValue={cur?.eligibility ?? ""} placeholder="Who can apply?" /></div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div><Label>Award per scholar per year (₱)</Label><Input name="amount" type="number" min={0} step="0.01" defaultValue={cur?.amount ?? 0} /></div>
-                          <div><Label>Budget per academic year (₱, 0 = no cap)</Label><Input name="total_budget" type="number" min={0} step="0.01" defaultValue={cur?.total_budget ?? 0} /></div>
-                        </div>
-                        <p className="-mt-2 text-xs text-muted-foreground">
-                          Approving a scholar awards this amount, and approvals stop once the budget is used up. Slots and budget refill when a new academic year starts.
-                          {cur && cur.total_budget > 0 && ` Committed in ${currentAY}: ${formatPHP(committedFor(cur))} of ${formatPHP(cur.total_budget)}.`}
-                        </p>
-                        <div>
-                          <Label>Release schedule</Label>
-                          <Select name="release_schedule" defaultValue={cur?.release_schedule ?? "yearly"}>
-                            <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                            <SelectContent>{RELEASE_SCHEDULES.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}</SelectContent>
-                          </Select>
-                          <p className="mt-1 text-xs text-muted-foreground">Once a year: the whole award in one payment. Per semester: half in the 1st semester and half in the 2nd.</p>
-                        </div>
-                        <div><Label>Slots per academic year (0 = unlimited)</Label><Input name="slots" type="number" min={0} step={1} defaultValue={cur?.slots ?? ""} placeholder="50" /></div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div><Label>Applications open</Label><Input name="open_date" type="date" defaultValue={cur?.open_date ?? ""} /></div>
-                          <div><Label>Deadline</Label><Input name="deadline" type="date" defaultValue={cur?.deadline ?? ""} /></div>
-                        </div>
-                        <div className="rounded-md border p-3 space-y-3">
-                          <p className="text-sm font-medium">Eligibility rules <span className="font-normal text-muted-foreground">(enforced when a student applies)</span></p>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div><Label>Minimum average grade</Label><Input name="min_grade" type="number" min={0} max={100} step="0.01" defaultValue={cur?.min_grade ?? ""} placeholder="Global minimum" /></div>
-                            {/* Every program is for residents of San Jose; only the barangays below vary. */}
-                            <div><Label>Municipality</Label><Input value={HOME_MUNICIPALITY} readOnly disabled /></div>
-                          </div>
-                          <div>
-                            <Label>Year levels <span className="font-normal text-muted-foreground">(none ticked = any)</span></Label>
-                            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
-                              {YEAR_LEVELS.map((y) => (
-                                <label key={y} className="flex items-center gap-1.5 text-sm">
-                                  <input type="checkbox" checked={schYearLevels.includes(y)}
-                                    onChange={(e) => setSchYearLevels((prev) => e.target.checked ? [...prev, y] : prev.filter((x) => x !== y))} />
-                                  {y}
-                                </label>
-                              ))}
-                            </div>
-                          </div>
-                          <div>
-                            <div className="flex items-center justify-between gap-2">
-                              <Label>Barangays of {HOME_MUNICIPALITY} <span className="font-normal text-muted-foreground">(none ticked = open to all {HOME_MUNICIPALITY} residents)</span></Label>
-                              {schBarangays.length > 0 && (
-                                <button type="button" className="text-xs text-primary hover:underline" onClick={() => setSchBarangays([])}>Clear ({schBarangays.length})</button>
-                              )}
-                            </div>
-                            <Input className="mt-1" value={schBarangaySearch} onChange={(e) => setSchBarangaySearch(e.target.value)} placeholder="Search barangay" />
-                            <div className="mt-1 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 max-h-48 overflow-y-auto rounded-md border p-2">
-                              {BARANGAYS.filter((b) => b.toLowerCase().includes(schBarangaySearch.trim().toLowerCase())).map((b) => (
-                                <label key={b} className="flex items-center gap-1.5 text-sm">
-                                  <input type="checkbox" checked={schBarangays.includes(b)}
-                                    onChange={(e) => setSchBarangays((prev) => e.target.checked ? [...prev, b] : prev.filter((x) => x !== b))} />
-                                  {b}
-                                </label>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between rounded-md border px-3 py-2">
-                          <Label>Accepting applications</Label>
-                          <Switch checked={schActive} onCheckedChange={setSchActive} />
-                        </div>
-                        <Button type="submit" className="w-full bg-gradient-primary">{cur ? "Save Changes" : "Save Scholarship"}</Button>
-                      </form>
-                    );
-                  })()}
-                </DialogContent>
-              </Dialog>
+              {(() => {
+                const cur = schDialog && schDialog !== "new" ? schDialog : null;
+                return (
+                  <AppDialog open={schDialog !== null} onOpenChange={(o) => !o && setSchDialog(null)} size="xl"
+                    title={cur ? "Edit Scholarship" : "Add New Scholarship"}
+                    description="Students see the program card once it's accepting applications."
+                    onSubmit={saveScholarship} formKey={cur?.id ?? "new"}
+                    footer={<>
+                      <Button type="button" variant="outline" onClick={() => setSchDialog(null)}>Cancel</Button>
+                      <Button type="submit" className="bg-gradient-primary">{cur ? "Save Changes" : "Add Scholarship"}</Button>
+                    </>}>
+                    <ScholarshipFormFields
+                      cur={cur}
+                      yearLevels={schYearLevels} setYearLevels={setSchYearLevels}
+                      barangays={schBarangays} setBarangays={setSchBarangays}
+                      barangaySearch={schBarangaySearch} setBarangaySearch={setSchBarangaySearch}
+                      active={schActive} setActive={setSchActive}
+                      committedNote={cur && cur.total_budget > 0 ? `${formatPHP(committedFor(cur))} of ${formatPHP(cur.total_budget)} committed in ${currentAY}.` : null}
+                    />
+                  </AppDialog>
+                );
+              })()}
 
-              <Dialog open={!!deleteSch} onOpenChange={(o) => { if (!o) { setDeleteSch(null); setDeleteSchText(""); } }}>
-                <DialogContent>
-                  <DialogHeader><DialogTitle>Delete {deleteSch?.name}?</DialogTitle></DialogHeader>
-                  <p className="text-sm text-muted-foreground">
-                    This permanently removes the program and can&apos;t be undone.
-                    {deleteSch && applicantCount(deleteSch.id) > 0 && ` It has ${applicantCount(deleteSch.id)} application(s), so deletion will be blocked — disable it instead.`}
-                  </p>
-                  {deleteSch && applicantCount(deleteSch.id) === 0 && (
-                    <div className="space-y-1">
-                      <Label htmlFor="delete-sch-name">Type <strong>{deleteSch.name}</strong> to confirm</Label>
-                      <Input id="delete-sch-name" value={deleteSchText} onChange={(e) => setDeleteSchText(e.target.value)} autoComplete="off" />
-                    </div>
-                  )}
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => { setDeleteSch(null); setDeleteSchText(""); }}>Cancel</Button>
-                    <Button variant="destructive" disabled={!deleteSch || applicantCount(deleteSch.id) > 0 || deleteSchText.trim() !== deleteSch.name.trim()} onClick={confirmDeleteScholarship}>Delete</Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+              <AppDialog open={!!deleteSch} onOpenChange={(o) => { if (!o) { setDeleteSch(null); setDeleteSchText(""); } }} size="sm"
+                title={`Delete ${deleteSch?.name ?? "program"}?`}
+                description="This permanently removes the program and can't be undone."
+                footer={<>
+                  <Button variant="outline" onClick={() => { setDeleteSch(null); setDeleteSchText(""); }}>Cancel</Button>
+                  <Button variant="destructive" disabled={!deleteSch || applicantCount(deleteSch.id) > 0 || deleteSchText.trim() !== deleteSch.name.trim()} onClick={confirmDeleteScholarship}>Delete program</Button>
+                </>}>
+                {deleteSch && applicantCount(deleteSch.id) > 0 ? (
+                  <DialogNote tone="warning" icon={<AlertTriangle className="h-3.5 w-3.5" />}>
+                    It has {applicantCount(deleteSch.id)} application{applicantCount(deleteSch.id) === 1 ? "" : "s"}, so it can&apos;t be deleted. Turn off &ldquo;Accepting applications&rdquo; instead.
+                  </DialogNote>
+                ) : deleteSch && (
+                  <DialogField label={<>Type <strong>{deleteSch.name}</strong> to confirm</>} htmlFor="delete-sch-name">
+                    <Input id="delete-sch-name" value={deleteSchText} onChange={(e) => setDeleteSchText(e.target.value)} autoComplete="off" />
+                  </DialogField>
+                )}
+              </AppDialog>
 
               <Card>
                 <Table>
@@ -2530,150 +2471,148 @@ export default function AdminDashboardPage() {
               </div>
 
               {/* Create / edit payment dialog */}
-              <Dialog open={payDialog !== null} onOpenChange={(o) => !o && setPayDialog(null)}>
-                <DialogContent className="max-w-md">
-                  <DialogHeader><DialogTitle className="font-display">{payDialog && payDialog !== "new" ? "Edit Payment" : "Schedule Payment"}</DialogTitle></DialogHeader>
-                  {payDialog && (() => {
-                    const cur = payDialog === "new" ? null : payDialog;
-                    const payApp = applications.find((a) => a.id === (cur ? cur.application_id : payAppId));
-                    const payWarning = payApp ? gradeWarningFor(payApp, payTerm) : null;
-                    return (
-                      <form key={cur?.id ?? `new-${payAppId}`} onSubmit={savePayment} className="space-y-4">
-                        {cur ? (
-                          <div><Label className="text-muted-foreground text-xs">Student</Label><p className="font-medium">{payStudent(cur)} <span className="text-xs text-muted-foreground">· {payProgram(cur)}</span></p></div>
-                        ) : (
-                          <div>
-                            <Label>Approved applicant *</Label>
-                            <Select value={payAppId} onValueChange={(v) => { setPayAppId(v); setPayTerm(defaultTermFor(v)); }}>
-                              <SelectTrigger><SelectValue placeholder={awaitingPayment.length ? "Select applicant" : "No approved applicants awaiting payment"} /></SelectTrigger>
-                              <SelectContent>
-                                {awaitingPayment.map((a) => (
-                                  <SelectItem key={a.id} value={a.id}>
-                                    {a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"} — {a.scholarships?.name || "—"}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        )}
-                        {payApp && (
-                          <div>
-                            <Label>Period</Label>
-                            <div className="grid grid-cols-2 gap-3 mt-1">
-                              {termsFor(scheduleOf(payApp)).map((t) => {
-                                const taken = t !== cur?.term && !openTermsOf(payApp).includes(t);
-                                return (
-                                  <button key={t} type="button" disabled={taken || cur?.status === "Disbursed"} onClick={() => setPayTerm(t)}
-                                    className={`rounded-lg border p-2 text-sm font-medium ${taken ? "cursor-not-allowed opacity-50" : "cursor-pointer"} ${payTerm === t ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/40"}`}>
-                                    {t === "Yearly" ? `Whole year${payApp.academic_year ? ` ${payApp.academic_year}` : ""}` : t}{taken && " · scheduled"}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                            {payWarning && (
-                              <p className="mt-2 flex items-start gap-1.5 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-foreground">
-                                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning mt-px" />
-                                <span>{payWarning}. You can still schedule this payment if the office approves it.</span>
-                              </p>
-                            )}
-                          </div>
-                        )}
-                        <div className="grid grid-cols-2 gap-4">
-                          <div><Label>Amount (₱) *</Label><Input key={cur?.id ?? `${payAppId}-${payTerm}`} name="amount" type="number" min={0.01} step="0.01" required defaultValue={cur?.amount ?? (payApp ? termDefaultAmount(payApp) : "")} /></div>
-                          <div><Label>Scheduled date</Label><Input name="scheduled_date" type="date" defaultValue={cur ? (cur.scheduled_date ?? "") : defaultScheduledDate} /></div>
-                        </div>
-                        <div>
-                          <Label>Method</Label>
-                          <div className="grid grid-cols-2 gap-3 mt-1">
-                            {enabledMethods.map((m) => (
-                              <button key={m} type="button" disabled={!!cur?.preferred_method} onClick={() => setPayMethod(m)}
-                                className={`rounded-lg border p-2 text-sm font-medium ${cur?.preferred_method ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${payMethod === m ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/40"}`}>{m}</button>
+              {(() => {
+                const cur = payDialog && payDialog !== "new" ? payDialog : null;
+                const payApp = applications.find((a) => a.id === (cur ? cur.application_id : payAppId));
+                const payWarning = payApp ? gradeWarningFor(payApp, payTerm) : null;
+                return (
+                  <AppDialog open={payDialog !== null} onOpenChange={(o) => !o && setPayDialog(null)} size="md"
+                    title={cur ? "Edit Payment" : "Schedule Payment"}
+                    description={cur ? `${payStudent(cur)} · ${payProgram(cur)}` : "For an approved scholar. The student is notified."}
+                    onSubmit={savePayment} formKey={cur?.id ?? `new-${payAppId}`}
+                    footer={<>
+                      <Button type="button" variant="outline" onClick={() => setPayDialog(null)}>Cancel</Button>
+                      <Button type="submit" className="bg-gradient-primary" disabled={!cur && !payAppId}>{cur ? "Save Changes" : "Schedule Payment"}</Button>
+                    </>}>
+                    {!cur && (
+                      <DialogField label="Scholar">
+                        <Select value={payAppId} onValueChange={(v) => { setPayAppId(v); setPayTerm(defaultTermFor(v)); }}>
+                          <SelectTrigger><SelectValue placeholder={awaitingPayment.length ? "Select an approved scholar" : "No approved scholars awaiting payment"} /></SelectTrigger>
+                          <SelectContent>
+                            {awaitingPayment.map((a) => (
+                              <SelectItem key={a.id} value={a.id}>
+                                {a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"} — {a.scholarships?.name || "—"}
+                              </SelectItem>
                             ))}
-                          </div>
+                          </SelectContent>
+                        </Select>
+                      </DialogField>
+                    )}
+                    {payApp && (
+                      <DialogField label="Period">
+                        <div role="radiogroup" aria-label="Period" className="grid grid-cols-2 gap-3">
+                          {termsFor(scheduleOf(payApp)).map((t) => {
+                            const taken = t !== cur?.term && !openTermsOf(payApp).includes(t);
+                            return (
+                              <ChoiceButton key={t} selected={payTerm === t} disabled={taken || cur?.status === "Disbursed"} onClick={() => setPayTerm(t)}>
+                                {t === "Yearly" ? `Whole year${payApp.academic_year ? ` ${payApp.academic_year}` : ""}` : t}{taken && " · scheduled"}
+                              </ChoiceButton>
+                            );
+                          })}
                         </div>
-                        {cur?.preferred_method && <p className="text-xs text-muted-foreground -mt-2">The student chose {cur.preferred_method}; the method is fixed.</p>}
-                        <div><Label>{payMethod === "Cheque" ? "Cheque number" : "Reference number"}</Label><Input name="reference" defaultValue={cur?.reference ?? ""} placeholder="Optional now — required to disburse a cheque" /></div>
-                        <div><Label>Notes</Label><Textarea name="notes" defaultValue={cur?.notes ?? ""} placeholder="Optional" /></div>
-                        <Button type="submit" className="w-full bg-gradient-primary" disabled={!cur && !payAppId}>{cur ? "Save Changes" : "Schedule Payment"}</Button>
-                      </form>
-                    );
-                  })()}
-                </DialogContent>
-              </Dialog>
+                      </DialogField>
+                    )}
+                    {payWarning && (
+                      <DialogNote tone="warning" icon={<AlertTriangle className="h-3.5 w-3.5" />}>{payWarning}. You can still schedule this payment if the office approves it.</DialogNote>
+                    )}
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <DialogField label="Amount (₱)" htmlFor="pay-amount">
+                        <Input id="pay-amount" key={cur?.id ?? `${payAppId}-${payTerm}`} name="amount" type="number" min={0.01} step="0.01" required defaultValue={cur?.amount ?? (payApp ? termDefaultAmount(payApp) : "")} />
+                      </DialogField>
+                      <DialogField label="Scheduled date" htmlFor="pay-date">
+                        <Input id="pay-date" name="scheduled_date" type="date" defaultValue={cur ? (cur.scheduled_date ?? "") : defaultScheduledDate} />
+                      </DialogField>
+                    </div>
+                    <DialogField label="Method" hint={cur?.preferred_method ? `The student chose ${cur.preferred_method}, so the method is fixed.` : undefined}>
+                      <div role="radiogroup" aria-label="Method" className="grid grid-cols-2 gap-3">
+                        {enabledMethods.map((m) => (
+                          <ChoiceButton key={m} selected={payMethod === m} disabled={!!cur?.preferred_method} onClick={() => setPayMethod(m)}>
+                            {m === "Cash" ? <Banknote className="h-4 w-4" /> : <Receipt className="h-4 w-4" />}{m}
+                          </ChoiceButton>
+                        ))}
+                      </div>
+                    </DialogField>
+                    <DialogField label={payMethod === "Cheque" ? "Cheque number" : "Reference number"} htmlFor="pay-ref" hint={payMethod === "Cheque" ? "Optional now; required before the cheque is disbursed." : "Optional."}>
+                      <Input id="pay-ref" name="reference" defaultValue={cur?.reference ?? ""} placeholder={payMethod === "Cheque" ? "e.g. CHK-2026-001" : "e.g. REF-001"} />
+                    </DialogField>
+                    <DialogField label="Notes" htmlFor="pay-notes" hint="Optional. Staff only.">
+                      <Textarea id="pay-notes" name="notes" rows={2} defaultValue={cur?.notes ?? ""} />
+                    </DialogField>
+                  </AppDialog>
+                );
+              })()}
 
               {/* Schedule one semester's payments for every eligible scholar */}
-              <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
-                <DialogContent className="max-w-2xl">
-                  <DialogHeader><DialogTitle className="font-display">Schedule semester payments</DialogTitle></DialogHeader>
-                  {bulkOpen && (() => {
-                    const list = bulkCandidates(bulkTerm);
-                    const picked = list.filter((c) => bulkPicked.has(c.app.id));
-                    const pickDefaults = (t: PaymentTerm) => setBulkPicked(new Set(bulkCandidates(t).filter((c) => !c.warning).map((c) => c.app.id)));
-                    return (
-                      <div className="space-y-4">
-                        <p className="text-sm text-muted-foreground">
-                          Approved scholars of per-semester programs in A.Y. {currentAY} who don&apos;t have a {bulkTerm} payment yet. Each gets half of their yearly award.
-                          {bulkTerm === "2nd Semester" && " Scholars without a verified 1st-semester grade that meets the minimum are left unticked; tick them to pay anyway."}
-                        </p>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <Label>Semester</Label>
-                            <Select value={bulkTerm} onValueChange={(v) => { setBulkTerm(v as PaymentTerm); pickDefaults(v as PaymentTerm); }}>
-                              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                              <SelectContent>{termsFor("semester").map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
-                            </Select>
-                          </div>
-                          <div><Label>Scheduled date</Label><Input className="mt-1" type="date" value={bulkDate} onChange={(e) => setBulkDate(e.target.value)} /></div>
-                        </div>
-                        <div className="max-h-80 overflow-y-auto rounded-lg border divide-y">
-                          {list.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">No scholars need a {bulkTerm} payment.</p>}
-                          {list.map((c) => (
-                            <label key={c.app.id} className="flex items-start gap-3 p-3 cursor-pointer hover:bg-muted/40">
-                              <Checkbox className="mt-0.5" checked={bulkPicked.has(c.app.id)}
-                                onCheckedChange={(v) => setBulkPicked((prev) => { const n = new Set(prev); if (v) n.add(c.app.id); else n.delete(c.app.id); return n; })} />
-                              <div className="min-w-0 flex-1">
-                                <p className="text-sm font-medium">
-                                  {c.app.profiles ? `${c.app.profiles.first_name || ""} ${c.app.profiles.last_name || ""}`.trim() : "Unknown"}
-                                  <span className="text-xs font-normal text-muted-foreground"> · {c.app.scholarships?.name || "—"}</span>
-                                </p>
-                                {c.warning
-                                  ? <p className="flex items-center gap-1 text-xs text-warning"><AlertTriangle className="h-3 w-3" /> {c.warning}</p>
-                                  : bulkTerm === "2nd Semester" && <p className="text-xs text-muted-foreground">1st-semester grade verified</p>}
-                              </div>
-                              <p className="text-sm font-medium tabular-nums">{formatPHP(c.amount)}</p>
-                            </label>
-                          ))}
-                        </div>
-                        <DialogFooter className="items-center">
-                          <p className="mr-auto text-sm text-muted-foreground">{picked.length} selected · {formatPHP(picked.reduce((t, c) => t + c.amount, 0))}</p>
-                          <Button variant="outline" onClick={() => setBulkOpen(false)}>Cancel</Button>
-                          <Button className="bg-gradient-primary" disabled={bulkPayBusy || picked.length === 0} onClick={scheduleBulk}>
-                            Schedule {picked.length} payment{picked.length === 1 ? "" : "s"}
-                          </Button>
-                        </DialogFooter>
+              {(() => {
+                const list = bulkOpen ? bulkCandidates(bulkTerm) : [];
+                const picked = list.filter((c) => bulkPicked.has(c.app.id));
+                const pickDefaults = (t: PaymentTerm) => setBulkPicked(new Set(bulkCandidates(t).filter((c) => !c.warning).map((c) => c.app.id)));
+                return (
+                  <AppDialog open={bulkOpen} onOpenChange={setBulkOpen} size="lg"
+                    title="Schedule semester payments"
+                    description={`Approved scholars of per-semester programs in A.Y. ${currentAY} who don't have a ${bulkTerm} payment yet. Each gets half of their yearly award.`}
+                    footer={<>
+                      <p className="w-full self-center text-sm text-muted-foreground sm:mr-auto sm:w-auto">{picked.length} selected · {formatPHP(picked.reduce((t, c) => t + c.amount, 0))}</p>
+                      <Button variant="outline" onClick={() => setBulkOpen(false)}>Cancel</Button>
+                      <Button className="bg-gradient-primary" disabled={bulkPayBusy || picked.length === 0} onClick={scheduleBulk}>
+                        {bulkPayBusy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Schedule {picked.length} payment{picked.length === 1 ? "" : "s"}
+                      </Button>
+                    </>}>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <DialogField label="Semester">
+                        <Select value={bulkTerm} onValueChange={(v) => { setBulkTerm(v as PaymentTerm); pickDefaults(v as PaymentTerm); }}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>{termsFor("semester").map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+                        </Select>
+                      </DialogField>
+                      <DialogField label="Scheduled date" htmlFor="bulk-date">
+                        <Input id="bulk-date" type="date" value={bulkDate} onChange={(e) => setBulkDate(e.target.value)} />
+                      </DialogField>
+                    </div>
+                    {bulkTerm === "2nd Semester" && (
+                      <DialogNote icon={<AlertTriangle className="h-3.5 w-3.5 text-warning" />}>
+                        Scholars without a verified 1st-semester grade that meets the minimum are left unticked. Tick them to pay anyway.
+                      </DialogNote>
+                    )}
+                    <DialogSection title={`Scholars (${list.length})`} action={list.length > 0 && (
+                      <button type="button" className="text-xs font-medium text-primary hover:underline cursor-pointer"
+                        onClick={() => setBulkPicked(picked.length === list.length ? new Set() : new Set(list.map((c) => c.app.id)))}>
+                        {picked.length === list.length ? "Clear all" : "Select all"}
+                      </button>
+                    )}>
+                      <div className="max-h-80 divide-y overflow-y-auto rounded-lg border">
+                        {list.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">No scholars need a {bulkTerm} payment.</p>}
+                        {list.map((c) => (
+                          <label key={c.app.id} className="flex cursor-pointer items-start gap-3 p-3 hover:bg-muted/40">
+                            <Checkbox className="mt-0.5 rounded-[4px]" checked={bulkPicked.has(c.app.id)}
+                              onCheckedChange={(v) => setBulkPicked((prev) => { const n = new Set(prev); if (v) n.add(c.app.id); else n.delete(c.app.id); return n; })} />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium">
+                                {c.app.profiles ? `${c.app.profiles.first_name || ""} ${c.app.profiles.last_name || ""}`.trim() : "Unknown"}
+                                <span className="text-xs font-normal text-muted-foreground"> · {c.app.scholarships?.name || "—"}</span>
+                              </p>
+                              {c.warning
+                                ? <p className="flex items-center gap-1 text-xs text-amber-700"><AlertTriangle className="h-3 w-3" /> {c.warning}</p>
+                                : bulkTerm === "2nd Semester" && <p className="text-xs text-muted-foreground">1st-semester grade verified</p>}
+                            </div>
+                            <p className="text-sm font-medium tabular-nums">{formatPHP(c.amount)}</p>
+                          </label>
+                        ))}
                       </div>
-                    );
-                  })()}
-                </DialogContent>
-              </Dialog>
+                    </DialogSection>
+                  </AppDialog>
+                );
+              })()}
 
               {/* Cancel confirmation */}
-              <Dialog open={!!cancelPay} onOpenChange={(o) => !o && setCancelPay(null)}>
-                <DialogContent>
-                  <DialogHeader><DialogTitle>Cancel this payment?</DialogTitle></DialogHeader>
-                  <p className="text-sm text-muted-foreground">
-                    {cancelPay && `${formatPHP(cancelPay.amount)} for ${payStudent(cancelPay)} will be cancelled and the student notified. This can't be undone, but you can create a new payment.`}
-                  </p>
-                  <div>
-                    <Label className="text-xs">Reason (shown to the student, optional)</Label>
-                    <Textarea rows={2} maxLength={300} value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="e.g. Rescheduled to next month." />
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setCancelPay(null)}>Keep</Button>
-                    <Button variant="destructive" onClick={async () => { if (cancelPay && await setPaymentStatus(cancelPay, "Cancelled", cancelReason)) setCancelPay(null); }}>Cancel payment</Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+              <ReasonDialog open={!!cancelPay} onClose={() => setCancelPay(null)}
+                title="Cancel this payment?"
+                description={cancelPay ? `${formatPHP(cancelPay.amount)} for ${payStudent(cancelPay)} is cancelled and the student notified. This can't be undone, but you can schedule a new payment.` : undefined}
+                label="Reason" hint="Optional. Shown to the student." rows={2} maxLength={300} required={false}
+                placeholder="e.g. Rescheduled to next month."
+                value={cancelReason} onChange={setCancelReason}
+                cancelLabel="Keep payment" confirmLabel="Cancel payment"
+                onConfirm={async () => { if (cancelPay && await setPaymentStatus(cancelPay, "Cancelled", cancelReason)) setCancelPay(null); }} />
 
             </div>
           )}
@@ -2778,45 +2717,43 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
 
-              <Dialog open={!!viewLog} onOpenChange={(o) => !o && setViewLog(null)}>
-                <DialogContent className="max-w-2xl">
-                  <DialogHeader><DialogTitle>Audit Entry</DialogTitle></DialogHeader>
-                  {viewLog && (() => {
-                    const prev = asObj(viewLog.previous_value);
-                    const next = asObj(viewLog.new_value);
-                    const keys = [...new Set([...Object.keys(prev), ...Object.keys(next)])];
-                    return (
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-2 gap-3 text-sm">
-                          <div><Label className="text-muted-foreground text-xs">When</Label><p className="font-medium">{new Date(viewLog.created_at).toLocaleString()}</p></div>
-                          <div><Label className="text-muted-foreground text-xs">User</Label><p className="font-medium">{viewLog.user_email || "System"}</p></div>
-                          <div><Label className="text-muted-foreground text-xs">Action</Label><p className="font-medium">{viewLog.action}</p></div>
-                          <div><Label className="text-muted-foreground text-xs">Entity</Label><p className="font-medium">{viewLog.entity_type}</p></div>
-                          <div className="col-span-2"><Label className="text-muted-foreground text-xs">Entity ID</Label><p className="font-mono text-xs break-all">{viewLog.entity_id || "—"}</p></div>
-                          {viewLog.user_agent && <div className="col-span-2"><Label className="text-muted-foreground text-xs">Device</Label><p className="text-xs text-muted-foreground break-all">{viewLog.user_agent}</p></div>}
+              <AppDialog open={!!viewLog} onOpenChange={(o) => !o && setViewLog(null)} size="lg"
+                title="Audit entry"
+                description={viewLog ? new Date(viewLog.created_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "medium" }) : undefined}
+                footer={<Button variant="outline" onClick={() => setViewLog(null)}>Close</Button>}>
+                {viewLog && (() => {
+                  const prev = asObj(viewLog.previous_value);
+                  const next = asObj(viewLog.new_value);
+                  const keys = [...new Set([...Object.keys(prev), ...Object.keys(next)])];
+                  return (<>
+                    <DetailGrid>
+                      <Detail label="User">{viewLog.user_email || "System"}</Detail>
+                      <Detail label="Action"><span className="font-mono text-xs">{viewLog.action}</span></Detail>
+                      <Detail label="Record type">{viewLog.entity_type}</Detail>
+                      <Detail label="Record ID"><span className="font-mono text-xs break-all">{viewLog.entity_id || "—"}</span></Detail>
+                      {viewLog.user_agent && <Detail label="Device" wide><span className="text-xs font-normal text-muted-foreground break-all">{viewLog.user_agent}</span></Detail>}
+                    </DetailGrid>
+                    <DialogSection title="Changes">
+                      {keys.length === 0 ? <p className="text-sm text-muted-foreground">No values recorded</p> : (
+                        <div className="overflow-x-auto rounded-lg border">
+                          <Table>
+                            <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60"><TableHead>Field</TableHead><TableHead>Before</TableHead><TableHead>After</TableHead></TableRow></TableHeader>
+                            <TableBody>
+                              {keys.map((k) => (
+                                <TableRow key={k}>
+                                  <TableCell className="font-mono text-xs">{k}</TableCell>
+                                  <TableCell className="text-xs text-muted-foreground break-all">{fmtVal(prev[k])}</TableCell>
+                                  <TableCell className={`text-xs break-all ${fmtVal(prev[k]) !== fmtVal(next[k]) ? "font-semibold" : "text-muted-foreground"}`}>{fmtVal(next[k])}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
                         </div>
-                        <div>
-                          <Label className="text-xs">Changes</Label>
-                          {keys.length === 0 ? <p className="text-sm text-muted-foreground">No values recorded</p> : (
-                            <Table>
-                              <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60"><TableHead>Field</TableHead><TableHead>Before</TableHead><TableHead>After</TableHead></TableRow></TableHeader>
-                              <TableBody>
-                                {keys.map((k) => (
-                                  <TableRow key={k}>
-                                    <TableCell className="font-mono text-xs">{k}</TableCell>
-                                    <TableCell className="text-xs text-muted-foreground break-all">{fmtVal(prev[k])}</TableCell>
-                                    <TableCell className={`text-xs break-all ${fmtVal(prev[k]) !== fmtVal(next[k]) ? "font-semibold" : "text-muted-foreground"}`}>{fmtVal(next[k])}</TableCell>
-                                  </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </DialogContent>
-              </Dialog>
+                      )}
+                    </DialogSection>
+                  </>);
+                })()}
+              </AppDialog>
             </div>
           )}
 
@@ -2850,174 +2787,142 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* Student Management: edit reference number / disbursement status */}
-      <Dialog open={!!editDisb} onOpenChange={(o) => !o && setEditDisb(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle className="font-display">Edit Disbursement</DialogTitle></DialogHeader>
-          {editDisb && (() => {
-            const list = studentPayments(editDisb.id);
-            const pm = list.find((x) => x.id === editDisbPayId);
-            const locked = pm?.status === "Disbursed" || pm?.status === "Cancelled";
-            return (
-              <div className="space-y-4">
-                <div><Label className="text-muted-foreground text-xs">Student</Label><p className="font-medium">{`${editDisb.first_name || ""} ${editDisb.last_name || ""}`.trim() || editDisb.email}</p></div>
-                {list.length === 0 ? (
-                  <div className="space-y-3">
-                    <p className="text-sm text-muted-foreground">This scholar has no payment yet. Schedule one first, then set its reference number and status.</p>
-                    <Button variant="outline" onClick={() => {
-                      const app = awaitingPayment.find((a) => a.user_id === editDisb.id);
-                      setEditDisb(null); openNewPayment(app?.id ?? ""); setActiveSection("disbursement");
-                    }}>Schedule payment <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>
-                  </div>
-                ) : (<>
-                  {list.length > 1 && (
-                    <div>
-                      <Label>Payment</Label>
-                      <Select value={editDisbPayId} onValueChange={(id) => selectEditDisbPayment(list.find((x) => x.id === id))}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {list.map((x) => (
-                            <SelectItem key={x.id} value={x.id}>{payProgram(x)} · {formatPHP(Number(x.amount))} · {x.status}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-                  {pm && list.length === 1 && <p className="text-sm text-muted-foreground">{payProgram(pm)} · {formatPHP(Number(pm.amount))} · {pm.method || "—"}</p>}
-                  <div>
-                    <Label>{pm?.method === "Cheque" ? "Cheque number" : "Reference number"}</Label>
-                    <Input value={editDisbRef} onChange={(e) => setEditDisbRef(e.target.value)} disabled={locked} placeholder={pm?.method === "Cheque" ? "e.g. CHK-2024-001" : "e.g. REF-001"} />
-                  </div>
-                  <div>
-                    <Label>Disbursement status</Label>
-                    <Select value={editDisbStatus} onValueChange={setEditDisbStatus} disabled={locked}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {pm?.status === "Pending" && <SelectItem value="Pending">Pending</SelectItem>}
-                        <SelectItem value="Processing">Processing</SelectItem>
-                        <SelectItem value="Disbursed">Disbursed</SelectItem>
-                        <SelectItem value="Cancelled">Cancelled</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {locked && <p className="text-xs text-muted-foreground flex items-center gap-1"><Lock className="h-3.5 w-3.5" /> {pm?.status} payments are locked and can&apos;t be edited.</p>}
-                  {!locked && editDisbStatus === "Disbursed" && <p className="text-xs text-muted-foreground">You&apos;ll be asked to upload the receipt / voucher to confirm the disbursement.</p>}
-                  {!locked && editDisbStatus === "Cancelled" && (
-                    <div>
-                      <Label className="text-xs">Cancellation reason (shown to the student, optional)</Label>
-                      <Textarea rows={2} maxLength={300} value={editDisbReason} onChange={(e) => setEditDisbReason(e.target.value)} />
-                    </div>
-                  )}
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setEditDisb(null)}>Close</Button>
-                    {!locked && (
-                      <Button className="bg-gradient-primary" disabled={payBusy || !pm} onClick={saveEditDisb}>
-                        {payBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        {editDisbStatus === "Disbursed" ? "Continue" : "Save Changes"}
-                      </Button>
-                    )}
-                  </DialogFooter>
-                </>)}
+      {(() => {
+        const list = editDisb ? studentPayments(editDisb.id) : [];
+        const pm = list.find((x) => x.id === editDisbPayId);
+        const locked = pm?.status === "Disbursed" || pm?.status === "Cancelled";
+        return (
+          <AppDialog open={!!editDisb} onOpenChange={(o) => !o && setEditDisb(null)} size="md"
+            title="Edit Disbursement"
+            description={editDisb ? `${editDisb.first_name || ""} ${editDisb.last_name || ""}`.trim() || editDisb.email : undefined}
+            footer={<>
+              <Button variant="outline" onClick={() => setEditDisb(null)}>{locked || list.length === 0 ? "Close" : "Cancel"}</Button>
+              {list.length > 0 && !locked && (
+                <Button className="bg-gradient-primary" disabled={payBusy || !pm} onClick={saveEditDisb}>
+                  {payBusy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+                  {editDisbStatus === "Disbursed" ? "Continue" : "Save Changes"}
+                </Button>
+              )}
+            </>}>
+            {editDisb && (list.length === 0 ? (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">This scholar has no payment yet. Schedule one first, then set its reference number and status.</p>
+                <Button variant="outline" onClick={() => {
+                  const app = awaitingPayment.find((a) => a.user_id === editDisb.id);
+                  setEditDisb(null); openNewPayment(app?.id ?? ""); setActiveSection("disbursement");
+                }}>Schedule payment <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>
               </div>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
+            ) : (<>
+              {list.length > 1 ? (
+                <DialogField label="Payment">
+                  <Select value={editDisbPayId} onValueChange={(id) => selectEditDisbPayment(list.find((x) => x.id === id))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {list.map((x) => (
+                        <SelectItem key={x.id} value={x.id}>{payProgram(x)}{x.term ? ` · ${termLabel(x.term, x.academic_year)}` : ""} · {formatPHP(Number(x.amount))} · {x.status}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </DialogField>
+              ) : pm && (
+                <DetailGrid>
+                  <Detail label="Program">{payProgram(pm)}</Detail>
+                  <Detail label="Amount">{formatPHP(Number(pm.amount))}</Detail>
+                  <Detail label="Method">{pm.method || "—"}</Detail>
+                  <Detail label="Period">{termLabel(pm.term, pm.academic_year) || "—"}</Detail>
+                </DetailGrid>
+              )}
+              <DialogField label={pm?.method === "Cheque" ? "Cheque number" : "Reference number"} htmlFor="edit-disb-ref">
+                <Input id="edit-disb-ref" value={editDisbRef} onChange={(e) => setEditDisbRef(e.target.value)} disabled={locked} placeholder={pm?.method === "Cheque" ? "e.g. CHK-2026-001" : "e.g. REF-001"} />
+              </DialogField>
+              <DialogField label="Disbursement status"
+                hint={!locked && editDisbStatus === "Disbursed" ? "Next, you'll upload the signed receipt or voucher to confirm the disbursement." : undefined}>
+                <Select value={editDisbStatus} onValueChange={setEditDisbStatus} disabled={locked}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {pm?.status === "Pending" && <SelectItem value="Pending">Pending</SelectItem>}
+                    <SelectItem value="Processing">Processing</SelectItem>
+                    <SelectItem value="Disbursed">Disbursed</SelectItem>
+                    <SelectItem value="Cancelled">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+              </DialogField>
+              {locked && <DialogNote icon={<Lock className="h-3.5 w-3.5" />}>{pm?.status} payments are locked and can&apos;t be edited.</DialogNote>}
+              {!locked && editDisbStatus === "Cancelled" && (
+                <DialogField label="Cancellation reason" htmlFor="edit-disb-reason" hint="Optional. Shown to the student.">
+                  <Textarea id="edit-disb-reason" rows={2} maxLength={300} value={editDisbReason} onChange={(e) => setEditDisbReason(e.target.value)} />
+                </DialogField>
+              )}
+            </>))}
+          </AppDialog>
+        );
+      })()}
 
       {/* Disburse dialog */}
-      <Dialog open={disbDialog} onOpenChange={setDisbDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-display">Confirm Disbursement</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div>
-              <Label>Payment Method *</Label>
-              <div className="grid grid-cols-2 gap-3 mt-2">
-                {enabledMethods.map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    disabled={disbLocked}
-                    onClick={() => { setDisbMethod(m); setDisbRef(""); }}
-                    className={`flex items-center justify-center gap-2 rounded-lg border p-3 text-sm font-medium transition-all cursor-pointer ${
-                      disbMethod === m
-                        ? "border-primary bg-primary/5 text-primary"
-                        : "border-border hover:border-primary/40"
-                    } ${disbLocked ? "opacity-60 cursor-not-allowed" : ""}`}
-                  >
-                    {m === "Cash" ? <Banknote className="h-4 w-4" /> : <Receipt className="h-4 w-4" />} {m}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {disbLocked && (
-              <p className="text-xs text-muted-foreground">The student chose <strong className="text-foreground">{disbPay?.preferred_method}</strong> for this payment, so the method is fixed.</p>
-            )}
-            <div>
-              <Label>{disbMethod === "Cheque" ? "Cheque Number *" : "Reference Number"}</Label>
-              <Input
-                className="mt-1"
-                placeholder={disbMethod === "Cheque" ? "e.g. CHK-2024-001" : "e.g. REF-001 (optional)"}
-                value={disbRef}
-                onChange={(e) => setDisbRef(e.target.value)}
-              />
-            </div>
-            {disbPay && receiptNos[disbPay.id] && (
-              <div className="rounded-lg border bg-muted/40 p-3 space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Receipt No.</p>
-                    <p className="font-mono text-sm font-semibold">{receiptNos[disbPay.id]}</p>
-                  </div>
-                  <Button type="button" size="sm" variant="outline" onClick={() => printSlip(disbPay, disbMethod, disbRef.trim() || null)}>
-                    <Printer className="mr-1 h-3.5 w-3.5" /> Print slip
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">Print the acknowledgment slip, have the student sign both copies and give them the student copy. They enter this number in the portal to confirm they received the money.</p>
-              </div>
-            )}
-            <div>
-              <Label>Receipt / Voucher *</Label>
-              <p className="text-xs text-muted-foreground mb-2">Upload the signed acknowledgment slip (office copy) or disbursement voucher.</p>
-              <label className="flex items-center gap-2 cursor-pointer rounded-lg border border-dashed p-3 hover:bg-muted/30 transition-colors">
-                <Upload className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">
-                  {disbReceipt ? disbReceipt.name : "Click to upload receipt (PDF / image)"}
-                </span>
-                <input
-                  type="file"
-                  accept=".pdf,.jpg,.jpeg,.png"
-                  className="hidden"
-                  onChange={(e) => setDisbReceipt(e.target.files?.[0] ?? null)}
-                />
-              </label>
-            </div>
+      <AppDialog open={disbDialog} onOpenChange={setDisbDialog} size="md"
+        title="Confirm Disbursement"
+        description={disbPay ? `${payStudent(disbPay)} · ${formatPHP(Number(disbPay.amount))}${disbPay.term ? ` · ${termLabel(disbPay.term, disbPay.academic_year)}` : ""}` : undefined}
+        footer={<>
+          <Button variant="outline" onClick={() => setDisbDialog(false)}>Cancel</Button>
+          <Button className="bg-gradient-primary" disabled={disbLoading || !disbReceipt || (disbMethod === "Cheque" && !disbRef.trim())} onClick={confirmDisbursement}>
+            {disbLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Confirm Disbursement
+          </Button>
+        </>}>
+        <DialogField label="Payment method" hint={disbLocked ? `The student chose ${disbPay?.preferred_method} for this payment, so the method is fixed.` : undefined}>
+          <div role="radiogroup" aria-label="Payment method" className="grid grid-cols-2 gap-3">
+            {enabledMethods.map((m) => (
+              <ChoiceButton key={m} selected={disbMethod === m} disabled={disbLocked} onClick={() => { setDisbMethod(m); setDisbRef(""); }}>
+                {m === "Cash" ? <Banknote className="h-4 w-4" /> : <Receipt className="h-4 w-4" />}{m}
+              </ChoiceButton>
+            ))}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDisbDialog(false)}>Cancel</Button>
-            <Button
-              className="bg-gradient-primary"
-              disabled={disbLoading || !disbReceipt || (disbMethod === "Cheque" && !disbRef.trim())}
-              onClick={confirmDisbursement}
-            >
-              {disbLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Confirm Disbursement
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </DialogField>
+        <DialogField label={disbMethod === "Cheque" ? "Cheque number" : "Reference number"} htmlFor="disb-ref" hint={disbMethod === "Cheque" ? "Required for cheques." : "Optional."}>
+          <Input id="disb-ref" placeholder={disbMethod === "Cheque" ? "e.g. CHK-2026-001" : "e.g. REF-001"} value={disbRef} onChange={(e) => setDisbRef(e.target.value)} />
+        </DialogField>
+        {disbPay && receiptNos[disbPay.id] && (
+          <div className="space-y-2 rounded-lg border bg-muted/40 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs text-muted-foreground">Receipt No.</p>
+                <p className="font-mono text-sm font-semibold">{receiptNos[disbPay.id]}</p>
+              </div>
+              <Button type="button" size="sm" variant="outline" onClick={() => printSlip(disbPay, disbMethod, disbRef.trim() || null)}>
+                <Printer className="mr-1 h-3.5 w-3.5" /> Print slip
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Print the acknowledgment slip, have the student sign both copies and give them the student copy. They enter this number in the portal to confirm they received the money.</p>
+          </div>
+        )}
+        <DialogField label="Signed receipt or voucher" hint="Upload the signed acknowledgment slip (office copy) or the disbursement voucher. PDF, JPG or PNG.">
+          <label className={`flex cursor-pointer items-center gap-3 rounded-lg border border-dashed p-3 transition-colors hover:bg-muted/30 ${disbReceipt ? "border-primary/40 bg-primary/5" : ""}`}>
+            <Upload className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className={`min-w-0 truncate text-sm ${disbReceipt ? "font-medium text-foreground" : "text-muted-foreground"}`}>
+              {disbReceipt ? disbReceipt.name : "Choose a file"}
+            </span>
+            {disbReceipt && <span className="ml-auto shrink-0 text-xs text-primary">Change</span>}
+            <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={(e) => setDisbReceipt(e.target.files?.[0] ?? null)} />
+          </label>
+        </DialogField>
+      </AppDialog>
 
-      <Dialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>Student Details</DialogTitle></DialogHeader>
+      <AppDialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)} size="lg"
+        title="Student Details"
+        description={viewStudent ? `${`${viewStudent.first_name || ""} ${viewStudent.last_name || ""}`.trim() || viewStudent.email}${viewStudent.student_id_number ? ` · ${viewStudent.student_id_number}` : ""}` : undefined}
+        footer={viewStudent && <>
+          {can.manage && (
+            <Button variant={viewStudent.is_active ? "outline" : "default"} className={`sm:mr-auto ${viewStudent.is_active ? "text-destructive" : ""}`} onClick={() => toggleStudentActive(viewStudent)}>
+              <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => setViewStudent(null)}>Close</Button>
+        </>}>
           {viewStudent && (() => {
             const stuApps = applications.filter((a) => a.user_id === viewStudent.id);
-            const field = (label: string, value: React.ReactNode) => (
-              <div><Label className="text-muted-foreground text-xs">{label}</Label><div className="font-medium">{value || "—"}</div></div>
-            );
+            const field = (label: string, value: React.ReactNode) => <Detail label={label}>{value || "—"}</Detail>;
             return (
               <div className="space-y-5">
-                <div className="grid grid-cols-2 gap-3">
+                <DetailGrid>
                   {field("Name", `${viewStudent.first_name || ""} ${viewStudent.middle_name || ""} ${viewStudent.last_name || ""}`.replace(/\s+/g, " ").trim())}
                   {field("Student ID", <span className="font-mono">{viewStudent.student_id_number || "—"}</span>)}
                   {field("Email", viewStudent.email)}
@@ -3036,11 +2941,11 @@ export default function AdminDashboardPage() {
                       <Badge variant={viewStudent.grade_verified_at ? "default" : "secondary"}>{viewStudent.grade_verified_at ? `Verified${viewStudent.grade_term ? ` · ${viewStudent.grade_term}` : ""}` : "Self-declared"}</Badge>
                     </span>) : null)}
                   {field("Account", <Badge variant={viewStudent.is_active ? "default" : "secondary"}>{viewStudent.is_active ? "Active" : "Inactive"}</Badge>)}
-                </div>
+                </DetailGrid>
                 <div>
-                  <Label className="text-xs">Applications ({stuApps.length})</Label>
+                  <h3 className="mb-1.5 text-sm font-semibold">Applications ({stuApps.length})</h3>
                   {stuApps.length === 0 ? <p className="text-sm text-muted-foreground">No applications</p> : (
-                    <ul className="mt-1 space-y-1">
+                    <ul className="space-y-1.5">
                       {stuApps.map((a) => (
                         <li key={a.id} className="flex items-center justify-between rounded-md border px-3 py-1.5 text-sm">
                           <span>{a.scholarships?.name || "—"} <span className="text-xs text-muted-foreground">· {new Date(a.created_at).toLocaleDateString()}</span></span>
@@ -3054,14 +2959,14 @@ export default function AdminDashboardPage() {
                   const pays = studentPayments(viewStudent.id);
                   return (
                     <div>
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs">Payments ({pays.length}){pays.length > 0 && <span className="font-normal text-muted-foreground"> · {formatPHP(disbursedTotal(viewStudent.id))} disbursed</span>}</Label>
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <h3 className="text-sm font-semibold">Payments ({pays.length}){pays.length > 0 && <span className="font-normal text-muted-foreground"> · {formatPHP(disbursedTotal(viewStudent.id))} disbursed</span>}</h3>
                         {can.finance && <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { const v = viewStudent; setViewStudent(null); openEditDisb(v); }}>
                           <Pencil className="mr-1 h-3.5 w-3.5" /> Edit disbursement
                         </Button>}
                       </div>
                       {pays.length === 0 ? <p className="text-sm text-muted-foreground">No payments yet</p> : (
-                        <ul className="mt-1 space-y-1">
+                        <ul className="space-y-1.5">
                           {pays.map((pm) => (
                             <li key={pm.id} className="rounded-md border px-3 py-1.5 text-sm">
                               <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -3093,8 +2998,8 @@ export default function AdminDashboardPage() {
                   if (grades.length === 0) return null;
                   return (
                     <div>
-                      <Label className="text-xs">Grade submissions</Label>
-                      <ul className="mt-1 space-y-1.5">
+                      <h3 className="mb-1.5 text-sm font-semibold">Grade submissions</h3>
+                      <ul className="space-y-1.5">
                         {grades.map((g) => (
                           <li key={g.id} className="rounded-md border px-3 py-2 text-sm">
                             <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -3120,8 +3025,8 @@ export default function AdminDashboardPage() {
                   if (reqs.length === 0) return null;
                   return (
                     <div>
-                      <Label className="text-xs">Privacy requests</Label>
-                      <ul className="mt-1 space-y-1.5">
+                      <h3 className="mb-1.5 text-sm font-semibold">Privacy requests</h3>
+                      <ul className="space-y-1.5">
                         {reqs.map((r) => (
                           <li key={r.id} className={`rounded-md border px-3 py-2 text-sm ${r.status === "Pending" ? "border-warning/40 bg-warning/5" : ""}`}>
                             <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -3146,208 +3051,134 @@ export default function AdminDashboardPage() {
                   );
                 })()}
                 <div>
-                  <Label className="text-xs">Documents</Label>
+                  <h3 className="mb-1.5 text-sm font-semibold">Documents</h3>
                   {docList(studentDocs, studentDocsLoading)}
                 </div>
-                {can.manage && <DialogFooter>
-                  <Button variant={viewStudent.is_active ? "destructive" : "default"} onClick={() => toggleStudentActive(viewStudent)}>
-                    <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
-                  </Button>
-                </DialogFooter>}
               </div>
             );
           })()}
-        </DialogContent>
-      </Dialog>
-      <Dialog open={!!disapproveGrade} onOpenChange={(o) => { if (!o) setDisapproveGrade(null); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Disapprove the grade submission</DialogTitle></DialogHeader>
-          <div>
-            <Label className="text-xs">Reason (shown to the student, who will be asked to resubmit)</Label>
-            <Textarea value={gradeNote} onChange={(e) => setGradeNote(e.target.value)} placeholder="e.g. The grade report is unreadable or doesn't show the average." />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDisapproveGrade(null)}>Cancel</Button>
-            <Button variant="destructive" disabled={payBusy || !gradeNote.trim()} onClick={async () => {
-              if (disapproveGrade && await reviewGrade(disapproveGrade, "Disapproved", gradeNote)) setDisapproveGrade(null);
-            }}>Disapprove grade</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </AppDialog>
+      <ReasonDialog open={!!disapproveGrade} onClose={() => setDisapproveGrade(null)}
+        title="Disapprove grade submission"
+        description="The student is notified and asked to submit their grade again."
+        hint="Shown to the student."
+        placeholder="e.g. The grade report is unreadable or doesn't show the average."
+        value={gradeNote} onChange={setGradeNote} busy={payBusy}
+        confirmLabel="Disapprove grade"
+        onConfirm={async () => { if (disapproveGrade && await reviewGrade(disapproveGrade, "Disapproved", gradeNote)) setDisapproveGrade(null); }} />
 
-      <Dialog open={!!handleReq} onOpenChange={(o) => { if (!o) setHandleReq(null); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{handleReq?.status === "Completed" ? "Complete deletion request" : "Decline deletion request"}</DialogTitle></DialogHeader>
-          <div>
-            <Label className="text-xs">Message to the student</Label>
-            <Textarea value={reqResponse} onChange={(e) => setReqResponse(e.target.value)} placeholder={handleReq?.status === "Declined" ? "Explain why, e.g. payment records must be kept for audit." : ""} />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setHandleReq(null)}>Cancel</Button>
-            <Button variant={handleReq?.status === "Declined" ? "outline" : "destructive"} disabled={payBusy || !reqResponse.trim()} onClick={respondToRequest}>
-              {handleReq?.status === "Completed" ? "Mark completed" : "Decline request"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ReasonDialog open={!!handleReq} onClose={() => setHandleReq(null)}
+        title={handleReq?.status === "Completed" ? "Complete deletion request" : "Decline deletion request"}
+        description={handleReq?.status === "Completed" ? "Only mark it completed after the account and its files are deleted." : "The student's account and data are kept."}
+        label="Message to the student"
+        placeholder={handleReq?.status === "Declined" ? "Explain why, e.g. payment records must be kept for audit." : ""}
+        value={reqResponse} onChange={setReqResponse} busy={payBusy}
+        confirmLabel={handleReq?.status === "Completed" ? "Mark completed" : "Decline request"}
+        confirmVariant={handleReq?.status === "Declined" ? "default" : "destructive"}
+        onConfirm={respondToRequest} />
 
-      <Dialog open={!!disapproveReceipt} onOpenChange={(o) => { if (!o) setDisapproveReceipt(null); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Disapprove the student&apos;s receipt</DialogTitle></DialogHeader>
-          <div>
-            <Label className="text-xs">Reason (shown to the student, who will be asked to resubmit)</Label>
-            <Textarea value={receiptNote} onChange={(e) => setReceiptNote(e.target.value)} placeholder="e.g. The signature is missing — please upload the signed voucher." />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDisapproveReceipt(null)}>Cancel</Button>
-            <Button variant="destructive" disabled={payBusy || !receiptNote.trim()} onClick={async () => {
-              if (disapproveReceipt && await reviewReceipt(disapproveReceipt, "Disapproved", receiptNote)) setDisapproveReceipt(null);
-            }}>Disapprove receipt</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ReasonDialog open={!!disapproveReceipt} onClose={() => setDisapproveReceipt(null)}
+        title="Disapprove student's receipt"
+        description="The student is notified and asked to submit their receipt again."
+        hint="Shown to the student."
+        placeholder="e.g. The signature is missing. Please upload the signed voucher."
+        value={receiptNote} onChange={setReceiptNote} busy={payBusy}
+        confirmLabel="Disapprove receipt"
+        onConfirm={async () => { if (disapproveReceipt && await reviewReceipt(disapproveReceipt, "Disapproved", receiptNote)) setDisapproveReceipt(null); }} />
 
-      <Dialog open={!!issueDialog} onOpenChange={(o) => { if (!o) setIssueDialog(null); }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Payment problem reports</DialogTitle></DialogHeader>
-          {issueDialog && (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">{payStudent(issueDialog)} · {formatPHP(issueDialog.amount)} · {issueDialog.status}</p>
-              {payIssues.filter((i) => i.payment_id === issueDialog.id).map((i) => (
-                <div key={i.id} className={`rounded-md border p-3 text-sm ${i.status === "Open" ? "border-warning/40 bg-warning/5" : ""}`}>
-                  <p className="font-medium">{{ not_received: "Not received", wrong_amount: "Wrong amount", other: "Other" }[i.kind] ?? i.kind} · {i.status}</p>
-                  <p className="mt-1 whitespace-pre-wrap">{i.message}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Reported {new Date(i.created_at).toLocaleString()}</p>
-                  {i.response && <p className="mt-2 whitespace-pre-wrap border-t pt-2"><span className="font-medium">Response: </span>{i.response}</p>}
-                  {i.status === "Open" && (
-                    <div className="mt-3 space-y-2">
-                      <Label className="text-xs">Response to the student</Label>
-                      <Textarea value={issueResponse} onChange={(e) => setIssueResponse(e.target.value)} placeholder="Explain what you found or what happens next." />
-                      <Button size="sm" disabled={payBusy || !issueResponse.trim()} onClick={() => resolveIssue(i)}>Send response &amp; resolve</Button>
-                    </div>
-                  )}
-                </div>
-              ))}
+      <AppDialog open={!!issueDialog} onOpenChange={(o) => { if (!o) setIssueDialog(null); }} size="md"
+        title="Payment problem reports"
+        description={issueDialog ? `${payStudent(issueDialog)} · ${formatPHP(issueDialog.amount)} · ${issueDialog.status}` : undefined}
+        footer={<Button variant="outline" onClick={() => setIssueDialog(null)}>Close</Button>}>
+        {issueDialog && payIssues.filter((i) => i.payment_id === issueDialog.id).map((i) => (
+          <div key={i.id} className={`rounded-lg border p-4 text-sm ${i.status === "Open" ? "border-warning/40 bg-warning/5" : ""}`}>
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-medium">{{ not_received: "Not received", wrong_amount: "Wrong amount", other: "Other" }[i.kind] ?? i.kind}</p>
+              <Badge variant={i.status === "Open" ? "default" : "secondary"}>{i.status}</Badge>
             </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!disapproveApp} onOpenChange={(o) => { if (!o) setDisapproveApp(null); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Disapprove application</DialogTitle></DialogHeader>
-          <div>
-            <Label className="text-xs">Reason (shown to the student)</Label>
-            <Textarea rows={3} value={disapproveAppNote} onChange={(e) => setDisapproveAppNote(e.target.value)} placeholder="e.g. Your average grade is below the program's minimum." />
+            <p className="mt-1 whitespace-pre-wrap">{i.message}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Reported {new Date(i.created_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })}</p>
+            {i.response && <p className="mt-3 whitespace-pre-wrap border-t pt-3"><span className="font-medium">Response: </span>{i.response}</p>}
+            {i.status === "Open" && (
+              <div className="mt-4 space-y-2 border-t pt-4">
+                <DialogField label="Response to the student" htmlFor={`issue-${i.id}`}>
+                  <Textarea id={`issue-${i.id}`} rows={3} value={issueResponse} onChange={(e) => setIssueResponse(e.target.value)} placeholder="Explain what you found or what happens next." />
+                </DialogField>
+                <div className="flex justify-end">
+                  <Button size="sm" disabled={payBusy || !issueResponse.trim()} onClick={() => resolveIssue(i)}>Send response &amp; resolve</Button>
+                </div>
+              </div>
+            )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDisapproveApp(null)}>Cancel</Button>
-            <Button variant="destructive" disabled={disapprovingApp || !disapproveAppNote.trim()} onClick={async () => {
-              if (!disapproveApp) return;
-              setDisapprovingApp(true);
-              const ok = await decideApplication(disapproveApp, "Disapproved", disapproveAppNote);
-              setDisapprovingApp(false);
-              if (ok) { toast.error("Application disapproved"); setDisapproveApp(null); loadData(true); }
-            }}>Disapprove application</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        ))}
+      </AppDialog>
 
-      <Dialog open={!!revokeApp} onOpenChange={(o) => { if (!o) setRevokeApp(null); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Revoke approval</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            {personName(revokeApp?.profiles)}&apos;s application for {revokeApp?.scholarships?.name || "this program"} goes back to Pending, and its slot and award are released.
-          </p>
-          <div>
-            <Label className="text-xs">Reason (shown to the student)</Label>
-            <Textarea rows={3} value={revokeNote} onChange={(e) => setRevokeNote(e.target.value)} placeholder="e.g. Approved by mistake: your residency could not be confirmed." />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRevokeApp(null)}>Cancel</Button>
-            <Button variant="destructive" disabled={revokingApp || !revokeNote.trim()} onClick={async () => {
-              if (!revokeApp) return;
-              setRevokingApp(true);
-              const ok = await decideApplication(revokeApp, "Pending", revokeNote);
-              setRevokingApp(false);
-              if (ok) { toast.success("Approval revoked — the student was notified"); setRevokeApp(null); loadData(true); }
-            }}>Revoke approval</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ReasonDialog open={!!disapproveApp} onClose={() => setDisapproveApp(null)}
+        title="Disapprove application"
+        description={disapproveApp ? `${personName(disapproveApp.profiles)} · ${disapproveApp.scholarships?.name || "—"}` : undefined}
+        hint="Shown to the student."
+        placeholder="e.g. Your average grade is below the program's minimum."
+        value={disapproveAppNote} onChange={setDisapproveAppNote} busy={disapprovingApp}
+        confirmLabel="Disapprove application"
+        onConfirm={async () => {
+          if (!disapproveApp) return;
+          setDisapprovingApp(true);
+          const ok = await decideApplication(disapproveApp, "Disapproved", disapproveAppNote);
+          setDisapprovingApp(false);
+          if (ok) { toast.error("Application disapproved"); setDisapproveApp(null); loadData(true); }
+        }} />
 
-      <Dialog open={!!reminderFor} onOpenChange={(o) => { if (!o) setReminderFor(null); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              Send reminder{reminderFor && reminderFor.length > 1 ? ` to ${reminderFor.length} students` : reminderFor?.[0] ? ` to ${personName(profiles.find((p) => p.id === reminderFor[0]))}` : ""}
-            </DialogTitle>
-          </DialogHeader>
-          <div>
-            <Label className="text-xs">Message</Label>
-            <Textarea rows={4} maxLength={1000} value={reminderText} onChange={(e) => setReminderText(e.target.value)} />
-            <p className="mt-1 text-xs text-muted-foreground">Sent as a notification that links to their Documents page. Each student gets at most one reminder a day.</p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setReminderFor(null)}>Cancel</Button>
-            <Button disabled={messaging || !reminderText.trim()} onClick={sendReminders}>
-              {messaging && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} Send
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ReasonDialog open={!!revokeApp} onClose={() => setRevokeApp(null)}
+        title="Revoke approval"
+        description={`${personName(revokeApp?.profiles)}'s application for ${revokeApp?.scholarships?.name || "this program"} goes back to Pending, and its slot and award are released.`}
+        hint="Shown to the student."
+        placeholder="e.g. Approved by mistake: your residency could not be confirmed."
+        value={revokeNote} onChange={setRevokeNote} busy={revokingApp}
+        confirmLabel="Revoke approval"
+        onConfirm={async () => {
+          if (!revokeApp) return;
+          setRevokingApp(true);
+          const ok = await decideApplication(revokeApp, "Pending", revokeNote);
+          setRevokingApp(false);
+          if (ok) { toast.success("Approval revoked — the student was notified"); setRevokeApp(null); loadData(true); }
+        }} />
 
-      <Dialog open={!!changesFor} onOpenChange={(o) => { if (!o) setChangesFor(null); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Request changes</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            {personName(changesFor?.profiles)} is asked to fix something on their {changesFor?.scholarships?.name || ""} application. Its status doesn&apos;t change.
-          </p>
-          <div>
-            <Label className="text-xs">What the student needs to do</Label>
-            <Textarea rows={3} maxLength={1000} value={changesText} onChange={(e) => setChangesText(e.target.value)} placeholder="e.g. Your Certificate of Enrollment is blurry. Please upload a clearer copy." />
-            <p className="mt-1 text-xs text-muted-foreground">To have a document re-uploaded, also mark it Disapproved so the student can replace it.</p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setChangesFor(null)}>Cancel</Button>
-            <Button disabled={messaging || !changesText.trim()} onClick={sendChangeRequest}>
-              {messaging && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} Send request
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ReasonDialog open={!!reminderFor} onClose={() => setReminderFor(null)}
+        title={`Send reminder${reminderFor && reminderFor.length > 1 ? ` to ${reminderFor.length} students` : reminderFor?.[0] ? ` to ${personName(profiles.find((p) => p.id === reminderFor[0]))}` : ""}`}
+        description="Sent as a notification that links to their Documents page. Each student gets at most one reminder a day."
+        label="Message" rows={4} maxLength={1000}
+        value={reminderText} onChange={setReminderText} busy={messaging}
+        confirmLabel="Send reminder" confirmVariant="default"
+        onConfirm={sendReminders} />
 
-      <Dialog open={bulkDisapprove} onOpenChange={(o) => { if (!o) setBulkDisapprove(false); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Disapprove {selectedApps.size} application{selectedApps.size === 1 ? "" : "s"}</DialogTitle></DialogHeader>
-          <div>
-            <Label className="text-xs">Reason (sent to every selected student)</Label>
-            <Textarea rows={3} value={bulkNote} onChange={(e) => setBulkNote(e.target.value)} placeholder="e.g. All slots for this program have been filled." />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBulkDisapprove(false)}>Cancel</Button>
-            <Button variant="destructive" disabled={bulkBusy || !bulkNote.trim()} onClick={async () => {
-              if (await bulkDecide("Disapproved", bulkNote)) setBulkDisapprove(false);
-            }}>Disapprove</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ReasonDialog open={!!changesFor} onClose={() => setChangesFor(null)}
+        title="Request changes"
+        description={`${personName(changesFor?.profiles)} is asked to fix something on their ${changesFor?.scholarships?.name || ""} application. Its status doesn't change.`}
+        label="What the student needs to do"
+        hint="To have a document re-uploaded, also mark it Disapproved so the student can replace it."
+        placeholder="e.g. Your Certificate of Enrollment is blurry. Please upload a clearer copy."
+        maxLength={1000}
+        value={changesText} onChange={setChangesText} busy={messaging}
+        confirmLabel="Send request" confirmVariant="default"
+        onConfirm={sendChangeRequest} />
 
-      <Dialog open={!!disapproveDoc} onOpenChange={(o) => { if (!o) setDisapproveDoc(null); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Disapprove {disapproveDoc?.type}</DialogTitle></DialogHeader>
-          <div>
-            <Label className="text-xs">Reason (shown to the student)</Label>
-            <Textarea value={disapproveNote} onChange={(e) => setDisapproveNote(e.target.value)} placeholder="e.g. The photo is blurry — please upload a clear copy." />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDisapproveDoc(null)}>Cancel</Button>
-            <Button variant="destructive" disabled={reviewingDoc || !disapproveNote.trim()} onClick={async () => {
-              if (disapproveDoc && await reviewDocument(disapproveDoc, "Disapproved", disapproveNote)) setDisapproveDoc(null);
-            }}>Disapprove document</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ReasonDialog open={bulkDisapprove} onClose={() => setBulkDisapprove(false)}
+        title={`Disapprove ${selectedApps.size} application${selectedApps.size === 1 ? "" : "s"}`}
+        description="Every selected student is notified."
+        hint="Sent to every selected student."
+        placeholder="e.g. All slots for this program have been filled."
+        value={bulkNote} onChange={setBulkNote} busy={bulkBusy}
+        confirmLabel="Disapprove"
+        onConfirm={async () => { if (await bulkDecide("Disapproved", bulkNote)) setBulkDisapprove(false); }} />
+
+      <ReasonDialog open={!!disapproveDoc} onClose={() => setDisapproveDoc(null)}
+        title={`Disapprove ${disapproveDoc?.type ?? "document"}`}
+        description="The student is notified and can upload a replacement."
+        hint="Shown to the student."
+        placeholder="e.g. The photo is blurry. Please upload a clear copy."
+        value={disapproveNote} onChange={setDisapproveNote} busy={reviewingDoc}
+        confirmLabel="Disapprove document"
+        onConfirm={async () => { if (disapproveDoc && await reviewDocument(disapproveDoc, "Disapproved", disapproveNote)) setDisapproveDoc(null); }} />
     </div>
   );
 }

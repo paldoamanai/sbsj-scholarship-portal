@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AppDialog } from "@/components/AppDialog";
 import { ChartCard, RankedBars } from "@/components/admin/OverviewPanel";
 import { createClient } from "@/lib/supabase/client";
 import { SEMESTERS, type AppSettings } from "@/lib/settings";
@@ -396,16 +396,21 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
         })}
       </div>
 
-      <Dialog open={!!viewReport} onOpenChange={(o) => { if (!o) setViewReport(null); }}>
-        <DialogContent className="max-w-5xl">
-          {viewReport && (() => {
-            const def = defs[viewReport];
-            return (<>
-              <DialogHeader>
-                <DialogTitle>{def.title}</DialogTitle>
-                <p className="text-xs text-muted-foreground">{def.filters.join(" · ")} · {def.count.toLocaleString()} {def.countLabel}</p>
-                {def.notes?.map((n) => <p key={n} className="text-xs text-muted-foreground">{n}</p>)}
-              </DialogHeader>
+      {(() => {
+        const def = viewReport ? defs[viewReport] : null;
+        return (
+          <AppDialog open={!!viewReport} onOpenChange={(o) => { if (!o) setViewReport(null); }} size="2xl"
+            title={def?.title}
+            description={def && <>
+              <span className="block">{def.filters.join(" · ")} · {def.count.toLocaleString()} {def.countLabel}</span>
+              {def.notes?.map((n) => <span key={n} className="mt-1 block text-xs">{n}</span>)}
+            </>}
+            footer={viewReport && <>
+              <Button variant="outline" className="sm:mr-auto" onClick={() => setViewReport(null)}>Close</Button>
+              <Button variant="outline" disabled={!!exporting} onClick={() => exportPDF(viewReport)}><FileDown className="mr-1 h-4 w-4" /> Export PDF</Button>
+              <Button variant="outline" disabled={!!exporting} onClick={() => exportExcel(viewReport)}><FileDown className="mr-1 h-4 w-4" /> Export Excel</Button>
+            </>}>
+            {def && (
               <div className="space-y-6">
                 {def.sections.map((sec) => {
                   const total = totalsRow(sec);
@@ -439,14 +444,10 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
                   );
                 })}
               </div>
-              <DialogFooter>
-                <Button variant="outline" disabled={!!exporting} onClick={() => exportPDF(viewReport)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
-                <Button variant="outline" disabled={!!exporting} onClick={() => exportExcel(viewReport)}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
-              </DialogFooter>
-            </>);
-          })()}
-        </DialogContent>
-      </Dialog>
+            )}
+          </AppDialog>
+        );
+      })()}
     </div>
   );
 }

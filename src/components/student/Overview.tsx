@@ -6,7 +6,7 @@ import {
   GraduationCap, Info, Lock, Upload, User, Users, XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AppDialog, Detail, DetailGrid, DialogNote, DialogSection } from "@/components/AppDialog";
 import ProfileImage from "@/components/ProfileImage";
 import { Panel, SectionTitle, StatCard, StatusBadge } from "@/components/student/ui";
 import ApplicationHistory from "@/components/student/ApplicationHistory";
@@ -389,38 +389,35 @@ export default function Overview(p: OverviewProps) {
       </div>
 
       {/* Program details */}
-      <Dialog open={!!program} onOpenChange={(o) => { if (!o) setProgram(null); }}>
-        <DialogContent className="rounded-2xl">
-          {program && (
-            <>
-              <DialogHeader><DialogTitle className="font-display">{program.name}</DialogTitle></DialogHeader>
-              {program.description && <p className="text-sm text-muted-foreground leading-relaxed">{program.description}</p>}
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><p className="text-xs text-muted-foreground mb-0.5">Award</p><p className="font-semibold">{Number(program.amount) > 0 ? awardText(program.amount, program.release_schedule) : "To be announced"}</p></div>
-                <div><p className="text-xs text-muted-foreground mb-0.5">Slots</p><p className="font-semibold">{slotsLabel(program)}</p></div>
-                <div><p className="text-xs text-muted-foreground mb-0.5">Opens</p><p className="font-semibold">{program.open_date ? short(program.open_date) : "Now"}</p></div>
-                <div><p className="text-xs text-muted-foreground mb-0.5">Deadline</p><p className="font-semibold">{program.deadline ? short(program.deadline) : "No closing date"}</p></div>
-              </div>
-              {(programGrade.length > 0 || program.eligibility) && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Eligibility</p>
-                  <ul className="list-disc pl-5 text-sm text-muted-foreground space-y-0.5">
-                    {programGrade.map((l) => <li key={l}>{l}</li>)}
-                    {program.eligibility && <li>{program.eligibility}</li>}
-                  </ul>
-                </div>
-              )}
-              {programBlock && <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{programBlock}</p>}
-              <DialogFooter>
-                <Button variant="outline" className="rounded-xl" onClick={() => setProgram(null)}>Close</Button>
-                <Button className="bg-primary hover:bg-primary text-white rounded-xl" disabled={!!programBlock} onClick={() => { const id = program.id; setProgram(null); p.onApply(id); }}>
-                  Apply for this program
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+      <AppDialog open={!!program} onOpenChange={(o) => { if (!o) setProgram(null); }} size="lg" className="rounded-2xl"
+        title={program?.name}
+        description={program?.description && <p className="leading-relaxed">{program.description}</p>}
+        footer={program && <>
+          <Button variant="outline" className="rounded-xl" onClick={() => setProgram(null)}>Close</Button>
+          <Button className="rounded-xl" disabled={!!programBlock} onClick={() => { const id = program.id; setProgram(null); p.onApply(id); }}>
+            Apply for this program
+          </Button>
+        </>}>
+        {program && (
+          <>
+            <DetailGrid className="rounded-xl">
+              <Detail label="Award">{Number(program.amount) > 0 ? awardText(program.amount, program.release_schedule) : "To be announced"}</Detail>
+              <Detail label="Slots">{slotsLabel(program)}</Detail>
+              <Detail label="Opens">{program.open_date ? short(program.open_date) : "Now"}</Detail>
+              <Detail label="Deadline">{program.deadline ? short(program.deadline) : "No closing date"}</Detail>
+            </DetailGrid>
+            {(programGrade.length > 0 || program.eligibility) && (
+              <DialogSection title="Eligibility">
+                <ul className="list-disc pl-5 text-sm text-muted-foreground space-y-0.5">
+                  {programGrade.map((l) => <li key={l}>{l}</li>)}
+                  {program.eligibility && <li>{program.eligibility}</li>}
+                </ul>
+              </DialogSection>
+            )}
+            {programBlock && <DialogNote tone="warning" icon={<AlertTriangle className="h-3.5 w-3.5" />}><span className="text-sm">{programBlock}</span></DialogNote>}
+          </>
+        )}
+      </AppDialog>
     </div>
   );
 }

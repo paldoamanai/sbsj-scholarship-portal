@@ -7,14 +7,10 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { AppDialog, Detail, DetailGrid, DialogField, DialogSection } from "@/components/AppDialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import {
   LayoutDashboard, FileText, Upload, GraduationCap, Banknote, Receipt,
@@ -407,33 +403,29 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
         </div>
       </Panel>
 
-      <Dialog open={!!issueFor} onOpenChange={(o) => { if (!o) setIssueFor(null); }}>
-        <DialogContent className="rounded-2xl">
-          <DialogHeader><DialogTitle className="font-display">Report a problem</DialogTitle></DialogHeader>
-          {issueFor && <p className="text-sm text-muted-foreground">Payment of {pesoFixed(issueFor.amount)} · {issueFor.status}</p>}
-          <div>
-            <Label className="text-sm font-medium mb-1.5 block">What&apos;s wrong?</Label>
-            <Select value={issueKind} onValueChange={setIssueKind}>
-              <SelectTrigger className="rounded-xl border-border"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {Object.entries(ISSUE_KINDS).map(([k, label]) => <SelectItem key={k} value={k}>{label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-sm font-medium mb-1.5 block">Tell us what happened</Label>
-            <Textarea rows={4} value={issueText} maxLength={1000} className="rounded-xl" onChange={(e) => setIssueText(e.target.value)}
-              placeholder="For example: I went to the office on the scheduled date but was told there was no payment for me." />
-            <p className={`text-xs mt-1 ${issueText.trim().length < 10 ? "text-amber-700" : "text-muted-foreground"}`}>{issueText.trim().length} / 1000 (minimum 10)</p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" className="rounded-xl" onClick={() => setIssueFor(null)}>Cancel</Button>
-            <Button className="bg-primary hover:bg-primary text-white rounded-xl" disabled={sending || issueText.trim().length < 10} onClick={sendIssue}>
-              {sending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Send report
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AppDialog open={!!issueFor} onOpenChange={(o) => { if (!o) setIssueFor(null); }} className="rounded-2xl"
+        title="Report a problem"
+        description={issueFor && <>Payment of {pesoFixed(issueFor.amount)} · {issueFor.status}</>}
+        footer={<>
+          <Button variant="outline" className="rounded-xl" disabled={sending} onClick={() => setIssueFor(null)}>Cancel</Button>
+          <Button className="rounded-xl" disabled={sending || issueText.trim().length < 10} onClick={sendIssue}>
+            {sending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Send report
+          </Button>
+        </>}>
+        <DialogField label="What&apos;s wrong?" htmlFor="issue-kind">
+          <Select value={issueKind} onValueChange={setIssueKind}>
+            <SelectTrigger id="issue-kind" className="rounded-xl border-border"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {Object.entries(ISSUE_KINDS).map(([k, label]) => <SelectItem key={k} value={k}>{label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </DialogField>
+        <DialogField label="Tell us what happened" htmlFor="issue-text"
+          hint={<span className={issueText.trim().length < 10 ? "text-amber-700" : undefined}>{issueText.trim().length} / 1000 (minimum 10)</span>}>
+          <Textarea id="issue-text" rows={4} value={issueText} maxLength={1000} className="rounded-xl" onChange={(e) => setIssueText(e.target.value)}
+            placeholder="For example: I went to the office on the scheduled date but was told there was no payment for me." />
+        </DialogField>
+      </AppDialog>
     </div>
   );
 }
@@ -1195,135 +1187,125 @@ export default function StudentDashboardPage() {
       </Panel>
 
       {/* View */}
-      <Dialog open={viewOpen && !!selectedApp} onOpenChange={setViewOpen}>
-        <DialogContent className="rounded-2xl">
-          <DialogHeader><DialogTitle className="font-display">Application details</DialogTitle></DialogHeader>
-          {selectedApp && (
-            <>
-              <DisapprovalReason app={selectedApp} onContact={() => { setViewOpen(false); setActive("help"); }} />
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div><p className="text-xs text-muted-foreground mb-1">Program</p><p className="font-semibold">{selectedApp.scholarships?.name || "—"}</p></div>
-                <div><p className="text-xs text-muted-foreground mb-1">Status</p><StatusBadge status={selectedApp.status} /></div>
-                <div><p className="text-xs text-muted-foreground mb-1">Submitted</p><p className="font-semibold">{new Date(selectedApp.created_at).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}</p></div>
-                <div><p className="text-xs text-muted-foreground mb-1">Type</p><p className="font-semibold">{selectedApp.is_renewal ? "Renewal" : "New application"}</p></div>
-                <div><p className="text-xs text-muted-foreground mb-1">School</p><p className="font-semibold">{selectedApp.school_name || "—"}</p></div>
-                <div><p className="text-xs text-muted-foreground mb-1">Course · Year</p><p className="font-semibold">{[selectedApp.course, selectedApp.year_level].filter(Boolean).join(" · ") || "—"}</p></div>
-                <div><p className="text-xs text-muted-foreground mb-1">Average grade</p><p className="font-semibold">{selectedApp.average_grade ?? "—"}</p></div>
-                <div><p className="text-xs text-muted-foreground mb-1">Amount approved</p><p className="font-semibold">{peso(selectedApp.amount_approved)}</p></div>
-              </div>
-              {selectedApp.notes && selectedApp.status !== "Disapproved" && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Remarks from the scholarship office</p>
-                  <p className="text-sm whitespace-pre-wrap rounded-xl bg-muted/50 px-3 py-2">{selectedApp.notes}</p>
-                </div>
-              )}
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Documents</p>
-                {docsFor(selectedApp).length === 0 ? <p className="text-sm text-muted-foreground">None on file.</p> : (
-                  <ul className="space-y-1">
-                    {docsFor(selectedApp).map((d) => (
-                      <li key={d.id}>
-                        <button type="button" onClick={() => openDocument(d)}
-                          className="w-full flex items-center justify-between rounded-lg border px-3 py-1.5 text-sm hover:bg-muted text-left cursor-pointer">
-                          <span className="truncate"><span className="font-medium">{d.document_type}</span> · {d.file_name}</span>
-                          <span className="flex items-center gap-2 shrink-0"><DocStatusBadge status={d.status} /><Eye className="h-3.5 w-3.5 text-muted-foreground" /></span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              {selectedApp.status === "Approved" && (
-                <Button variant="outline" className="rounded-xl border-emerald-200 text-emerald-700 hover:bg-emerald-50 w-full" onClick={() => openAwardNotice(selectedApp)}>
-                  <Printer className="mr-2 h-4 w-4" /> Print award notice
-                </Button>
-              )}
-              {selectedApp.certified_at && (
-                <p className="text-xs text-muted-foreground">Certified true and correct on {new Date(selectedApp.certified_at).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}.</p>
-              )}
-            </>
+      <AppDialog open={viewOpen && !!selectedApp} onOpenChange={setViewOpen} size="lg" className="rounded-2xl"
+        title={selectedApp?.scholarships?.name || "Application details"}
+        description={selectedApp && (
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge status={selectedApp.status} />
+            <span>{selectedApp.is_renewal ? "Renewal" : "New application"} · submitted {new Date(selectedApp.created_at).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}</span>
+          </div>
+        )}
+        footer={<>
+          <Button variant="outline" className="rounded-xl" onClick={() => setViewOpen(false)}>Close</Button>
+          {selectedApp?.status === "Approved" && (
+            <Button className="rounded-xl" onClick={() => openAwardNotice(selectedApp)}>
+              <Printer className="mr-2 h-4 w-4" /> Print award notice
+            </Button>
           )}
-        </DialogContent>
-      </Dialog>
+        </>}>
+        {selectedApp && (
+          <>
+            <DisapprovalReason app={selectedApp} onContact={() => { setViewOpen(false); setActive("help"); }} />
+            <DetailGrid className="rounded-xl">
+              <Detail label="School">{selectedApp.school_name || "—"}</Detail>
+              <Detail label="Course · Year">{[selectedApp.course, selectedApp.year_level].filter(Boolean).join(" · ") || "—"}</Detail>
+              <Detail label="Average grade">{selectedApp.average_grade ?? "—"}</Detail>
+              <Detail label="Amount approved">{peso(selectedApp.amount_approved)}</Detail>
+            </DetailGrid>
+            {selectedApp.notes && selectedApp.status !== "Disapproved" && (
+              <DialogSection title="Remarks from the scholarship office">
+                <p className="text-sm whitespace-pre-wrap rounded-xl bg-muted/50 px-3 py-2">{selectedApp.notes}</p>
+              </DialogSection>
+            )}
+            <DialogSection title="Documents">
+              {docsFor(selectedApp).length === 0 ? <p className="text-sm text-muted-foreground">None on file.</p> : (
+                <ul className="space-y-1.5">
+                  {docsFor(selectedApp).map((d) => (
+                    <li key={d.id}>
+                      <button type="button" onClick={() => openDocument(d)}
+                        className="w-full flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-sm hover:bg-muted text-left cursor-pointer">
+                        <span className="min-w-0 truncate"><span className="font-medium">{d.document_type}</span> · {d.file_name}</span>
+                        <span className="flex items-center gap-2 shrink-0"><DocStatusBadge status={d.status} /><Eye className="h-3.5 w-3.5 text-muted-foreground" /></span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </DialogSection>
+            {selectedApp.certified_at && (
+              <p className="text-xs text-muted-foreground">Certified true and correct on {new Date(selectedApp.certified_at).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}.</p>
+            )}
+          </>
+        )}
+      </AppDialog>
 
       {/* Withdraw */}
-      <AlertDialog open={withdrawOpen} onOpenChange={setWithdrawOpen}>
-        <AlertDialogContent className="rounded-2xl">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Withdraw this application?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Your application for {selectedApp?.scholarships?.name} will be withdrawn. Your other applications and your uploaded documents are kept, and you can apply to this program again while it is open.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="rounded-xl" disabled={withdrawing}>Keep application</AlertDialogCancel>
-            <AlertDialogAction className="rounded-xl bg-red-600 hover:bg-red-700 text-white" disabled={withdrawing}
-              onClick={(e) => { e.preventDefault(); withdrawApplication(); }}>
-              {withdrawing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Withdraw
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <AppDialog open={withdrawOpen} onOpenChange={(o) => { if (!withdrawing) setWithdrawOpen(o); }} size="sm" className="rounded-2xl"
+        title="Withdraw this application?"
+        footer={<>
+          <Button variant="outline" className="rounded-xl" disabled={withdrawing} onClick={() => setWithdrawOpen(false)}>Keep application</Button>
+          <Button variant="destructive" className="rounded-xl" disabled={withdrawing} onClick={withdrawApplication}>
+            {withdrawing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Withdraw
+          </Button>
+        </>}>
+        <p className="text-sm text-muted-foreground">
+          Your application for <span className="font-semibold text-foreground">{selectedApp?.scholarships?.name}</span> will be withdrawn. Your other applications and your uploaded documents are kept, and you can apply to this program again while it is open.
+        </p>
+      </AppDialog>
 
       {/* Apply */}
-      <Dialog open={applyDialogOpen} onOpenChange={setApplyDialogOpen}>
-        <DialogContent className="rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="font-display">{isRenewing ? "Renew Scholarship" : "Apply for Scholarship"}</DialogTitle>
-          </DialogHeader>
-          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-700" />
-            <span>You can apply to every open program. <strong>Each program decides on its own</strong>: you are approved only if you meet that program&apos;s requirements{minGrade > 0 && <>, including an average grade of at least <strong>{minGrade}</strong></>}.</span>
+      <AppDialog open={applyDialogOpen} onOpenChange={(o) => { if (!applyLoading) setApplyDialogOpen(o); }} size="md" className="rounded-2xl"
+        title={isRenewing ? "Renew Scholarship" : "Apply for Scholarship"}
+        description={<>You can apply to every open program. <strong className="text-foreground">Each program decides on its own</strong>: you are approved only if you meet that program&apos;s requirements{minGrade > 0 && <>, including an average grade of at least <strong className="text-foreground">{minGrade}</strong></>}.</>}
+        footer={<>
+          <Button variant="outline" className="rounded-xl" disabled={applyLoading} onClick={() => setApplyDialogOpen(false)}>Cancel</Button>
+          <Button
+            disabled={!canApplyMore || !applyScholarshipId || appliedProgramIds.has(applyScholarshipId) || applyLoading || applyIssues.length > 0 || missingDocs.length > 0 || !applyCertified}
+            className="rounded-xl"
+            onClick={submitApplication}>
+            {applyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {isRenewing ? "Submit Renewal" : "Submit Application"}
+          </Button>
+        </>}>
+        {isRenewing && (
+          <div className="flex items-start gap-3 bg-accent border border-primary/20 rounded-xl px-4 py-3 text-sm text-foreground">
+            <GraduationCap className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
+            <span>This is a <strong>renewal</strong> (renewal {Math.min(approvedBefore, settings.max_renewals)} of {settings.max_renewals} allowed). You were approved for this program before, so the renewal grade requirement applies{settings.renewal_min_grade > 0 ? <> ({settings.renewal_min_grade})</> : null}.</span>
           </div>
-          {isRenewing && (
-            <div className="flex items-start gap-3 bg-accent border border-primary/20 rounded-xl px-4 py-3 text-sm text-foreground text-left">
-              <GraduationCap className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
-              <span>This is a <strong>renewal</strong> (renewal {Math.min(approvedBefore, settings.max_renewals)} of {settings.max_renewals} allowed). You were approved for this program before, so the renewal grade requirement applies{settings.renewal_min_grade > 0 ? <> ({settings.renewal_min_grade})</> : null}.</span>
-            </div>
-          )}
-          {applyIssues.length > 0 && (
-            <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 space-y-1">
-              {applyIssues.map((m) => <p key={m}>{m}</p>)}
-            </div>
-          )}
-          {missingDocs.length > 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-              <p className="font-semibold mb-1">Upload your required documents first</p>
-              <p className="mb-2">Missing or disapproved: {missingDocs.join(", ")}.</p>
-              <Button size="sm" variant="outline" className="rounded-xl border-amber-300 text-amber-800 hover:bg-amber-100"
-                onClick={() => { setApplyDialogOpen(false); setActive("documents"); }}>
-                <Upload className="mr-1 h-3 w-3" /> Go to Documents
-              </Button>
-            </div>
-          )}
-          <div>
-            <Label className="text-sm font-medium text-foreground mb-1.5 block">Scholarship Program *</Label>
-            <Select value={applyScholarshipId} onValueChange={setApplyScholarshipId}>
-              <SelectTrigger className="rounded-xl border-border"><SelectValue placeholder="Select program" /></SelectTrigger>
-              <SelectContent>
-                {scholarships.filter((s) => (availabilityInfo(s).canApply && !appliedProgramIds.has(s.id)) || s.id === applyScholarshipId).map((s) => (
-                  <SelectItem key={s.id} value={s.id} disabled={!availabilityInfo(s).canApply || appliedProgramIds.has(s.id)}>
-                    {s.name}{Number(s.amount) > 0 ? ` · ${peso(s.amount)}` : ""}{appliedProgramIds.has(s.id) ? " (already applied)" : !availabilityInfo(s).canApply ? ` (${availabilityInfo(s).label})` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        )}
+        {applyIssues.length > 0 && (
+          <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+            <div className="space-y-1">{applyIssues.map((m) => <p key={m}>{m}</p>)}</div>
           </div>
-          <label className="flex items-start gap-3 text-sm text-foreground cursor-pointer">
-            <Checkbox checked={applyCertified} onCheckedChange={(v) => setApplyCertified(v === true)} className="mt-0.5" />
-            <span>I certify that the information and documents I have provided are true and correct.</span>
-          </label>
-          <DialogFooter>
-            <Button
-              disabled={!canApplyMore || !applyScholarshipId || appliedProgramIds.has(applyScholarshipId) || applyLoading || applyIssues.length > 0 || missingDocs.length > 0 || !applyCertified}
-              className="bg-primary hover:bg-primary text-white rounded-xl w-full"
-              onClick={submitApplication}>
-              {applyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {isRenewing ? "Submit Renewal" : "Submit Application"}
+        )}
+        {missingDocs.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+            <p className="font-semibold mb-1">Upload your required documents first</p>
+            <p className="mb-2">Missing or disapproved: {missingDocs.join(", ")}.</p>
+            <Button size="sm" variant="outline" className="rounded-xl border-amber-300 text-amber-800 hover:bg-amber-100"
+              onClick={() => { setApplyDialogOpen(false); setActive("documents"); }}>
+              <Upload className="mr-1 h-3 w-3" /> Go to Documents
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </div>
+        )}
+        <DialogField label="Scholarship Program *" htmlFor="apply-program">
+          <Select value={applyScholarshipId} onValueChange={setApplyScholarshipId}>
+            <SelectTrigger id="apply-program" className="rounded-xl border-border"><SelectValue placeholder="Select program" /></SelectTrigger>
+            <SelectContent>
+              {scholarships.filter((s) => (availabilityInfo(s).canApply && !appliedProgramIds.has(s.id)) || s.id === applyScholarshipId).map((s) => (
+                <SelectItem key={s.id} value={s.id} disabled={!availabilityInfo(s).canApply || appliedProgramIds.has(s.id)}>
+                  {s.name}{Number(s.amount) > 0 ? ` · ${peso(s.amount)}` : ""}{appliedProgramIds.has(s.id) ? " (already applied)" : !availabilityInfo(s).canApply ? ` (${availabilityInfo(s).label})` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </DialogField>
+        <label className="flex items-start gap-3 rounded-xl border bg-muted/30 px-4 py-3 text-sm text-foreground cursor-pointer">
+          <Checkbox checked={applyCertified} onCheckedChange={(v) => setApplyCertified(v === true)} className="mt-0.5" />
+          <span>I certify that the information and documents I have provided are true and correct.</span>
+        </label>
+      </AppDialog>
     </div>
   );
 
@@ -1424,23 +1406,18 @@ export default function StudentDashboardPage() {
         })}
       </div>
 
-      <AlertDialog open={!!removeDoc} onOpenChange={(o) => { if (!o) setRemoveDoc(null); }}>
-        <AlertDialogContent className="rounded-2xl">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove this document?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {removeDoc?.document_type} ({removeDoc?.file_name}) will be deleted. You will need to upload it again before you can apply.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="rounded-xl" disabled={removingDoc}>Keep it</AlertDialogCancel>
-            <AlertDialogAction className="rounded-xl bg-red-600 hover:bg-red-700 text-white" disabled={removingDoc}
-              onClick={(e) => { e.preventDefault(); removeDocument(); }}>
-              {removingDoc && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Remove
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <AppDialog open={!!removeDoc} onOpenChange={(o) => { if (!o && !removingDoc) setRemoveDoc(null); }} size="sm" className="rounded-2xl"
+        title="Remove this document?"
+        footer={<>
+          <Button variant="outline" className="rounded-xl" disabled={removingDoc} onClick={() => setRemoveDoc(null)}>Keep it</Button>
+          <Button variant="destructive" className="rounded-xl" disabled={removingDoc} onClick={removeDocument}>
+            {removingDoc && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Remove
+          </Button>
+        </>}>
+        <p className="text-sm text-muted-foreground">
+          <span className="font-semibold text-foreground">{removeDoc?.document_type}</span> ({removeDoc?.file_name}) will be deleted. You will need to upload it again before you can apply.
+        </p>
+      </AppDialog>
     </div>
   );
 

@@ -139,7 +139,7 @@ export default function AnnouncementsPanel() {
       <AlertDialog open={confirm} onOpenChange={setConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Send this announcement?</AlertDialogTitle>
+            <AlertDialogTitle className="font-display">Send this announcement?</AlertDialogTitle>
             <AlertDialogDescription>
               It goes to <strong>{AUDIENCES[audience].label.toLowerCase()}</strong> straight away and can&apos;t be recalled. Students may also receive it by email.
             </AlertDialogDescription>
