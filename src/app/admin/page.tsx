@@ -1,7 +1,7 @@
 "use client";
 
 import { useHistorySync } from "@/hooks/use-history-sync";
-import { useState, useEffect, useMemo, useRef } from "react";
+import { Fragment, useState, useEffect, useMemo, useRef } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -51,19 +51,21 @@ import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
 import { printReceiptSlip } from "@/lib/receipt-slip";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
+// Ordered by the scholarship process: set up a program, review applicants, manage scholars,
+// pay them out, then track and report. Each group gets a heading in the sidebar.
 const sidebarItems = [
-  { icon: LayoutDashboard, label: "Dashboard", key: "overview" },
-  { icon: FileText, label: "Applicants", key: "applications" },
-  { icon: Users, label: "Students", key: "students" },
-  { icon: GraduationCap, label: "Scholarships", key: "scholarships" },
-  { icon: Wallet, label: "Funds", key: "funds" },
-  { icon: Banknote, label: "Disbursement", key: "disbursement" },
-  { icon: BarChart3, label: "Reports", key: "reports" },
-  { icon: ScrollText, label: "Audit Logs", key: "audit-logs" },
-  { icon: Bell, label: "Notifications", key: "notifications" },
-  { icon: ShieldCheck, label: "Staff", key: "staff" }, // super admins only (see canManageSettings)
-  { icon: SettingsIcon, label: "Settings", key: "settings" },
-  { icon: User, label: "Profile", key: "profile" },
+  { icon: LayoutDashboard, label: "Dashboard", key: "overview", group: "" },
+  { icon: GraduationCap, label: "Scholarships", key: "scholarships", group: "Process" },
+  { icon: FileText, label: "Applicants", key: "applications", group: "Process" },
+  { icon: Users, label: "Students", key: "students", group: "Process" },
+  { icon: Banknote, label: "Disbursement", key: "disbursement", group: "Process" },
+  { icon: Wallet, label: "Funds", key: "funds", group: "Monitoring" },
+  { icon: BarChart3, label: "Reports", key: "reports", group: "Monitoring" },
+  { icon: ScrollText, label: "Audit Logs", key: "audit-logs", group: "Monitoring" },
+  { icon: Bell, label: "Notifications", key: "notifications", group: "Monitoring" },
+  { icon: ShieldCheck, label: "Staff", key: "staff", group: "Administration" }, // super admins only (see canManageSettings)
+  { icon: SettingsIcon, label: "Settings", key: "settings", group: "Administration" },
+  { icon: User, label: "Profile", key: "profile", group: "Administration" },
 ];
 
 const formatPHP = (n: number) => `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -1433,10 +1435,13 @@ export default function AdminDashboardPage() {
           <button className="lg:hidden" onClick={() => setSidebarOpen(false)}><X className="h-5 w-5" /></button>
         </div>
         <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
-          {sidebarItems.filter((item) => item.key !== "staff" || canManageSettings).map((item) => {
+          {sidebarItems.filter((item) => item.key !== "staff" || canManageSettings).map((item, i, items) => {
             const unread = item.key === "notifications" ? unreadTotal : 0;
+            const startsGroup = item.group && item.group !== items[i - 1]?.group;
             return (
-              <button key={item.key} onClick={() => { setActiveSection(item.key); setSidebarOpen(false); }}
+              <Fragment key={item.key}>
+              {startsGroup && <p className="px-3 pt-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{item.group}</p>}
+              <button onClick={() => { setActiveSection(item.key); setSidebarOpen(false); }}
                 className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeSection === item.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
                 <item.icon className="h-4 w-4 shrink-0" /><span className="truncate">{item.label}</span>
                 {unread > 0 && (
@@ -1445,6 +1450,7 @@ export default function AdminDashboardPage() {
                   </span>
                 )}
               </button>
+              </Fragment>
             );
           })}
         </nav>
