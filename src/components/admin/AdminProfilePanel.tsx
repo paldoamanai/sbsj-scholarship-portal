@@ -16,6 +16,7 @@ import ProfileImage from "@/components/ProfileImage";
 import SecuritySettings from "@/components/account/SecuritySettings";
 import { adminProfileSchema, passwordSchema } from "@/validations/profile";
 import type { Tables, Json } from "@/integrations/supabase/types";
+import { ROLE_LABEL } from "@/lib/permissions";
 
 type Props = {
   profile: Tables<"profiles"> | null;
@@ -27,7 +28,6 @@ type Props = {
   onChanged: () => void;
 };
 
-const ROLE_LABEL: Record<string, string> = { super_admin: "Super Admin", admin: "Admin" };
 const fmt = (d?: string | null) => (d ? new Date(d).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "—");
 
 const strength = (pw: string) => {

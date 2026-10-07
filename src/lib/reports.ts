@@ -1,4 +1,5 @@
 import type { Tables, Json } from "@/integrations/supabase/types";
+import { ROLE_LABEL } from "@/lib/permissions";
 
 // ── Shapes ──
 // `money` columns are formatted as pesos; `totals` columns get a summed "Total" row.
@@ -90,7 +91,6 @@ const ageOn = (dob: string | null | undefined, at: string | Date = new Date()) =
   if (Number.isNaN(b.getTime())) return null;
   return d.getFullYear() - b.getFullYear() - (d.getMonth() < b.getMonth() || (d.getMonth() === b.getMonth() && d.getDate() < b.getDate()) ? 1 : 0);
 };
-const ROLE_LABEL: Record<string, string> = { admin: "Admin", super_admin: "Super Admin", student: "Student" };
 const termText = (a?: Pick<Tables<"applications">, "academic_year" | "semester"> | null) => (a ? [a.academic_year, a.semester].filter(Boolean).join(" · ") : "") || "—";
 
 export function getRange(period: string, from: string, to: string): { since: Date | null; until: Date | null } {
