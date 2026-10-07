@@ -127,15 +127,33 @@ export function parseSettings(rows: { key: string; value: Json }[] | null | unde
   };
 }
 
-/** Returns a human message when students can't submit right now, otherwise null. */
-export function applicationsBlockedReason(s: AppSettings, today = new Date()): string | null {
-  if (s.maintenance_mode) return s.maintenance_message;
-  if (!s.applications_open) return "Applications are currently closed.";
+export type ApplicationsBlock =
+  | { kind: "maintenance"; message: string }
+  | { kind: "closed" }
+  | { kind: "not_yet"; date: string }
+  | { kind: "ended"; date: string };
+
+/** Why students can't submit right now, or null when they can. */
+export function applicationsBlock(s: AppSettings, today = new Date()): ApplicationsBlock | null {
+  if (s.maintenance_mode) return { kind: "maintenance", message: s.maintenance_message };
+  if (!s.applications_open) return { kind: "closed" };
   // UTC date: the database compares against CURRENT_DATE, which is UTC on Supabase.
   const iso = today.toISOString().slice(0, 10);
-  if (s.application_open_date && iso < s.application_open_date) return `Applications open on ${s.application_open_date}.`;
-  if (s.application_close_date && iso > s.application_close_date) return `The application period ended on ${s.application_close_date}.`;
+  if (s.application_open_date && iso < s.application_open_date) return { kind: "not_yet", date: s.application_open_date };
+  if (s.application_close_date && iso > s.application_close_date) return { kind: "ended", date: s.application_close_date };
   return null;
+}
+
+/** Returns a human message when students can't submit right now, otherwise null. */
+export function applicationsBlockedReason(s: AppSettings, today = new Date()): string | null {
+  const b = applicationsBlock(s, today);
+  if (!b) return null;
+  switch (b.kind) {
+    case "maintenance": return b.message;
+    case "closed": return "Applications are currently closed.";
+    case "not_yet": return `Applications open on ${b.date}.`;
+    case "ended": return `The application period ended on ${b.date}.`;
+  }
 }
 
 /** Client-side validation mirroring the database trigger. Returns an error message or null. */
