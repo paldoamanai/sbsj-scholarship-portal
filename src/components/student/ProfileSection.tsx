@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import ProfileImage from "@/components/ProfileImage";
 import BarangayField from "@/components/BarangayField";
 import { Panel, SectionTitle } from "@/components/student/ui";
+import { ContactOffice } from "@/components/student/ApplicationHistory";
 import { createClient } from "@/lib/supabase/client";
 import { uploadAvatar } from "@/lib/avatar";
 import { safeFileName, DOC_MIME } from "@/lib/documents";
@@ -32,7 +33,7 @@ const toForm = (p: Tables<"profiles"> | null): StudentProfileForm => ({
 });
 
 function Field({ label, error, hint, children, className = "" }: {
-  label: string; error?: string; hint?: string; children: React.ReactNode; className?: string;
+  label: string; error?: string; hint?: React.ReactNode; children: React.ReactNode; className?: string;
 }) {
   return (
     <div className={className}>
@@ -45,7 +46,7 @@ function Field({ label, error, hint, children, className = "" }: {
 
 const inputCls = "rounded-xl border-border focus:border-primary focus:ring-primary/20";
 
-export default function ProfileSection({ profile, userId, userEmail, applications, locked, gradeUpdates, onChanged }: {
+export default function ProfileSection({ profile, userId, userEmail, applications, locked, gradeUpdates, onChanged, onContact }: {
   profile: Tables<"profiles"> | null;
   userId: string;
   userEmail: string;
@@ -54,6 +55,8 @@ export default function ProfileSection({ profile, userId, userEmail, application
   locked: boolean;
   gradeUpdates: Tables<"grade_updates">[];
   onChanged: () => void;
+  /** Opens the Help tab from "Contact the office". */
+  onContact?: () => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const { settings } = useSystemSettings();
@@ -165,7 +168,7 @@ export default function ProfileSection({ profile, userId, userEmail, application
         <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
           <Lock className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
           <p className="text-sm text-amber-800">
-            Your scholarship is approved, so your name, birth date, school, course and year level are locked. You can still update your contact details, address, guardian and photo. Contact the office to correct anything that&apos;s locked.
+            Your scholarship is approved, so your name, birth date, school, course and year level are locked. You can still update your contact details, address, guardian and photo. <ContactOffice onContact={onContact} /> to correct anything that&apos;s locked.
           </p>
         </div>
       )}
@@ -278,7 +281,7 @@ export default function ProfileSection({ profile, userId, userEmail, application
                   <SelectContent>{courses.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
                 </Select>
               </Field>
-              <Field label="Student ID number" error={errors.student_id_number} hint={idsLocked ? "Locked once you have applied. Contact the office to correct it." : undefined}>
+              <Field label="Student ID number" error={errors.student_id_number} hint={idsLocked ? <>Locked once you have applied. <ContactOffice onContact={onContact} /> to correct it.</> : undefined}>
                 <Input className={inputCls} value={form.student_id_number} disabled={idsLocked} onChange={(e) => set("student_id_number", e.target.value)} />
               </Field>
             </div>

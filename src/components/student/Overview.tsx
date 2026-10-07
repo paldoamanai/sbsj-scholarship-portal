@@ -101,6 +101,10 @@ export default function Overview(p: OverviewProps) {
     const out: Action[] = [];
     const lastGrade = p.gradeUpdates[0];
 
+    yearApps.filter((a) => a.changes_requested).forEach((a) =>
+      out.push({ id: `changes-${a.id}`, tone: "red", title: `The office needs changes on ${a.scholarships?.name ?? "your application"}`,
+        detail: a.changes_requested ?? undefined, tab: "application", cta: "Open" }));
+
     p.docStatus.disapproved.forEach((d) =>
       out.push({ id: `doc-${d.type}`, tone: "red", title: `Upload a new ${d.type}`, detail: d.note ? `The office said: ${d.note}` : "The office didn't accept your copy.", tab: "documents", cta: "Replace" }));
 
@@ -130,7 +134,7 @@ export default function Overview(p: OverviewProps) {
 
     const order = { red: 0, amber: 1, blue: 2, green: 3 } as const;
     return out.sort((a, b) => order[a.tone] - order[b.tone]);
-  }, [p.docStatus, p.gradeUpdates, p.issues, live, completeness, approvedApps.length, profile]);
+  }, [p.docStatus, p.gradeUpdates, p.issues, live, completeness, approvedApps.length, profile, yearApps]);
 
   // ── programs ──
   // Open programs first, so students see what they can apply for right now.
@@ -338,7 +342,7 @@ export default function Overview(p: OverviewProps) {
                 </button>
               )}
             </div>
-            <ApplicationHistory applications={applications} onView={p.onViewApplication} limit={5} />
+            <ApplicationHistory applications={applications} onView={p.onViewApplication} onContact={() => p.onNavigate("help")} limit={5} />
           </Panel>
 
           {!promotePrograms && programsPanel}

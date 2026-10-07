@@ -20,7 +20,7 @@ import {
   LayoutDashboard, FileText, Upload, GraduationCap, Banknote, Receipt,
   Bell, User, Settings as SettingsIcon, LogOut, Menu, Lock, Download,
   AlertTriangle, CheckCircle, Clock, Eye, Trash2, Loader2,
-  X,
+  X, HelpCircle, Printer,
 } from "lucide-react";
 import Overview from "@/components/student/Overview";
 import { createClient } from "@/lib/supabase/client";
@@ -45,6 +45,8 @@ import { inBarangays } from "@/lib/barangays";
 import { formatDate, peso, pesoFixed } from "@/lib/format";
 import ApplicationTimeline from "@/components/student/ApplicationTimeline";
 import ApplicationHistory, { DisapprovalReason } from "@/components/student/ApplicationHistory";
+import HelpSection from "@/components/student/HelpSection";
+import { printAwardNotice } from "@/lib/award-notice";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Payment = Tables<"payments">;
@@ -420,6 +422,7 @@ const sidebarItems = [
   { icon: Bell,            label: "Notifications",  key: "notifications" },
   { icon: User,            label: "Profile",        key: "profile" },
   { icon: SettingsIcon,    label: "Settings",       key: "settings" },
+  { icon: HelpCircle,      label: "Help",           key: "help" },
 ];
 
 
@@ -466,6 +469,7 @@ export default function StudentDashboardPage() {
   const [viewOpen, setViewOpen]                     = useState(false);
   const [withdrawOpen, setWithdrawOpen]             = useState(false);
   const [withdrawing, setWithdrawing]               = useState(false);
+  const [markingDone, setMarkingDone]               = useState<string | null>(null);
   const [openApplyOnLoad, setOpenApplyOnLoad]         = useState(false);
   const [uploadingDoc, setUploadingDoc]             = useState<string | null>(null);
   const [removeDoc, setRemoveDoc]                   = useState<Tables<"documents"> | null>(null);
@@ -892,6 +896,35 @@ export default function StudentDashboardPage() {
     }
   };
 
+  // The student tells the office they've made the changes it asked for on an application.
+  const markChangesDone = async (appId: string) => {
+    setMarkingDone(appId);
+    const { error } = await supabase.rpc("mark_changes_done", { _application_id: appId });
+    setMarkingDone(null);
+    if (error) { toast.error("Could not update", { description: error.message }); return; }
+    toast.success("Thanks! The office has been told to take another look.");
+    loadData();
+  };
+
+  const openAwardNotice = (a: typeof applications[number]) => {
+    const name = profile ? [profile.first_name, profile.middle_name, profile.last_name].filter(Boolean).join(" ") : "";
+    const ok = printAwardNotice({
+      applicationId: a.id,
+      studentName: name || displayName,
+      studentId: profile?.student_id_number,
+      school: a.school_name ?? profile?.school_name,
+      courseYear: [a.course, a.year_level].filter(Boolean).join(" · ") || null,
+      program: a.scholarships?.name ?? "Scholarship",
+      amount: a.amount_approved,
+      academicYear: a.academic_year,
+      semester: a.semester,
+      approvedAt: a.approved_at ?? a.decided_at,
+      isRenewal: a.is_renewal,
+      office: { email: settings.contact_email, phone: settings.contact_phone, address: settings.contact_address },
+    });
+    if (!ok) toast.error("Allow pop-ups for this site to open your award notice.");
+  };
+
   // ── Section: Application ───────────────────────────────────────────────────
   const openApply = (programId = "") => { setApplyScholarshipId(programId); setApplyDialogOpen(true); };
   const viewApplication = (id: string) => { setSelectedAppId(id); setViewOpen(true); };
@@ -1004,6 +1037,27 @@ export default function StudentDashboardPage() {
             </div>
           </div>
           <div className="p-4 sm:p-6 space-y-5">
+            {a.changes_requested && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
+                <p className="font-semibold flex items-center gap-1.5">
+                  <AlertTriangle className="h-4 w-4 shrink-0" /> The office needs changes from you
+                  {a.changes_requested_at && <span className="font-normal text-xs text-red-700">· {formatDate(a.changes_requested_at)}</span>}
+                </p>
+                <p className="mt-1 whitespace-pre-wrap">{a.changes_requested}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" className="rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs" disabled={markingDone === a.id}
+                    onClick={() => markChangesDone(a.id)}>
+                    {markingDone === a.id ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <CheckCircle className="mr-1 h-3 w-3" />}I&apos;ve made the changes
+                  </Button>
+                  <Button size="sm" variant="outline" className="rounded-xl text-xs border-red-200 text-red-700 hover:bg-red-100" onClick={() => setActive("documents")}>
+                    <Upload className="mr-1 h-3 w-3" /> Go to Documents
+                  </Button>
+                  <Button size="sm" variant="outline" className="rounded-xl text-xs border-red-200 text-red-700 hover:bg-red-100" onClick={() => setActive("help")}>
+                    <HelpCircle className="mr-1 h-3 w-3" /> Ask the office
+                  </Button>
+                </div>
+              </div>
+            )}
             <ApplicationTimeline app={a} payments={payments} />
             {(a.status === "Pending" || a.status === "Waitlisted") && requirementsChecklist(a)}
             <div className="flex flex-wrap gap-2">
@@ -1016,6 +1070,11 @@ export default function StudentDashboardPage() {
               <Button size="sm" variant="outline" className="text-xs border-border rounded-xl hover:bg-muted" onClick={() => viewApplication(a.id)}>
                 <Eye className="mr-1 h-3 w-3" /> View
               </Button>
+              {a.status === "Approved" && (
+                <Button size="sm" variant="outline" className="text-xs border-emerald-200 text-emerald-700 hover:bg-emerald-50 rounded-xl" onClick={() => openAwardNotice(a)}>
+                  <Printer className="mr-1 h-3 w-3" /> Award notice
+                </Button>
+              )}
             </div>
           </div>
         </Panel>
@@ -1077,7 +1136,7 @@ export default function StudentDashboardPage() {
       {/* Every application, all years */}
       <Panel>
         <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Application history</SectionTitle></div>
-        <ApplicationHistory applications={applications} onView={viewApplication} />
+        <ApplicationHistory applications={applications} onView={viewApplication} onContact={() => setActive("help")} />
       </Panel>
 
       {/* View */}
@@ -1086,7 +1145,7 @@ export default function StudentDashboardPage() {
           <DialogHeader><DialogTitle className="font-display">Application details</DialogTitle></DialogHeader>
           {selectedApp && (
             <>
-              <DisapprovalReason app={selectedApp} />
+              <DisapprovalReason app={selectedApp} onContact={() => { setViewOpen(false); setActive("help"); }} />
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div><p className="text-xs text-muted-foreground mb-1">Program</p><p className="font-semibold">{selectedApp.scholarships?.name || "—"}</p></div>
                 <div><p className="text-xs text-muted-foreground mb-1">Status</p><StatusBadge status={selectedApp.status} /></div>
@@ -1119,6 +1178,11 @@ export default function StudentDashboardPage() {
                   </ul>
                 )}
               </div>
+              {selectedApp.status === "Approved" && (
+                <Button variant="outline" className="rounded-xl border-emerald-200 text-emerald-700 hover:bg-emerald-50 w-full" onClick={() => openAwardNotice(selectedApp)}>
+                  <Printer className="mr-2 h-4 w-4" /> Print award notice
+                </Button>
+              )}
               {selectedApp.certified_at && (
                 <p className="text-xs text-muted-foreground">Certified true and correct on {new Date(selectedApp.certified_at).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}.</p>
               )}
@@ -1420,9 +1484,10 @@ export default function StudentDashboardPage() {
       case "notifications": return Notifications(); // called, not rendered: the inbox keeps its search and selection
       case "profile":       return (
         <ProfileSection profile={profile} userId={userId} userEmail={userEmail} applications={applications} locked={locked}
-          gradeUpdates={gradeUpdates} onChanged={() => refreshProfile(userId)} />
+          gradeUpdates={gradeUpdates} onChanged={() => refreshProfile(userId)} onContact={() => setActive("help")} />
       );
       case "settings":      return SettingsView(); // called, not rendered: its children keep their state
+      case "help":          return <HelpSection name={displayName} email={userEmail} />;
     }
   };
 

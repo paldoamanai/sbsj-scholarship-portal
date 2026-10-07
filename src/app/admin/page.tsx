@@ -1241,7 +1241,7 @@ export default function AdminDashboardPage() {
     ...applications
       .filter((a) => statusMatches(a.status))
       .filter((a) => appProgram === "all" || a.scholarship_id === appProgram)
-      .filter((a) => !q || personText(a.profiles).includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q))
+      .filter((a) => !q || personText(a.profiles).includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q) || a.id.startsWith(q))
       .map((a): ApplicantRow => ({ kind: "app", app: a, at: a.created_at })),
   ].sort((x, y) => y.at.localeCompare(x.at));
   const appPages = Math.max(1, Math.ceil(filteredApps.length / APP_PAGE_SIZE));
@@ -1853,6 +1853,12 @@ export default function AdminDashboardPage() {
                           <Button variant="destructive" className="flex-1" disabled={!remarks.trim()} title={remarks.trim() ? undefined : "Write the reason in the message first — it is shown to the student"} onClick={async () => {
                             if (await decideApplication(viewApp, "Disapproved", remarks)) { toast.error("Disapproved"); setViewApp(null); loadData(true); }
                           }}><XCircle className="mr-1 h-4 w-4" /> Disapprove</Button>
+                          {viewApp.changes_requested && (
+                            <p className="w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 whitespace-pre-wrap">
+                              <span className="font-semibold">Waiting on the student{viewApp.changes_requested_at ? ` since ${new Date(viewApp.changes_requested_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}` : ""}: </span>
+                              {viewApp.changes_requested}
+                            </p>
+                          )}
                           <Button variant="ghost" className="w-full" onClick={() => { setChangesText(""); setChangesFor(viewApp); }}>
                             <Pencil className="mr-1 h-4 w-4" /> Request changes from the student
                           </Button>

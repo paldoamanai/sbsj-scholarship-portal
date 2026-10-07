@@ -9,7 +9,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 /** Contact form that emails the LGU through /api/contact. Only reports success when the email was sent. */
-export default function ContactForm({ withSubject = false }: { withSubject?: boolean }) {
+export default function ContactForm({ withSubject = false, defaults }: {
+  withSubject?: boolean;
+  /** Prefills name and email, e.g. for a signed-in student. */
+  defaults?: { name?: string; email?: string };
+}) {
   const [sending, setSending] = useState(false);
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -44,11 +48,11 @@ export default function ContactForm({ withSubject = false }: { withSubject?: boo
       <div className={withSubject ? "grid grid-cols-1 sm:grid-cols-2 gap-4" : "space-y-4"}>
         <div className="space-y-2">
           <Label htmlFor="cf-name">Name</Label>
-          <Input id="cf-name" name="name" placeholder="Your full name" maxLength={100} required />
+          <Input id="cf-name" name="name" placeholder="Your full name" maxLength={100} required defaultValue={defaults?.name} />
         </div>
         <div className="space-y-2">
           <Label htmlFor="cf-email">Email</Label>
-          <Input id="cf-email" name="email" type="email" placeholder="you@example.com" maxLength={255} required />
+          <Input id="cf-email" name="email" type="email" placeholder="you@example.com" maxLength={255} required defaultValue={defaults?.email} />
         </div>
       </div>
       {withSubject && (
