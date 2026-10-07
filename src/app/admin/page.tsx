@@ -194,6 +194,15 @@ export default function AdminDashboardPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkDisapprove, setBulkDisapprove] = useState(false);
   const [bulkNote, setBulkNote] = useState("");
+  const [appProgram, setAppProgram] = useState("all");
+  // Students who haven't applied yet, selected for a bulk reminder.
+  const [selectedStudents, setSelectedStudents] = useState<Set<string>>(new Set());
+  // Messages to students: reminders to apply, and change requests on an open application.
+  const [reminderFor, setReminderFor] = useState<string[] | null>(null);
+  const [reminderText, setReminderText] = useState("");
+  const [changesFor, setChangesFor] = useState<(typeof applications)[number] | null>(null);
+  const [changesText, setChangesText] = useState("");
+  const [messaging, setMessaging] = useState(false);
   // Bumped when a document changes over realtime, so open dialogs re-read their document list.
   const [docsVersion, setDocsVersion] = useState(0);
   const [reviewingDoc, setReviewingDoc] = useState(false);
@@ -1195,13 +1204,15 @@ export default function AdminDashboardPage() {
   const statusMatches = (st: string) =>
     statusFilter === "all" || (statusFilter === "open" ? st === "Pending" || st === "Waitlisted" : st.toLowerCase() === statusFilter);
   const filteredApps: ApplicantRow[] = [
-    ...(statusFilter === "all" || statusFilter === "not_applied"
+    // Students who haven't applied have no program, so a program filter hides them.
+    ...((statusFilter === "all" || statusFilter === "not_applied") && appProgram === "all"
       ? notApplied
           .filter((p) => !q || personText(p).includes(q))
           .map((p): ApplicantRow => ({ kind: "none", profile: p, at: p.created_at }))
       : []),
     ...applications
       .filter((a) => statusMatches(a.status))
+      .filter((a) => appProgram === "all" || a.scholarship_id === appProgram)
       .filter((a) => !q || personText(a.profiles).includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q))
       .map((a): ApplicantRow => ({ kind: "app", app: a, at: a.created_at })),
   ].sort((x, y) => y.at.localeCompare(x.at));
@@ -1211,7 +1222,17 @@ export default function AdminDashboardPage() {
   // Bulk selection covers applications that can still be decided (Pending / Waitlisted).
   const isOpenApp = (a: AppRow) => a.status === "Pending" || a.status === "Waitlisted";
   const selectablePaged = pagedApps.flatMap((r) => (r.kind === "app" && isOpenApp(r.app) ? [r.app.id] : []));
-  const allPagedSelected = selectablePaged.length > 0 && selectablePaged.every((id) => selectedApps.has(id));
+  // Students who haven't applied can be selected too, for a bulk reminder.
+  const selectableStudentsPaged = pagedApps.flatMap((r) => (r.kind === "none" ? [r.profile.id] : []));
+  const allPagedSelected = selectablePaged.length + selectableStudentsPaged.length > 0
+    && selectablePaged.every((id) => selectedApps.has(id))
+    && selectableStudentsPaged.every((id) => selectedStudents.has(id));
+  const toggleStudentSelected = (id: string, on: boolean) => setSelectedStudents((prev) => {
+    const next = new Set(prev);
+    if (on) next.add(id); else next.delete(id);
+    return next;
+  });
+  const clearSelection = () => { setSelectedApps(new Set()); setSelectedStudents(new Set()); };
   const toggleSelected = (id: string, on: boolean) => setSelectedApps((prev) => {
     const next = new Set(prev);
     if (on) next.add(id); else next.delete(id);
@@ -1226,6 +1247,61 @@ export default function AdminDashboardPage() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applications]);
+  useEffect(() => {
+    setSelectedStudents((prev) => {
+      const waiting = new Set(notApplied.map((p) => p.id));
+      const next = new Set([...prev].filter((id) => waiting.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [notApplied]);
+
+  // ── Messages to students (migration 043) ──
+  const reminderDefault = (userIds: string[]) => {
+    const base = "Please finish uploading your required documents and submit your scholarship application before the deadline.";
+    if (userIds.length !== 1) return base;
+    const { missing } = docsReady(userIds[0]);
+    return missing.length ? `${base} Still missing: ${missing.join(", ")}.` : base;
+  };
+  const openReminder = (userIds: string[]) => { setReminderText(reminderDefault(userIds)); setReminderFor(userIds); };
+  const sendReminders = async () => {
+    if (!reminderFor?.length) return;
+    setMessaging(true);
+    let sent = 0, already = 0;
+    const failures: string[] = [];
+    for (const id of reminderFor) {
+      const { data, error } = await supabase.rpc("message_student", { _user_id: id, _kind: "apply_reminder", _message: reminderText });
+      if (error) failures.push(`${personName(profiles.find((p) => p.id === id))}: ${error.message}`);
+      else if (data) sent += 1;
+      else already += 1;
+    }
+    setMessaging(false);
+    const summary = [`${sent} reminder${sent === 1 ? "" : "s"} sent`, already ? `${already} already reminded today` : "", failures.length ? `${failures.length} failed` : ""].filter(Boolean).join(", ");
+    if (failures.length) toast.warning(summary, { description: failures.slice(0, 3).join("\n") });
+    else if (sent) toast.success(summary);
+    else toast.info(summary);
+    setReminderFor(null);
+    setSelectedStudents(new Set());
+  };
+  const sendChangeRequest = async () => {
+    if (!changesFor) return;
+    setMessaging(true);
+    const { error } = await supabase.rpc("message_student", {
+      _user_id: changesFor.user_id, _kind: "request_changes", _message: changesText, _application_id: changesFor.id,
+    });
+    setMessaging(false);
+    if (error) { toast.error("Couldn't send the request", { description: error.message }); return; }
+    toast.success("Request sent — the student was notified");
+    setChangesFor(null);
+  };
+
+  // Approved applications move on to Disbursement: schedule the payment, or look at the ones scheduled.
+  const scheduleFor = (a: AppRow) => { setViewApp(null); setActiveSection("disbursement"); openNewPayment(a.id); };
+  const paymentsFor = (a: AppRow) => {
+    setViewApp(null);
+    setPaySearch(personName(a.profiles) === "—" ? "" : personName(a.profiles));
+    setPayFilter("all"); setPayPage(1);
+    setActiveSection("disbursement");
+  };
 
   const exportApplicants = async () => {
     const XLSX = await import("xlsx");
@@ -1405,7 +1481,7 @@ export default function AdminDashboardPage() {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input placeholder="Search name, email, ID, school, program..." value={appSearch} onChange={(e) => { setAppSearch(e.target.value); setAppPage(1); }} className="pl-9 w-72" />
                   </div>
-                  <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setAppPage(1); }}>
+                  <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setAppPage(1); clearSelection(); }}>
                     <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Status</SelectItem>
@@ -1418,15 +1494,31 @@ export default function AdminDashboardPage() {
                       <SelectItem value="withdrawn">Withdrawn</SelectItem>
                     </SelectContent>
                   </Select>
+                  <Select value={appProgram} onValueChange={(v) => { setAppProgram(v); setAppPage(1); clearSelection(); }}>
+                    <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All programs</SelectItem>
+                      {scholarships.map((sch) => <SelectItem key={sch.id} value={sch.id}>{sch.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                   <Button variant="outline" onClick={exportApplicants} disabled={filteredApps.length === 0}>
                     <FileDown className="mr-1 h-4 w-4" /> Export
                   </Button>
                 </div>
               </div>
               {pipelineStrip}
+              {selectedStudents.size > 0 && (
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:bg-amber-950/20">
+                  <span className="font-medium">{selectedStudents.size} not yet applied selected</span>
+                  <Button size="sm" variant="outline" disabled={messaging} onClick={() => openReminder([...selectedStudents])}>
+                    <Bell className="mr-1 h-4 w-4" /> Send reminder
+                  </Button>
+                  <Button size="sm" variant="ghost" disabled={messaging} onClick={() => setSelectedStudents(new Set())}>Clear</Button>
+                </div>
+              )}
               {selectedApps.size > 0 && (
                 <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-accent px-3 py-2 text-sm">
-                  <span className="font-medium">{selectedApps.size} selected</span>
+                  <span className="font-medium">{selectedApps.size} application{selectedApps.size === 1 ? "" : "s"} selected</span>
                   <Button size="sm" disabled={bulkBusy} onClick={() => bulkDecide("Approved")}>
                     {bulkBusy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-1 h-4 w-4" />} Approve
                   </Button>
@@ -1444,13 +1536,17 @@ export default function AdminDashboardPage() {
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
                     <TableHead className="w-10">
-                      <Checkbox aria-label="Select all open applications on this page" disabled={selectablePaged.length === 0}
+                      <Checkbox aria-label="Select everything selectable on this page" disabled={selectablePaged.length + selectableStudentsPaged.length === 0}
                         checked={allPagedSelected}
-                        onCheckedChange={(on) => setSelectedApps((prev) => {
-                          const next = new Set(prev);
-                          selectablePaged.forEach((id) => (on ? next.add(id) : next.delete(id)));
-                          return next;
-                        })} />
+                        onCheckedChange={(on) => {
+                          const apply = (ids: string[]) => (prev: Set<string>) => {
+                            const next = new Set(prev);
+                            ids.forEach((id) => (on ? next.add(id) : next.delete(id)));
+                            return next;
+                          };
+                          setSelectedApps(apply(selectablePaged));
+                          setSelectedStudents(apply(selectableStudentsPaged));
+                        }} />
                     </TableHead>
                     <TableHead>Applicant</TableHead><TableHead>Scholarship</TableHead><TableHead>Grade</TableHead><TableHead>Date</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
@@ -1462,7 +1558,9 @@ export default function AdminDashboardPage() {
                         const docs = docsReady(p.id);
                         return (
                           <TableRow key={`none-${p.id}`} className="bg-amber-50/40 dark:bg-amber-950/10">
-                            <TableCell />
+                            <TableCell>
+                              <Checkbox aria-label={`Select ${personName(p)}`} checked={selectedStudents.has(p.id)} onCheckedChange={(on) => toggleStudentSelected(p.id, on === true)} />
+                            </TableCell>
                             <TableCell>
                               <p className="font-medium">{personName(p)}</p>
                               <p className="text-xs text-muted-foreground">{p.email}</p>
@@ -1478,8 +1576,9 @@ export default function AdminDashboardPage() {
                                 <Clock className="h-3 w-3" />Not yet applied
                               </span>
                             </TableCell>
-                            <TableCell className="text-right">
+                            <TableCell className="text-right space-x-1">
                               <Button size="icon" variant="ghost" title="View profile" onClick={() => setViewStudent(p)}><Eye className="h-4 w-4" /></Button>
+                              <Button size="icon" variant="ghost" title="Send reminder to apply" onClick={() => openReminder([p.id])}><Bell className="h-4 w-4 text-warning" /></Button>
                             </TableCell>
                           </TableRow>
                         );
@@ -1532,6 +1631,11 @@ export default function AdminDashboardPage() {
                                 if (await decideApplication(a, "Pending", null)) { toast.success(`${name} reopened`); loadData(true); }
                               }}><RotateCcw className="h-4 w-4" /></Button>
                             )}
+                            {a.status === "Approved" && (hasLivePayment(a.id) ? (
+                              <Button size="icon" variant="ghost" title="View payments" onClick={() => paymentsFor(a)}><Wallet className="h-4 w-4 text-primary" /></Button>
+                            ) : (
+                              <Button size="icon" variant="ghost" title="Schedule payment" onClick={() => scheduleFor(a)}><Banknote className="h-4 w-4 text-success" /></Button>
+                            ))}
                             {a.status === "Approved" && (
                               <Button size="icon" variant="ghost" disabled={hasLivePayment(a.id)}
                                 title={hasLivePayment(a.id) ? "This application has payments. Cancel them before revoking the approval" : "Revoke approval"}
@@ -1572,9 +1676,14 @@ export default function AdminDashboardPage() {
                         <div>
                           <Label className="text-muted-foreground text-xs">Applicant</Label>
                           <p className="font-medium">{personName(viewApp.profiles)}</p>
-                          {profiles.some((p) => p.id === viewApp.user_id) && (
-                            <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => setViewStudent(profiles.find((p) => p.id === viewApp.user_id) ?? null)}>View full profile</button>
-                          )}
+                          <div className="flex flex-wrap gap-x-3">
+                            {profiles.some((p) => p.id === viewApp.user_id) && (
+                              <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => setViewStudent(profiles.find((p) => p.id === viewApp.user_id) ?? null)}>View full profile</button>
+                            )}
+                            {payments.some((p) => p.application_id === viewApp.id) && (
+                              <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => paymentsFor(viewApp)}>View payments</button>
+                            )}
+                          </div>
                         </div>
                         <div><Label className="text-muted-foreground text-xs">Email</Label><p className="font-medium break-all">{viewApp.profiles?.email || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">School</Label><p className="font-medium">{viewApp.profiles?.school_name || "—"}</p></div>
@@ -1712,7 +1821,13 @@ export default function AdminDashboardPage() {
                           <Button variant="destructive" className="flex-1" disabled={!remarks.trim()} title={remarks.trim() ? undefined : "Write the reason in the message first — it is shown to the student"} onClick={async () => {
                             if (await decideApplication(viewApp, "Disapproved", remarks)) { toast.error("Disapproved"); setViewApp(null); loadData(true); }
                           }}><XCircle className="mr-1 h-4 w-4" /> Disapprove</Button>
+                          <Button variant="ghost" className="w-full" onClick={() => { setChangesText(""); setChangesFor(viewApp); }}>
+                            <Pencil className="mr-1 h-4 w-4" /> Request changes from the student
+                          </Button>
                         </div>
+                      )}
+                      {viewApp.status === "Approved" && !livePay && (
+                        <Button className="w-full" onClick={() => scheduleFor(viewApp)}><Banknote className="mr-1 h-4 w-4" /> Schedule payment</Button>
                       )}
                       {viewApp.status === "Disapproved" && (
                         <Button variant="outline" className="w-full" onClick={async () => {
@@ -2887,6 +3002,47 @@ export default function AdminDashboardPage() {
               setRevokingApp(false);
               if (ok) { toast.success("Approval revoked — the student was notified"); setRevokeApp(null); loadData(true); }
             }}>Revoke approval</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!reminderFor} onOpenChange={(o) => { if (!o) setReminderFor(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Send reminder{reminderFor && reminderFor.length > 1 ? ` to ${reminderFor.length} students` : reminderFor?.[0] ? ` to ${personName(profiles.find((p) => p.id === reminderFor[0]))}` : ""}
+            </DialogTitle>
+          </DialogHeader>
+          <div>
+            <Label className="text-xs">Message</Label>
+            <Textarea rows={4} maxLength={1000} value={reminderText} onChange={(e) => setReminderText(e.target.value)} />
+            <p className="mt-1 text-xs text-muted-foreground">Sent as a notification that links to their Documents page. Each student gets at most one reminder a day.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReminderFor(null)}>Cancel</Button>
+            <Button disabled={messaging || !reminderText.trim()} onClick={sendReminders}>
+              {messaging && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} Send
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!changesFor} onOpenChange={(o) => { if (!o) setChangesFor(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Request changes</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {personName(changesFor?.profiles)} is asked to fix something on their {changesFor?.scholarships?.name || ""} application. Its status doesn&apos;t change.
+          </p>
+          <div>
+            <Label className="text-xs">What the student needs to do</Label>
+            <Textarea rows={3} maxLength={1000} value={changesText} onChange={(e) => setChangesText(e.target.value)} placeholder="e.g. Your Certificate of Enrollment is blurry. Please upload a clearer copy." />
+            <p className="mt-1 text-xs text-muted-foreground">To have a document re-uploaded, also mark it Disapproved so the student can replace it.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setChangesFor(null)}>Cancel</Button>
+            <Button disabled={messaging || !changesText.trim()} onClick={sendChangeRequest}>
+              {messaging && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} Send request
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
