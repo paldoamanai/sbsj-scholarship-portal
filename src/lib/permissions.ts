@@ -1,4 +1,4 @@
-// What each staff role may do. Mirrors public.staff_can() (migration 050), which is what actually
+// What each staff role may do. Mirrors public.staff_may() (migration 050), which is what actually
 // enforces it; this copy only decides which pages and buttons the admin panel shows.
 
 export const STAFF_ROLES = ["super_admin", "admin", "reviewer", "finance_admin"] as const;

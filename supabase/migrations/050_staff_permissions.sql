@@ -23,7 +23,7 @@
 BEGIN;
 
 -- ── 1. The permission check ──
-CREATE OR REPLACE FUNCTION public.staff_can(_user UUID, _perm TEXT)
+CREATE OR REPLACE FUNCTION public.staff_may(_user UUID, _perm TEXT)
 RETURNS BOOLEAN
 LANGUAGE sql
 STABLE
@@ -46,8 +46,8 @@ AS $$
     )
   END;
 $$;
-REVOKE ALL ON FUNCTION public.staff_can(UUID, TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.staff_can(UUID, TEXT) TO authenticated;
+REVOKE ALL ON FUNCTION public.staff_may(UUID, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.staff_may(UUID, TEXT) TO authenticated;
 
 -- ── 2. Reads every staff role needs (these used to be admin-only, so reviewer and finance saw nothing) ──
 DROP POLICY IF EXISTS "Admins can view all applications" ON public.applications;
@@ -63,7 +63,7 @@ CREATE POLICY "Staff can view all roles" ON public.user_roles
 -- Admins see the whole audit log; reviewers and finance see their own entries.
 DROP POLICY IF EXISTS "Admins can view audit logs" ON public.audit_logs;
 CREATE POLICY "Admins can view audit logs" ON public.audit_logs
-  FOR SELECT USING (public.staff_can(auth.uid(), 'manage') OR (public.is_admin(auth.uid()) AND user_id = auth.uid()));
+  FOR SELECT USING (public.staff_may(auth.uid(), 'manage') OR (public.is_admin(auth.uid()) AND user_id = auth.uid()));
 DROP POLICY IF EXISTS "Admins can insert audit logs" ON public.audit_logs;
 CREATE POLICY "Admins can insert audit logs" ON public.audit_logs
   FOR INSERT WITH CHECK (public.is_admin(auth.uid()) AND user_id = auth.uid());
@@ -77,24 +77,24 @@ DROP POLICY IF EXISTS "Super admins delete scholarships" ON public.scholarships;
 CREATE POLICY "Staff view all scholarships" ON public.scholarships
   FOR SELECT USING (public.is_admin(auth.uid()));
 CREATE POLICY "Admins create scholarships" ON public.scholarships
-  FOR INSERT WITH CHECK (public.staff_can(auth.uid(), 'manage'));
+  FOR INSERT WITH CHECK (public.staff_may(auth.uid(), 'manage'));
 CREATE POLICY "Admins update scholarships" ON public.scholarships
-  FOR UPDATE USING (public.staff_can(auth.uid(), 'manage')) WITH CHECK (public.staff_can(auth.uid(), 'manage'));
+  FOR UPDATE USING (public.staff_may(auth.uid(), 'manage')) WITH CHECK (public.staff_may(auth.uid(), 'manage'));
 CREATE POLICY "Super admins delete scholarships" ON public.scholarships
-  FOR DELETE USING (public.staff_can(auth.uid(), 'super'));
+  FOR DELETE USING (public.staff_may(auth.uid(), 'super'));
 
 -- ── 4. Applicants: reviewers and admins ──
 DROP POLICY IF EXISTS "Admins can update all applications" ON public.applications;
 CREATE POLICY "Admins can update all applications" ON public.applications
-  FOR UPDATE USING (public.staff_can(auth.uid(), 'review')) WITH CHECK (public.staff_can(auth.uid(), 'review'));
+  FOR UPDATE USING (public.staff_may(auth.uid(), 'review')) WITH CHECK (public.staff_may(auth.uid(), 'review'));
 
 DROP POLICY IF EXISTS "Staff can review documents" ON public.documents;
 CREATE POLICY "Staff can review documents" ON public.documents
-  FOR UPDATE USING (public.staff_can(auth.uid(), 'review')) WITH CHECK (public.staff_can(auth.uid(), 'review'));
+  FOR UPDATE USING (public.staff_may(auth.uid(), 'review')) WITH CHECK (public.staff_may(auth.uid(), 'review'));
 
 DROP POLICY IF EXISTS "Staff add application notes" ON public.application_notes;
 CREATE POLICY "Staff add application notes" ON public.application_notes
-  FOR INSERT WITH CHECK (public.staff_can(auth.uid(), 'review') AND public.mfa_ok(auth.uid()) AND author_id = auth.uid());
+  FOR INSERT WITH CHECK (public.staff_may(auth.uid(), 'review') AND public.mfa_ok(auth.uid()) AND author_id = auth.uid());
 
 -- Changing the award on an application that is already approved is an admin decision. Setting it
 -- while approving stays with whoever approves.
@@ -104,7 +104,7 @@ BEGIN
   IF auth.uid() IS NOT NULL
      AND OLD.status = 'Approved' AND NEW.status = 'Approved'
      AND NEW.amount_approved IS DISTINCT FROM OLD.amount_approved
-     AND NOT public.staff_can(auth.uid(), 'manage') THEN
+     AND NOT public.staff_may(auth.uid(), 'manage') THEN
     RAISE EXCEPTION 'Only an admin can change the award after an application is approved';
   END IF;
   RETURN NEW;
@@ -118,20 +118,20 @@ CREATE TRIGGER tr_guard_award_change
 -- ── 5. Payments: finance staff and admins ──
 DROP POLICY IF EXISTS "Admins can insert payments" ON public.payments;
 CREATE POLICY "Admins can insert payments" ON public.payments
-  FOR INSERT WITH CHECK (public.staff_can(auth.uid(), 'finance'));
+  FOR INSERT WITH CHECK (public.staff_may(auth.uid(), 'finance'));
 DROP POLICY IF EXISTS "Admins can update payments" ON public.payments;
 CREATE POLICY "Admins can update payments" ON public.payments
-  FOR UPDATE USING (public.staff_can(auth.uid(), 'finance'));
+  FOR UPDATE USING (public.staff_may(auth.uid(), 'finance'));
 
 -- Disbursement receipts uploaded by staff.
 DROP POLICY IF EXISTS "documents_finance_insert" ON storage.objects;
 CREATE POLICY "documents_finance_insert" ON storage.objects
   FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'documents' AND public.staff_can(auth.uid(), 'finance'));
+  WITH CHECK (bucket_id = 'documents' AND public.staff_may(auth.uid(), 'finance'));
 DROP POLICY IF EXISTS "documents_finance_delete" ON storage.objects;
 CREATE POLICY "documents_finance_delete" ON storage.objects
   FOR DELETE TO authenticated
-  USING (bucket_id = 'documents' AND public.staff_can(auth.uid(), 'finance'));
+  USING (bucket_id = 'documents' AND public.staff_may(auth.uid(), 'finance'));
 
 -- ── 6. Roles: set_user_role() also accepts reviewer and finance_admin ──
 CREATE OR REPLACE FUNCTION public.set_user_role(_user_id UUID, _role TEXT)
@@ -213,7 +213,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  IF NOT public.staff_can(auth.uid(), 'review') THEN RAISE EXCEPTION 'Only reviewers and admins can do this'; END IF;
+  IF NOT public.staff_may(auth.uid(), 'review') THEN RAISE EXCEPTION 'Only reviewers and admins can do this'; END IF;
   IF _status NOT IN ('Verified', 'Disapproved', 'Pending') THEN RAISE EXCEPTION 'Choose Verified, Disapproved or Pending'; END IF;
   IF _status = 'Disapproved' AND btrim(COALESCE(_note, '')) = '' THEN RAISE EXCEPTION 'Add a reason so the student knows what to fix'; END IF;
 
@@ -237,7 +237,7 @@ AS $$
 DECLARE
   g public.grade_updates%ROWTYPE;
 BEGIN
-  IF NOT public.staff_can(auth.uid(), 'review') THEN RAISE EXCEPTION 'Only reviewers and admins can do this'; END IF;
+  IF NOT public.staff_may(auth.uid(), 'review') THEN RAISE EXCEPTION 'Only reviewers and admins can do this'; END IF;
   IF _status NOT IN ('Verified', 'Rejected') THEN RAISE EXCEPTION 'Choose Verified or Rejected'; END IF;
   SELECT * INTO g FROM public.grade_updates WHERE id = _id;
   IF NOT FOUND THEN RAISE EXCEPTION 'Grade update not found'; END IF;
@@ -272,7 +272,7 @@ AS $$
 DECLARE
   pay public.payments%ROWTYPE;
 BEGIN
-  IF NOT public.staff_can(auth.uid(), 'finance') THEN RAISE EXCEPTION 'Only finance staff and admins can do this'; END IF;
+  IF NOT public.staff_may(auth.uid(), 'finance') THEN RAISE EXCEPTION 'Only finance staff and admins can do this'; END IF;
   IF _status NOT IN ('Accepted', 'Rejected') THEN RAISE EXCEPTION 'Choose Accepted or Rejected'; END IF;
 
   SELECT * INTO pay FROM public.payments WHERE id = _payment_id;
@@ -311,7 +311,7 @@ AS $$
 DECLARE
   iss public.payment_issues%ROWTYPE;
 BEGIN
-  IF NOT public.staff_can(auth.uid(), 'finance') THEN RAISE EXCEPTION 'Only finance staff and admins can do this'; END IF;
+  IF NOT public.staff_may(auth.uid(), 'finance') THEN RAISE EXCEPTION 'Only finance staff and admins can do this'; END IF;
   SELECT * INTO iss FROM public.payment_issues WHERE id = _issue_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'Report not found'; END IF;
   IF iss.status = 'Resolved' THEN RAISE EXCEPTION 'This report is already resolved'; END IF;
@@ -338,7 +338,7 @@ AS $$
 DECLARE
   r public.data_requests%ROWTYPE;
 BEGIN
-  IF NOT public.staff_can(auth.uid(), 'super') THEN RAISE EXCEPTION 'Only a super admin can do this'; END IF;
+  IF NOT public.staff_may(auth.uid(), 'super') THEN RAISE EXCEPTION 'Only a super admin can do this'; END IF;
   IF _status NOT IN ('Completed', 'Declined') THEN RAISE EXCEPTION 'Choose Completed or Declined'; END IF;
   SELECT * INTO r FROM public.data_requests WHERE id = _id;
   IF NOT FOUND THEN RAISE EXCEPTION 'Request not found'; END IF;
@@ -366,7 +366,7 @@ DECLARE
   n INTEGER := 0;
   lnk TEXT := NULLIF(btrim(COALESCE(_link, '')), '');
 BEGIN
-  IF NOT public.staff_can(auth.uid(), 'manage') THEN RAISE EXCEPTION 'Only admins can do this'; END IF;
+  IF NOT public.staff_may(auth.uid(), 'manage') THEN RAISE EXCEPTION 'Only admins can do this'; END IF;
   IF _audience NOT IN ('all', 'scholars', 'applicants', 'no_application') THEN RAISE EXCEPTION 'Choose who should receive this'; END IF;
   IF char_length(btrim(COALESCE(_title, ''))) < 3 OR char_length(_title) > 120 THEN RAISE EXCEPTION 'The title must be 3 to 120 characters'; END IF;
   IF char_length(btrim(COALESCE(_message, ''))) < 3 OR char_length(_message) > 1000 THEN RAISE EXCEPTION 'The message must be 3 to 1000 characters'; END IF;
@@ -406,7 +406,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  IF NOT public.staff_can(auth.uid(), 'manage') THEN RAISE EXCEPTION 'Only admins can do this'; END IF;
+  IF NOT public.staff_may(auth.uid(), 'manage') THEN RAISE EXCEPTION 'Only admins can do this'; END IF;
   PERFORM public.send_scheduled_notifications();
 END;
 $$;
@@ -415,7 +415,7 @@ $$;
 CREATE OR REPLACE FUNCTION public.set_student_active(_user_id UUID, _active BOOLEAN)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
-  IF NOT public.staff_can(auth.uid(), 'manage') THEN RAISE EXCEPTION 'Only admins can do this'; END IF;
+  IF NOT public.staff_may(auth.uid(), 'manage') THEN RAISE EXCEPTION 'Only admins can do this'; END IF;
   IF public.is_admin(_user_id) THEN
     RAISE EXCEPTION 'Only student accounts can be activated or deactivated here';
   END IF;
@@ -445,7 +445,7 @@ DECLARE
   _sch TEXT;
   _sent INTEGER;
 BEGIN
-  IF _caller IS NULL OR NOT public.staff_can(_caller, 'review') OR NOT public.mfa_ok(_caller) THEN
+  IF _caller IS NULL OR NOT public.staff_may(_caller, 'review') OR NOT public.mfa_ok(_caller) THEN
     RAISE EXCEPTION 'Only staff can message students';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role::text = 'student') THEN
