@@ -525,8 +525,10 @@ export default function StudentDashboardPage() {
   const loadData = async () => {
     try {
       await loadDataInner();
-    } catch {
-      setLoadError("We couldn't reach the server.");
+    } catch (err) {
+      console.error("Student dashboard failed to load", err);
+      const detail = err instanceof Error ? err.message : String(err);
+      setLoadError(`We couldn't reach the server. (${detail})`);
       setLoading(false);
     }
   };
@@ -626,6 +628,30 @@ export default function StudentDashboardPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) silentRefresh(user.id);
   };
+
+  // All tabs on this site share one login cookie. If another tab signs out or signs in as a different
+  // account, this tab would keep showing the old student's data while its requests go out as the new
+  // account (e.g. "Payment not found" on receipt submit). Reload so the page matches the session.
+  useEffect(() => {
+    if (!userId) return;
+    const checkSession = (sessionUserId: string | undefined) => {
+      if (sessionUserId !== userId) window.location.reload();
+    };
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => checkSession(session?.user?.id));
+    // Covers changes the cross-tab broadcast can miss: re-read the cookie when the tab comes back into view.
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      supabase.auth.getSession().then(({ data: { session } }) => checkSession(session?.user?.id));
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      subscription.unsubscribe();
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   // ── Live updates: notifications, application status, disbursement ──────────
   useEffect(() => {
