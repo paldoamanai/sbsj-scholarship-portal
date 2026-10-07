@@ -454,6 +454,7 @@ export default function StudentDashboardPage() {
   const [applyDialogOpen, setApplyDialogOpen]       = useState(false);
   const [applyLoading, setApplyLoading]             = useState(false);
   const [applyCertified, setApplyCertified]         = useState(false);
+  const submittingRef = useRef(false);
   // The application the View / Withdraw dialogs act on.
   const [selectedAppId, setSelectedAppId]           = useState<string | null>(null);
   const [viewOpen, setViewOpen]                     = useState(false);
@@ -729,7 +730,9 @@ export default function StudentDashboardPage() {
   const applyProgram = scholarships.find((s) => s.id === applyScholarshipId);
   if (applyProgram) {
     if (!availabilityInfo(applyProgram).canApply) applyIssues.push(`${applyProgram.name}: ${availabilityInfo(applyProgram).label.toLowerCase()}.`);
-    const pg = Number(applyProgram.min_grade ?? 0);
+    // Renewing: the renewal minimum replaces the program's own minimum (same as the database).
+    const ownMin = Number(applyProgram.min_grade ?? 0);
+    const pg = ownMin > 0 && isRenewing && settings.renewal_enabled ? settings.renewal_min_grade : ownMin;
     if (pg > 0 && myGrade == null && minGrade < pg) applyIssues.push(`Add your average grade to your profile (${applyProgram.name} requires ${pg}).`);
     else if (pg > 0 && myGrade != null && myGrade < pg) applyIssues.push(`${applyProgram.name} requires an average grade of ${pg}; yours is ${myGrade}.`);
     if (applyProgram.year_levels?.length && !applyProgram.year_levels.includes(profile?.year_level ?? "")) applyIssues.push(`${applyProgram.name} is open to ${applyProgram.year_levels.join(", ")} students only.`);
@@ -821,7 +824,9 @@ export default function StudentDashboardPage() {
 
   // ── Application actions ────────────────────────────────────────────────────
   const submitApplication = async () => {
-    if (!applyScholarshipId) return;
+    // A ref, not applyLoading: a quick double-click fires twice before the disabled state renders.
+    if (!applyScholarshipId || submittingRef.current) return;
+    submittingRef.current = true;
     setApplyLoading(true);
     try {
       const res = await fetch("/api/applications", {
@@ -844,6 +849,7 @@ export default function StudentDashboardPage() {
     } catch {
       toast.error("Network error. Please try again.");
     } finally {
+      submittingRef.current = false;
       setApplyLoading(false);
     }
   };

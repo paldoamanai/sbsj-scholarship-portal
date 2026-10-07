@@ -66,7 +66,8 @@ export async function POST(request: Request) {
 
   // ── One application per program per year ──
   // Students may apply to (and be approved for) every open program; each program decides on its own.
-  const currentYear = new Date().getFullYear();
+  // UTC year, matching the database trigger and the dashboard.
+  const currentYear = new Date().getUTCFullYear();
   const yearStart = `${currentYear}-01-01T00:00:00.000Z`;
   const yearEnd   = `${currentYear + 1}-01-01T00:00:00.000Z`;
 
@@ -103,7 +104,17 @@ export async function POST(request: Request) {
 
   if (error) {
     // P0001 = RAISE EXCEPTION from the scholarship rules trigger (closed, past deadline, full).
-    return NextResponse.json({ error: error.message, code: error.code === "P0001" ? "APPLICATION_RULE" : undefined }, { status: error.code === "P0001" ? 409 : 500 });
+    if (error.code === "P0001") {
+      return NextResponse.json({ error: error.message, code: "APPLICATION_RULE" }, { status: 409 });
+    }
+    // 42501 = row-level security: an account with 2FA enrolled that hasn't completed it this session.
+    if (error.code === "42501") {
+      return NextResponse.json(
+        { error: "Complete two-factor verification (sign out and back in), then try again.", code: "MFA_REQUIRED" },
+        { status: 403 }
+      );
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
   return NextResponse.json(data, { status: 201 });
