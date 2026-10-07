@@ -53,9 +53,9 @@ export function StatCard({ icon: Icon, label, value, sub, subTone = "neutral", a
   onClick?: () => void;
 }) {
   const subClass = accent
-    ? "text-primary-foreground/80"
-    : subTone === "positive" ? "text-success"
-    : subTone === "warning" ? "text-warning"
+    ? "text-primary-foreground"
+    : subTone === "positive" ? "text-emerald-700"
+    : subTone === "warning" ? "text-amber-700"
     : "text-muted-foreground";
   const body = (
     <>
@@ -64,7 +64,7 @@ export function StatCard({ icon: Icon, label, value, sub, subTone = "neutral", a
           <div className={`flex-shrink-0 h-8 w-8 sm:h-9 sm:w-9 rounded-xl flex items-center justify-center ${accent ? "bg-white/20" : "bg-accent"}`}>
             <Icon className={`h-4.5 w-4.5 ${accent ? "text-primary-foreground" : "text-accent-foreground"}`} />
           </div>
-          <p className={`text-xs font-medium truncate ${accent ? "text-primary-foreground/90" : "text-muted-foreground"}`}>{label}</p>
+          <p className={`text-xs font-medium truncate ${accent ? "text-primary-foreground" : "text-muted-foreground"}`}>{label}</p>
         </div>
         {onClick && <ChevronRight className={`h-4 w-4 shrink-0 ${accent ? "text-primary-foreground/70" : "text-muted-foreground"}`} />}
       </div>

@@ -163,7 +163,7 @@ export default function ProfileSection({ profile, userId, userEmail, application
     <div className="space-y-5">
       {locked && (
         <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-          <Lock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+          <Lock className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
           <p className="text-sm text-amber-800">
             Your scholarship is approved, so your name, birth date, school, course and year level are locked. You can still update your contact details, address, guardian and photo. Contact the office to correct anything that&apos;s locked.
           </p>
@@ -181,7 +181,7 @@ export default function ProfileSection({ profile, userId, userEmail, application
               {photoBusy ? <Loader2 className="h-4 w-4 animate-spin text-white" /> : <Camera className="h-4 w-4 text-white" />}
             </Label>
           </div>
-          <h3 className="font-display font-bold text-sidebar-accent">{displayName}</h3>
+          <h3 className="font-display font-bold text-black">{displayName}</h3>
           <p className="text-sm text-muted-foreground mt-0.5 break-all">{userEmail}</p>
           {profile?.student_id_number && (
             <p className="text-xs font-mono text-muted-foreground mt-1 bg-muted rounded-full px-2.5 py-0.5">
@@ -193,7 +193,7 @@ export default function ProfileSection({ profile, userId, userEmail, application
           <div className="w-full mt-5 text-left">
             <div className="flex items-center justify-between text-xs mb-1.5">
               <span className="font-semibold text-foreground">Profile complete</span>
-              <span className={`font-bold ${completeness.percent === 100 ? "text-emerald-600" : "text-primary"}`}>{completeness.percent}%</span>
+              <span className={`font-bold ${completeness.percent === 100 ? "text-emerald-700" : "text-primary"}`}>{completeness.percent}%</span>
             </div>
             <div className="h-2 rounded-full bg-muted overflow-hidden">
               <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${completeness.percent}%` }} />
@@ -201,7 +201,7 @@ export default function ProfileSection({ profile, userId, userEmail, application
             {completeness.missing.length > 0 ? (
               <p className="text-xs text-muted-foreground mt-2">Still needed: {completeness.missing.map((m) => m.label).join(", ")}.</p>
             ) : (
-              <p className="text-xs text-emerald-600 mt-2">Everything the office needs is filled in.</p>
+              <p className="text-xs text-emerald-700 mt-2">Everything the office needs is filled in.</p>
             )}
           </div>
         </Panel>
@@ -301,7 +301,7 @@ export default function ProfileSection({ profile, userId, userEmail, application
           <div className="flex items-center gap-4 flex-wrap">
             <div className="rounded-xl bg-muted border border-muted px-5 py-3">
               <p className="text-xs text-muted-foreground">Average grade</p>
-              <p className="text-2xl font-bold text-sidebar-accent">{profile?.average_grade ?? "—"}</p>
+              <p className="text-2xl font-bold text-black">{profile?.average_grade ?? "—"}</p>
             </div>
             {profile?.average_grade != null && (
               profile.grade_verified_at ? (

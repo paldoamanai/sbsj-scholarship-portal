@@ -397,7 +397,7 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
       </div>
 
       <Dialog open={!!viewReport} onOpenChange={(o) => { if (!o) setViewReport(null); }}>
-        <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl">
           {viewReport && (() => {
             const def = defs[viewReport];
             return (<>

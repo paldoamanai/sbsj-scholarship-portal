@@ -120,6 +120,7 @@ export default function AdminDashboardPage() {
   const [schActive, setSchActive] = useState(true);
   const [schYearLevels, setSchYearLevels] = useState<string[]>([]);
   const [schBarangays, setSchBarangays] = useState<string[]>([]);
+  const [schBarangaySearch, setSchBarangaySearch] = useState("");
   const [deleteSch, setDeleteSch] = useState<Tables<"scholarships"> | null>(null);
   const [fundPeriod, setFundPeriod] = useState("all"); // shared by Fund Management and Reports
   const [fromDate, setFromDate] = useState("");
@@ -245,8 +246,9 @@ export default function AdminDashboardPage() {
 
   // Profiles of students only — staff accounts (anyone with a non-student role) are excluded.
   // Staff are kept aside (with their role) so reports can name who disbursed, reviewed or changed something.
-  const withoutStaff = async (rows: Tables<"profiles">[]) => {
-    const { data } = await supabase.from("user_roles").select("user_id, role").neq("role", "student");
+  const staffRoles = () => supabase.from("user_roles").select("user_id, role").neq("role", "student");
+  const withoutStaff = async (rows: Tables<"profiles">[], roleRows?: { user_id: string; role: string }[] | null) => {
+    const data = roleRows ?? (await staffRoles()).data;
     const roles = new Map((data ?? []).map((r: { user_id: string; role: string }) => [r.user_id, r.role]));
     setStaff(rows.filter((p) => roles.has(p.id)).map((p) => ({ id: p.id, name: personName(p), email: p.email, role: roles.get(p.id)! })));
     return rows.filter((p) => !roles.has(p.id));
@@ -259,19 +261,21 @@ export default function AdminDashboardPage() {
 
   const loadData = async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
-    const { data: { user } } = await supabase.auth.getUser();
+    // The middleware has already verified the session for /admin, so read it locally instead of
+    // another round trip; row-level security still guards every query below.
+    const { data: { session } } = await supabase.auth.getSession();
+    const user = session?.user;
     if (!user) { router.push("/login"); return; }
 
     setAdminEmail(user.email || "");
     setAdminUserId(user.id);
-    const { data: roleData } = await supabase.from("user_roles").select("role").eq("user_id", user.id).single();
-    const role = (roleData as { role?: string } | null)?.role;
-    if (!isAdminRole(role)) { router.push("/student-dashboard"); return; }
-    setAdminRole(role as string);
-    const { data: canManage } = await supabase.rpc("can_manage_settings", { _user_id: user.id });
-    setCanManageSettings(canManage === true);
 
-    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes] = await Promise.all([
+    // Everything is fetched in one parallel batch: each query is a full round trip to Supabase,
+    // so running them one after another made the dashboard several seconds slower to open.
+    const [roleRes, canManageRes, staffRolesRes, appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes] = await Promise.all([
+      supabase.from("user_roles").select("role").eq("user_id", user.id).single(),
+      supabase.rpc("can_manage_settings", { _user_id: user.id }),
+      staffRoles(),
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("scholarships").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
@@ -287,11 +291,16 @@ export default function AdminDashboardPage() {
       supabase.from("data_requests").select("*").order("created_at", { ascending: false }),
     ]);
 
+    const role = (roleRes.data as { role?: string } | null)?.role;
+    if (!isAdminRole(role)) { router.push("/student-dashboard"); return; }
+    setAdminRole(role as string);
+    setCanManageSettings(canManageRes.data === true);
+
     const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes].find((r) => r.error);
     setLoadError(failed?.error ? failed.error.message : null);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (scholsRes.data) setScholarships(scholsRes.data);
-    if (profilesRes.data) setProfiles(await withoutStaff(profilesRes.data));
+    if (profilesRes.data) setProfiles(await withoutStaff(profilesRes.data, staffRolesRes.data));
     if (paymentsRes.data) setPayments(paymentsRes.data);
     if (logsRes.data) setAuditLogs(logsRes.data);
     if (settingsRes.data) setSystemSettings(settingsRes.data);
@@ -522,7 +531,7 @@ export default function AdminDashboardPage() {
       amount: num("amount"), total_budget: num("total_budget"), slots: num("slots"),
       open_date: text("open_date") || null, deadline: text("deadline") || null,
       min_grade: text("min_grade").trim() === "" ? null : Number(text("min_grade")),
-      year_levels: schYearLevels, municipality: text("municipality"), barangays: schBarangays, is_active: schActive,
+      year_levels: schYearLevels, municipality: HOME_MUNICIPALITY, barangays: schBarangays, is_active: schActive,
     });
     if (!parsed.success) { toast.error(parsed.error.issues[0]?.message ?? "Check the form"); return; }
     const payload = parsed.data;
@@ -1037,7 +1046,8 @@ export default function AdminDashboardPage() {
     return (d: AdminDoc) => d.applicationId === null || ids.has(d.applicationId);
   };
   const logAudit = async (action: string, entityType: string, entityId?: string, prev?: Json | null, next?: Json | null) => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { session } } = await supabase.auth.getSession();
+    const user = session?.user;
     const { error } = await supabase.from("audit_logs").insert({
       user_id: user?.id, user_email: user?.email || adminEmail,
       action, entity_type: entityType, entity_id: entityId,
@@ -1660,7 +1670,7 @@ export default function AdminDashboardPage() {
               </div>
 
               <Dialog open={!!viewApp} onOpenChange={(open) => !open && setViewApp(null)}>
-                <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                <DialogContent className="max-w-lg">
                   <DialogHeader><DialogTitle>Application Details</DialogTitle></DialogHeader>
                   {viewApp && (() => {
                     const open = isOpenApp(viewApp);
@@ -1874,14 +1884,14 @@ export default function AdminDashboardPage() {
                       <SelectItem value="inactive">Disabled</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Button className="bg-gradient-primary shadow-primary" onClick={() => { setSchActive(true); setSchYearLevels([]); setSchBarangays([]); setSchDialog("new"); }}>
+                  <Button className="bg-gradient-primary shadow-primary" onClick={() => { setSchActive(true); setSchYearLevels([]); setSchBarangays([]); setSchBarangaySearch(""); setSchDialog("new"); }}>
                     <Plus className="mr-1 h-4 w-4" /> Add Scholarship
                   </Button>
                 </div>
               </div>
 
               <Dialog open={schDialog !== null} onOpenChange={(o) => !o && setSchDialog(null)}>
-                <DialogContent className="max-h-[90vh] overflow-y-auto">
+                <DialogContent>
                   <DialogHeader><DialogTitle className="font-display">{schDialog && schDialog !== "new" ? "Edit Scholarship" : "Add New Scholarship"}</DialogTitle></DialogHeader>
                   {schDialog && (() => {
                     const cur = schDialog === "new" ? null : schDialog;
@@ -1907,7 +1917,8 @@ export default function AdminDashboardPage() {
                           <p className="text-sm font-medium">Eligibility rules <span className="font-normal text-muted-foreground">(enforced when a student applies)</span></p>
                           <div className="grid grid-cols-2 gap-3">
                             <div><Label>Minimum average grade</Label><Input name="min_grade" type="number" min={0} max={100} step="0.01" defaultValue={cur?.min_grade ?? ""} placeholder="Global minimum" /></div>
-                            <div><Label>Residents of municipality</Label><Input name="municipality" defaultValue={cur?.municipality ?? ""} placeholder="Any municipality" /></div>
+                            {/* Every program is for residents of San Jose; only the barangays below vary. */}
+                            <div><Label>Municipality</Label><Input value={HOME_MUNICIPALITY} readOnly disabled /></div>
                           </div>
                           <div>
                             <Label>Year levels <span className="font-normal text-muted-foreground">(none ticked = any)</span></Label>
@@ -1923,13 +1934,14 @@ export default function AdminDashboardPage() {
                           </div>
                           <div>
                             <div className="flex items-center justify-between gap-2">
-                              <Label>Barangays of {HOME_MUNICIPALITY} <span className="font-normal text-muted-foreground">(none ticked = any)</span></Label>
+                              <Label>Barangays of {HOME_MUNICIPALITY} <span className="font-normal text-muted-foreground">(none ticked = open to all {HOME_MUNICIPALITY} residents)</span></Label>
                               {schBarangays.length > 0 && (
                                 <button type="button" className="text-xs text-primary hover:underline" onClick={() => setSchBarangays([])}>Clear ({schBarangays.length})</button>
                               )}
                             </div>
+                            <Input className="mt-1" value={schBarangaySearch} onChange={(e) => setSchBarangaySearch(e.target.value)} placeholder="Search barangay" />
                             <div className="mt-1 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 max-h-48 overflow-y-auto rounded-md border p-2">
-                              {BARANGAYS.map((b) => (
+                              {BARANGAYS.filter((b) => b.toLowerCase().includes(schBarangaySearch.trim().toLowerCase())).map((b) => (
                                 <label key={b} className="flex items-center gap-1.5 text-sm">
                                   <input type="checkbox" checked={schBarangays.includes(b)}
                                     onChange={(e) => setSchBarangays((prev) => e.target.checked ? [...prev, b] : prev.filter((x) => x !== b))} />
@@ -2003,7 +2015,7 @@ export default function AdminDashboardPage() {
                           </TableCell>
                           <TableCell><Badge variant={sch.is_active ? "default" : "secondary"}>{sch.is_active ? "Active" : "Disabled"}</Badge></TableCell>
                           <TableCell className="text-right space-x-1">
-                            <Button size="icon" variant="ghost" title="Edit" onClick={() => { setSchActive(sch.is_active); setSchYearLevels(sch.year_levels ?? []); setSchBarangays(sch.barangays ?? []); setSchDialog(sch); }}><Pencil className="h-4 w-4" /></Button>
+                            <Button size="icon" variant="ghost" title="Edit" onClick={() => { setSchActive(sch.is_active); setSchYearLevels(sch.year_levels ?? []); setSchBarangays(sch.barangays ?? []); setSchBarangaySearch(""); setSchDialog(sch); }}><Pencil className="h-4 w-4" /></Button>
                             <Button size="icon" variant="ghost" title="Duplicate for next year" onClick={() => duplicateScholarship(sch)}><Copy className="h-4 w-4" /></Button>
                             <Button size="icon" variant="ghost" title={sch.is_active ? "Disable" : "Enable"} onClick={() => toggleScholarship(sch)}>
                               {sch.is_active ? <XCircle className="h-4 w-4" /> : <CheckCircle className="h-4 w-4 text-success" />}
@@ -2544,7 +2556,7 @@ export default function AdminDashboardPage() {
               </div>
 
               <Dialog open={!!viewLog} onOpenChange={(o) => !o && setViewLog(null)}>
-                <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+                <DialogContent className="max-w-2xl">
                   <DialogHeader><DialogTitle>Audit Entry</DialogTitle></DialogHeader>
                   {viewLog && (() => {
                     const prev = asObj(viewLog.previous_value);
@@ -2758,7 +2770,7 @@ export default function AdminDashboardPage() {
       </Dialog>
 
       <Dialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>Student Details</DialogTitle></DialogHeader>
           {viewStudent && (() => {
             const stuApps = applications.filter((a) => a.user_id === viewStudent.id);
@@ -2957,7 +2969,7 @@ export default function AdminDashboardPage() {
       </Dialog>
 
       <Dialog open={!!issueDialog} onOpenChange={(o) => { if (!o) setIssueDialog(null); }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Payment problem reports</DialogTitle></DialogHeader>
           {issueDialog && (
             <div className="space-y-3">

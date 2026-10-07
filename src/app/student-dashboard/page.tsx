@@ -155,15 +155,15 @@ function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl 
     return (
       <div className="space-y-1">
         {p.student_receipt_ref ? (
-          <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
+          <span className="inline-flex items-center gap-1 text-xs text-emerald-700 font-medium">
             <CheckCircle className="h-3.5 w-3.5" /> Receipt ref. <span className="font-mono">{p.student_receipt_ref}</span> · {formatDate(p.student_receipt_at)}
           </span>
         ) : p.student_receipt_path ? (
-          <button type="button" onClick={() => view(p.student_receipt_path)} className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium hover:underline cursor-pointer">
+          <button type="button" onClick={() => view(p.student_receipt_path)} className="inline-flex items-center gap-1 text-xs text-emerald-700 font-medium hover:underline cursor-pointer">
             <CheckCircle className="h-3.5 w-3.5" /> Submitted {formatDate(p.student_receipt_at)} · View
           </button>
         ) : (
-          <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
+          <span className="inline-flex items-center gap-1 text-xs text-emerald-700 font-medium">
             <CheckCircle className="h-3.5 w-3.5" /> Receipt confirmed {formatDate(p.student_receipt_at)}
           </span>
         )}
@@ -282,7 +282,7 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-primary">Next payment</p>
-                <p className="text-2xl font-bold text-sidebar-accent mt-1">{pesoFixed(next.amount)}</p>
+                <p className="text-2xl font-bold text-black mt-1">{pesoFixed(next.amount)}</p>
                 <p className="text-sm text-muted-foreground">{next.scheduled_date ? `Scheduled ${formatDate(next.scheduled_date)}` : "Date to be announced"} · via {next.method || "—"}</p>
               </div>
               <StatusBadge status={next.status} />
@@ -327,10 +327,10 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
             const list = issuesFor(p.id);
             const openIssue = list.find((i) => i.status === "Open");
             return (
-              <div key={p.id} className={`rounded-xl border p-4 space-y-3 ${isDisbursedPay ? "border-emerald-100 bg-emerald-50/40" : cancelled ? "border-muted opacity-75" : "border-muted"}`}>
+              <div key={p.id} className={`rounded-xl border p-4 space-y-3 ${isDisbursedPay ? "border-emerald-100 bg-emerald-50/40" : cancelled ? "border-muted bg-muted/40" : "border-muted"}`}>
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
-                    <p className="text-sm font-semibold text-sidebar-accent">
+                    <p className="text-sm font-semibold text-black">
                       {pesoFixed(p.amount)}
                       <span className="ml-2 text-xs font-normal text-muted-foreground">via {p.method || "—"}</span>
                     </p>
@@ -389,7 +389,7 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
             <Label className="text-sm font-medium mb-1.5 block">Tell us what happened</Label>
             <Textarea rows={4} value={issueText} maxLength={1000} className="rounded-xl" onChange={(e) => setIssueText(e.target.value)}
               placeholder="For example: I went to the office on the scheduled date but was told there was no payment for me." />
-            <p className={`text-xs mt-1 ${issueText.trim().length < 10 ? "text-warning" : "text-muted-foreground"}`}>{issueText.trim().length} / 1000 (minimum 10)</p>
+            <p className={`text-xs mt-1 ${issueText.trim().length < 10 ? "text-amber-700" : "text-muted-foreground"}`}>{issueText.trim().length} / 1000 (minimum 10)</p>
           </div>
           <DialogFooter>
             <Button variant="outline" className="rounded-xl" onClick={() => setIssueFor(null)}>Cancel</Button>
@@ -524,7 +524,10 @@ export default function StudentDashboardPage() {
 
   const loadDataInner = async () => {
     setLoading(true);
-    const { data: { user } } = await supabase.auth.getUser();
+    // The middleware has already verified the session for this page, so read it locally instead of
+    // another round trip to Supabase; row-level security still guards every query below.
+    const { data: { session } } = await supabase.auth.getSession();
+    const user = session?.user;
     if (!user) { router.push("/login"); return; }
     setUserEmail(user.email || "");
     setUserId(user.id);
@@ -922,7 +925,7 @@ export default function StudentDashboardPage() {
         <ul className="space-y-1.5">
           {checks.map((c) => (
             <li key={c.key} className="flex items-start gap-2 text-xs">
-              {c.ok ? <CheckCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-emerald-600" /> : <X className="h-3.5 w-3.5 mt-0.5 shrink-0 text-red-600" />}
+              {c.ok ? <CheckCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-emerald-700" /> : <X className="h-3.5 w-3.5 mt-0.5 shrink-0 text-red-600" />}
               <span><span className="font-medium text-foreground">{c.label}</span> <span className="text-muted-foreground">· {c.detail}</span></span>
             </li>
           ))}
@@ -936,7 +939,7 @@ export default function StudentDashboardPage() {
     <div className="space-y-5">
       {locked && (
         <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-          <Lock className="h-4 w-4 text-amber-600 shrink-0" />
+          <Lock className="h-4 w-4 text-amber-700 shrink-0" />
           <p className="text-sm text-amber-800">
             You are approved for <strong>{approvedApps.map((a) => a.scholarships?.name ?? "a scholarship").join(", ")}</strong>. Your school details and documents are now locked, but you can still apply to other open programs. Each program reviews you against its own requirements.
           </p>
@@ -958,7 +961,7 @@ export default function StudentDashboardPage() {
         </div>
         {applyBlocked ? (
           <div className="mt-4 flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-700" />
             <span>{applyBlocked}</span>
           </div>
         ) : programsToApply.length === 0 ? (
@@ -1024,21 +1027,21 @@ export default function StudentDashboardPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="rounded-xl bg-muted border border-muted p-4">
                 <p className="text-xs text-muted-foreground mb-1">{currentApp.status === "Approved" ? "Approved award" : "Award per scholar"}</p>
-                <p className="text-xl font-bold text-sidebar-accent">{Number(appAward) > 0 ? peso(appAward) : "To be announced"}</p>
+                <p className="text-xl font-bold text-black">{Number(appAward) > 0 ? peso(appAward) : "To be announced"}</p>
               </div>
               <div className="rounded-xl bg-muted border border-muted p-4">
                 <p className="text-xs text-muted-foreground mb-1">Required grade</p>
-                <p className="text-xl font-bold text-sidebar-accent">{appMinGrade > 0 ? `${appMinGrade} and above` : "No minimum"}</p>
+                <p className="text-xl font-bold text-black">{appMinGrade > 0 ? `${appMinGrade} and above` : "No minimum"}</p>
               </div>
               {appProgram && (
                 <>
                   <div className="rounded-xl bg-muted border border-muted p-4">
                     <p className="text-xs text-muted-foreground mb-1">Application deadline</p>
-                    <p className="text-sm font-semibold text-sidebar-accent">{appProgram.deadline ? `${formatDate(appProgram.deadline)} (${deadlineLabel(appProgram.deadline)})` : "No closing date"}</p>
+                    <p className="text-sm font-semibold text-black">{appProgram.deadline ? `${formatDate(appProgram.deadline)} (${deadlineLabel(appProgram.deadline)})` : "No closing date"}</p>
                   </div>
                   <div className="rounded-xl bg-muted border border-muted p-4">
                     <p className="text-xs text-muted-foreground mb-1">Slots</p>
-                    <p className="text-sm font-semibold text-sidebar-accent">{slotsLabel(appProgram)}</p>
+                    <p className="text-sm font-semibold text-black">{slotsLabel(appProgram)}</p>
                   </div>
                 </>
               )}
@@ -1074,7 +1077,7 @@ export default function StudentDashboardPage() {
 
       {/* View */}
       <Dialog open={viewOpen && !!selectedApp} onOpenChange={setViewOpen}>
-        <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="rounded-2xl">
           <DialogHeader><DialogTitle className="font-display">Application details</DialogTitle></DialogHeader>
           {selectedApp && (
             <>
@@ -1140,12 +1143,12 @@ export default function StudentDashboardPage() {
 
       {/* Apply */}
       <Dialog open={applyDialogOpen} onOpenChange={setApplyDialogOpen}>
-        <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="rounded-2xl">
           <DialogHeader>
             <DialogTitle className="font-display">{isRenewing ? "Renew Scholarship" : "Apply for Scholarship"}</DialogTitle>
           </DialogHeader>
           <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-700" />
             <span>You can apply to every open program. <strong>Each program decides on its own</strong>: you are approved only if you meet that program&apos;s requirements{minGrade > 0 && <>, including an average grade of at least <strong>{minGrade}</strong></>}.</span>
           </div>
           {isRenewing && (
@@ -1241,7 +1244,7 @@ export default function StudentDashboardPage() {
                   <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${
                     !uploaded ? "bg-muted" : uploaded.status === "Disapproved" ? "bg-red-100" : uploaded.status === "Verified" ? "bg-emerald-100" : "bg-amber-100"}`}>
                     <FileText className={`h-5 w-5 ${
-                      !uploaded ? "text-muted-foreground" : uploaded.status === "Disapproved" ? "text-red-600" : uploaded.status === "Verified" ? "text-emerald-600" : "text-amber-600"}`} />
+                      !uploaded ? "text-muted-foreground" : uploaded.status === "Disapproved" ? "text-red-600" : uploaded.status === "Verified" ? "text-emerald-700" : "text-amber-700"}`} />
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-foreground truncate">{docType}</p>
