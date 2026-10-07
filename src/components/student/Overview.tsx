@@ -13,7 +13,8 @@ import ApplicationHistory from "@/components/student/ApplicationHistory";
 import { profileCompleteness } from "@/lib/profile";
 import { availabilityInfo, deadlineLabel, programChecks, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
 import { daysUntil, formatDate, peso } from "@/lib/format";
-import type { AppSettings } from "@/lib/settings";
+import { ayStart, type AppSettings } from "@/lib/settings";
+import { awardText } from "@/lib/release-schedule";
 import type { Tables } from "@/integrations/supabase/types";
 
 type AppRow = Tables<"applications"> & { scholarships: { name: string } | null };
@@ -24,7 +25,7 @@ export type OverviewProps = {
   applications: AppRow[];
   /** The application in focus: the approved one, else the latest still in review. */
   currentApp: AppRow | undefined;
-  /** This year's applications (withdrawn ones excluded). */
+  /** This academic year's applications (withdrawn ones excluded). */
   yearApps: AppRow[];
   /** Whether the student may submit another application now (applications open, no maintenance). */
   canApplyMore: boolean;
@@ -40,7 +41,8 @@ export type OverviewProps = {
   approvedTotal: number;
   locked: boolean;
   isDisbursed: boolean;
-  currentYear: number;
+  /** The current academic year, e.g. "2026-2027". */
+  academicYear: string;
   onNavigate: (tab: string) => void;
   onApply: (programId: string) => void;
   onViewApplication: (id: string) => void;
@@ -144,8 +146,8 @@ export default function Overview(p: OverviewProps) {
   const toApplyCount = scholarships.filter((s) => availabilityInfo(s).canApply && !appliedTo(s.id)).length;
   // While the student can still apply somewhere, the program list moves to the top of the dashboard.
   const promotePrograms = canApplyMore && toApplyCount > 0;
-  // A renewal means this program approved the student in an earlier year.
-  const programRenewal = !!program && applications.some((a) => a.status === "Approved" && a.scholarship_id === program.id && new Date(a.created_at).getUTCFullYear() < p.currentYear);
+  // A renewal means this program approved the student in an earlier academic year.
+  const programRenewal = !!program && applications.some((a) => a.status === "Approved" && a.scholarship_id === program.id && ayStart(a.academic_year) < ayStart(p.academicYear));
   const programGrade = program
     ? requirementLines(program, programRenewal ? settings.renewal_min_grade : settings.min_grade_requirement)
     : [];
@@ -220,7 +222,7 @@ export default function Overview(p: OverviewProps) {
               <div className="flex flex-wrap items-center gap-4 mt-3 text-xs text-muted-foreground">
                 {s.deadline && <span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {short(s.deadline)} ({deadlineLabel(s.deadline)})</span>}
                 <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" /> {slotsLabel(s)}</span>
-                {Number(s.amount) > 0 && <span>{peso(s.amount)} per scholar</span>}
+                {Number(s.amount) > 0 && <span>{awardText(s.amount, s.release_schedule)}</span>}
                 {!av.canApply && <span className="font-semibold text-destructive">{av.label}</span>}
               </div>
             </div>
@@ -230,9 +232,9 @@ export default function Overview(p: OverviewProps) {
     </Panel>
   );
 
-  const statusSub = !currentApp ? `No application for ${p.currentYear}`
-    : approvedApps.length > 0 ? `${approvedApps.length} approved of ${yearApps.length} for ${p.currentYear}`
-    : yearApps.length > 1 ? `${yearApps.length} applications for ${p.currentYear}`
+  const statusSub = !currentApp ? `No application for A.Y. ${p.academicYear}`
+    : approvedApps.length > 0 ? `${approvedApps.length} approved of ${yearApps.length} for A.Y. ${p.academicYear}`
+    : yearApps.length > 1 ? `${yearApps.length} applications for A.Y. ${p.academicYear}`
     : currentApp.status === "Disapproved" ? "See the reason in your history"
     : currentApp.status === "Waitlisted" ? "On the waitlist"
     : `${currentApp.is_renewal ? "Renewal · " : ""}Submitted ${new Date(currentApp.created_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}`;
@@ -394,7 +396,7 @@ export default function Overview(p: OverviewProps) {
               <DialogHeader><DialogTitle className="font-display">{program.name}</DialogTitle></DialogHeader>
               {program.description && <p className="text-sm text-muted-foreground leading-relaxed">{program.description}</p>}
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><p className="text-xs text-muted-foreground mb-0.5">Award</p><p className="font-semibold">{Number(program.amount) > 0 ? `${peso(program.amount)} per scholar` : "To be announced"}</p></div>
+                <div><p className="text-xs text-muted-foreground mb-0.5">Award</p><p className="font-semibold">{Number(program.amount) > 0 ? awardText(program.amount, program.release_schedule) : "To be announced"}</p></div>
                 <div><p className="text-xs text-muted-foreground mb-0.5">Slots</p><p className="font-semibold">{slotsLabel(program)}</p></div>
                 <div><p className="text-xs text-muted-foreground mb-0.5">Opens</p><p className="font-semibold">{program.open_date ? short(program.open_date) : "Now"}</p></div>
                 <div><p className="text-xs text-muted-foreground mb-0.5">Deadline</p><p className="font-semibold">{program.deadline ? short(program.deadline) : "No closing date"}</p></div>

@@ -514,8 +514,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
     const receiptState = (p: Tables<"payments">) => (p.student_receipt_at ? `Receipt ${p.receipt_review_status.toLowerCase()}` : "No receipt submitted");
     const receiptRows = [...new Set(paid.map(receiptState))].sort().map((st) => [st, paid.filter((p) => receiptState(p) === st).length]);
     const docRows = open.filter((a) => s.within(a.created_at)).map((a) => {
-      const year = new Date(a.created_at).getFullYear();
-      const sameYear = new Set(data.applications.filter((x) => x.user_id === a.user_id && new Date(x.created_at).getFullYear() === year).map((x) => x.id));
+      const sameYear = new Set(data.applications.filter((x) => x.user_id === a.user_id && x.academic_year === a.academic_year).map((x) => x.id));
       const latest = data.requiredDocuments.map((type) => ({
         type,
         doc: data.documents

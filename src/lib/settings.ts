@@ -5,6 +5,20 @@ export type PaymentMethod = "Cash" | "Cheque";
 export const PAYMENT_METHODS: PaymentMethod[] = ["Cash", "Cheque"];
 export const SEMESTERS = ["1st Semester", "2nd Semester", "Summer"] as const;
 
+// The application cycle is the academic year (the academic_year setting): one application per program
+// per academic year, renewals, slots and budgets all follow it (migration 055).
+/** First year of an academic year like "2025-2026", or NaN. Same as ay_start() in the database. */
+export const ayStart = (ay: string | null | undefined) => {
+  const m = /^(\d{4})-\d{4}$/.exec(ay ?? "");
+  return m ? Number(m[1]) : NaN;
+};
+/** The academic year a date falls in, Philippine time, school year starting in June. Same as academic_year_of(). */
+export function academicYearOf(d: Date): string {
+  const [y, m] = d.toLocaleDateString("en-CA", { timeZone: "Asia/Manila" }).split("-").map(Number);
+  const start = m < 6 ? y - 1 : y;
+  return `${start}-${start + 1}`;
+}
+
 export interface AppSettings {
   academic_year: string;
   current_semester: string;
@@ -100,7 +114,8 @@ export function parseSettings(rows: { key: string; value: Json }[] | null | unde
     renewal_enabled: bool(raw.renewal_enabled, d.renewal_enabled),
     renewal_min_grade: num(raw.renewal_min_grade, d.renewal_min_grade),
     max_renewals: num(raw.max_renewals, d.max_renewals),
-    academic_year: str(raw.academic_year, d.academic_year),
+    // Unset: the academic year today falls in, as current_academic_year() does.
+    academic_year: str(raw.academic_year, academicYearOf(new Date())),
     current_semester: str(raw.current_semester, d.current_semester),
     min_grade_requirement: num(raw.min_grade_requirement, d.min_grade_requirement),
     max_scholarships_per_student: num(raw.max_scholarships_per_student, d.max_scholarships_per_student),

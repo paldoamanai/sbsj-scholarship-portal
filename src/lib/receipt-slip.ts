@@ -7,6 +7,8 @@ export type ReceiptSlip = {
   studentName: string;
   studentId?: string | null;
   program: string;
+  /** Which period the payment is for, e.g. "1st Semester 2026-2027". */
+  period?: string | null;
   amount: number;
   method: string | null;
   reference?: string | null;
@@ -29,6 +31,7 @@ function copy(s: ReceiptSlip, label: string, footer: string) {
       ${row("Received by", s.studentName)}
       ${s.studentId ? row("Student ID", s.studentId) : ""}
       ${row("Program", s.program)}
+      ${s.period ? row("Period", s.period) : ""}
       ${row("Amount", peso(s.amount))}
       ${row("Method", s.method || "—")}
       ${s.reference ? row(s.method === "Cheque" ? "Cheque No." : "Reference", s.reference) : ""}
@@ -127,6 +130,7 @@ export async function downloadReceiptSlipPDF(s: StudentReceiptSlip) {
     ["Received by", s.studentName],
     ["Student ID", s.studentId],
     ["Program", s.program],
+    ["Period", s.period],
     ["Amount", pdfPeso(s.amount)],
     ["Method", s.method || "—"],
     [s.method === "Cheque" ? "Cheque No." : "Reference", s.reference],
