@@ -244,6 +244,8 @@ export type Database = {
           student_receipt_ref: string | null
           student_receipt_at: string | null
           preferred_method: string | null
+          academic_year: string | null
+          term: string | null
           receipt_review_status: string
           receipt_review_note: string | null
           receipt_reviewed_by: string | null
@@ -270,6 +272,8 @@ export type Database = {
           student_receipt_ref?: string | null
           student_receipt_at?: string | null
           preferred_method?: string | null
+          academic_year?: string | null
+          term?: string | null
           receipt_review_status?: string
           receipt_review_note?: string | null
           receipt_reviewed_by?: string | null
@@ -296,6 +300,8 @@ export type Database = {
           student_receipt_ref?: string | null
           student_receipt_at?: string | null
           preferred_method?: string | null
+          academic_year?: string | null
+          term?: string | null
           receipt_review_status?: string
           receipt_review_note?: string | null
           receipt_reviewed_by?: string | null
@@ -653,6 +659,7 @@ export type Database = {
           year_levels: string[] | null
           municipality: string | null
           barangays: string[] | null
+          release_schedule: string
         }
         Insert: {
           id?: string
@@ -670,6 +677,7 @@ export type Database = {
           year_levels?: string[] | null
           municipality?: string | null
           barangays?: string[] | null
+          release_schedule?: string
         }
         Update: {
           id?: string
@@ -687,6 +695,7 @@ export type Database = {
           year_levels?: string[] | null
           municipality?: string | null
           barangays?: string[] | null
+          release_schedule?: string
         }
         Relationships: []
       }
@@ -858,6 +867,7 @@ export type Database = {
           year_levels: string[] | null
           municipality: string | null
           barangays: string[] | null
+          release_schedule: string
           created_at: string
           availability: "open" | "upcoming" | "closed" | "full"
         }[]

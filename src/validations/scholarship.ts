@@ -20,6 +20,7 @@ export const scholarshipSchema = z
     municipality: optionalText(80),
     barangays: z.array(z.enum(BARANGAYS)),
     is_active: z.boolean(),
+    release_schedule: z.enum(["yearly", "semester"], { errorMap: () => ({ message: "Choose how the award is released" }) }),
   })
   .refine((d) => !d.open_date || !d.deadline || d.open_date <= d.deadline, {
     message: "The opening date must be on or before the deadline",

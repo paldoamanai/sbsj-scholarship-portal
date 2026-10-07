@@ -37,7 +37,7 @@ import NotificationPreferences from "@/components/notifications/NotificationPref
 import type { Tables } from "@/integrations/supabase/types";
 import { profileFromUserMetadata } from "@/lib/registration-profile";
 import { useSystemSettings } from "@/hooks/use-system-settings";
-import { applicationsBlockedReason } from "@/lib/settings";
+import { applicationsBlockedReason, ayStart } from "@/lib/settings";
 import { DOC_MIME, documentPath, uploadUserDocument } from "@/lib/documents";
 import { uploadPendingDocuments } from "@/lib/pending-documents";
 import { availabilityInfo, programChecks, requirementLines, sameTown, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
@@ -48,6 +48,7 @@ import ApplicationHistory, { DisapprovalReason } from "@/components/student/Appl
 import HelpSection from "@/components/student/HelpSection";
 import { printAwardNotice } from "@/lib/award-notice";
 import { downloadReceiptSlipPDF } from "@/lib/receipt-slip";
+import { termLabel } from "@/lib/release-schedule";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Payment = Tables<"payments">;
@@ -113,14 +114,14 @@ function useReceiptSubmit(onSubmitted: () => void) {
 
   // Soft copy of the acknowledgment slip, once the receipt number is confirmed (migration 053).
   const [downloadingFor, setDownloadingFor] = useState<string | null>(null);
-  const downloadSlip = async (paymentId: string) => {
+  const downloadSlip = async (paymentId: string, period?: string | null) => {
     setDownloadingFor(paymentId);
     try {
       const { data, error } = await supabase.rpc("get_my_receipt_slip", { _payment_id: paymentId });
       const slip = data?.[0];
       if (error || !slip) { toast.error("Could not download your slip", { description: error?.message }); return; }
       await downloadReceiptSlipPDF({
-        receiptNo: slip.receipt_no, studentName: slip.student_name, studentId: slip.student_id, program: slip.program,
+        receiptNo: slip.receipt_no, studentName: slip.student_name, studentId: slip.student_id, program: slip.program, period,
         amount: Number(slip.amount), method: slip.method, reference: slip.reference,
         disbursedAt: slip.disbursed_at, confirmedAt: slip.confirmed_at,
       });
@@ -199,7 +200,7 @@ function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl 
         )}
         <p className={`text-[11px] font-semibold ${accepted ? "text-emerald-700" : "text-amber-700"}`}>{accepted ? (p.receipt_reviewed_by ? "Accepted by the office" : "Confirmed") : "Waiting for the office to review"}</p>
         {accepted && p.student_receipt_ref && (
-          <Button size="sm" variant="outline" className="h-7 px-2 text-xs rounded-lg" disabled={downloadingFor === p.id} onClick={() => downloadSlip(p.id)}>
+          <Button size="sm" variant="outline" className="h-7 px-2 text-xs rounded-lg" disabled={downloadingFor === p.id} onClick={() => downloadSlip(p.id, termLabel(p.term, p.academic_year) || null)}>
             {downloadingFor === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />} Download slip (PDF)
           </Button>
         )}
@@ -277,9 +278,9 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
 
   const downloadCsv = () => {
     const rows = [
-      ["Reference", "Amount", "Method", "Status", "Scheduled", "Disbursed", "Receipt ref.", "Receipt review"],
+      ["Period", "Reference", "Amount", "Method", "Status", "Scheduled", "Disbursed", "Receipt ref.", "Receipt review"],
       ...payments.map((p) => [
-        p.reference ?? "", p.amount.toFixed(2), p.method ?? "", p.status, p.scheduled_date ?? "",
+        termLabel(p.term, p.academic_year), p.reference ?? "", p.amount.toFixed(2), p.method ?? "", p.status, p.scheduled_date ?? "",
         p.disbursed_at ? p.disbursed_at.slice(0, 10) : "",
         p.student_receipt_at ? (p.student_receipt_ref ?? (p.student_receipt_path ? "File" : "Confirmed")) : "",
         p.student_receipt_at ? p.receipt_review_status : "",
@@ -316,7 +317,7 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-primary">Next payment</p>
                 <p className="text-2xl font-bold text-black mt-1">{pesoFixed(next.amount)}</p>
-                <p className="text-sm text-muted-foreground">{next.scheduled_date ? `Scheduled ${formatDate(next.scheduled_date)}` : "Date to be announced"} · via {next.method || "—"}</p>
+                <p className="text-sm text-muted-foreground">{termLabel(next.term, next.academic_year) && `${termLabel(next.term, next.academic_year)} · `}{next.scheduled_date ? `Scheduled ${formatDate(next.scheduled_date)}` : "Date to be announced"} · via {next.method || "—"}</p>
               </div>
               <StatusBadge status={next.status} />
             </div>
@@ -367,6 +368,7 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
                       {pesoFixed(p.amount)}
                       <span className="ml-2 text-xs font-normal text-muted-foreground">via {p.method || "—"}</span>
                     </p>
+                    {termLabel(p.term, p.academic_year) && <p className="text-xs font-medium text-primary mt-0.5">{termLabel(p.term, p.academic_year)}</p>}
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {p.reference ? `${p.method === "Cheque" ? "Cheque no." : "Ref"}: ${p.reference}` : "No reference yet"}
                       {" · "}{isDisbursedPay ? `Disbursed ${formatDate(p.disbursed_at)}` : p.scheduled_date ? `Scheduled ${formatDate(p.scheduled_date)}` : "Date to be announced"}
@@ -729,10 +731,11 @@ export default function StudentDashboardPage() {
     return () => { supabase.removeChannel(channel); };
   }, [userId]);
 
-  // UTC year, matching the server and database checks (one application per program per year).
-  const currentYear  = new Date().getUTCFullYear();
-  // This year's applications. A withdrawn one no longer counts: that program can be applied to again.
-  const yearApps     = applications.filter((app) => app.status !== "Withdrawn" && new Date(app.created_at).getUTCFullYear() === currentYear);
+  // The academic year setting, matching the server and database checks (one application per program
+  // per academic year).
+  const academicYear = settings.academic_year;
+  // This academic year's applications. A withdrawn one no longer counts: that program can be applied to again.
+  const yearApps     = applications.filter((app) => app.status !== "Withdrawn" && app.academic_year === academicYear);
   const yearAppIds   = new Set(yearApps.map((a) => a.id));
   // Students may apply to, and be approved for, every open program; each program decides on its own.
   const approvedApps = yearApps.filter((a) => a.status === "Approved");
@@ -744,7 +747,7 @@ export default function StudentDashboardPage() {
   const isDisbursed  = currentApp?.disbursement_status === "Disbursed";
   const isApproved   = !!approvedApp;
   const locked       = isApproved || isDisbursed;
-  // Open programs this student hasn't applied to yet this year.
+  // Open programs this student hasn't applied to yet this academic year.
   const programsToApply = scholarships.filter((s) => availabilityInfo(s).canApply && !appliedProgramIds.has(s.id));
   const canApplyMore = !applyBlocked;
   const selectedApp  = applications.find((a) => a.id === selectedAppId);
@@ -763,7 +766,7 @@ export default function StudentDashboardPage() {
   const unreadCount = unreadTotal;
   useUnreadTitle(unreadTotal);
   const requiredDocTypes = settings.required_documents;
-  // Documents are shared by all of this year's applications: filed with any of them, or still
+  // Documents are shared by all of this academic year's applications: filed with any of them, or still
   // unattached (uploaded ahead of applying). Documents tied to older years don't count. Latest wins.
   const inDocSet = (d: Tables<"documents">) => !d.application_id || yearAppIds.has(d.application_id);
   const docByType = new Map<string, Tables<"documents">>();
@@ -776,8 +779,8 @@ export default function StudentDashboardPage() {
   const docsUploaded = requiredDocTypes.filter(docOk).length;
   const missingDocs = requiredDocTypes.filter(t => !docOk(t));
 
-  // Renewal: approved for the chosen program in an earlier year means this one renews it.
-  const approvedBefore = applications.filter((a) => a.status === "Approved" && a.scholarship_id === applyScholarshipId && new Date(a.created_at).getUTCFullYear() < currentYear).length;
+  // Renewal: approved for the chosen program in an earlier academic year means this one renews it.
+  const approvedBefore = applications.filter((a) => a.status === "Approved" && a.scholarship_id === applyScholarshipId && ayStart(a.academic_year) < ayStart(academicYear)).length;
   const isRenewing = approvedBefore > 0;
   const minGrade = isRenewing ? settings.renewal_min_grade : settings.min_grade_requirement;
   const myGrade = profile?.average_grade ?? null;
@@ -982,7 +985,7 @@ export default function StudentDashboardPage() {
   const viewApplication = (id: string) => { setSelectedAppId(id); setViewOpen(true); };
   const withdrawPrompt = (a: typeof applications[number]) => { setSelectedAppId(a.id); setWithdrawOpen(true); };
 
-  // Documents shown with an application: this year's shared set, or what was filed with an older one.
+  // Documents shown with an application: this academic year's shared set, or what was filed with an older one.
   const docsFor = (a: typeof applications[number]) => {
     if (yearAppIds.has(a.id)) return [...docByType.values()];
     const latest = new Map<string, Tables<"documents">>();
@@ -1520,7 +1523,7 @@ export default function StudentDashboardPage() {
       default:              return (
         <Overview displayName={displayName} profile={profile} applications={applications} currentApp={currentApp} yearApps={yearApps} canApplyMore={canApplyMore} payments={payments}
           issues={issues} gradeUpdates={gradeUpdates} scholarships={scholarships} notifications={notifications} settings={settings}
-          applyBlocked={applyBlocked} approvedTotal={approvedTotal} locked={locked} isDisbursed={isDisbursed} currentYear={currentYear}
+          applyBlocked={applyBlocked} approvedTotal={approvedTotal} locked={locked} isDisbursed={isDisbursed} academicYear={academicYear}
           docStatus={{
             uploaded: docsUploaded, required: requiredDocTypes.length, missing: missingDocs,
             disapproved: requiredDocTypes.filter((t) => docByType.get(t)?.status === "Disapproved").map((t) => ({ type: t, note: docByType.get(t)?.review_note ?? null })),

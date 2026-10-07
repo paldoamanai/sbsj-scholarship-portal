@@ -30,7 +30,7 @@ interface Props {
 
 const LABELS: Record<SettingKey, string> = {
   academic_year: "Academic year", current_semester: "Semester", min_grade_requirement: "Minimum grade",
-  max_scholarships_per_student: "Max applications per year", payment_methods: "Payment methods",
+  max_scholarships_per_student: "Max applications per academic year", payment_methods: "Payment methods",
   email_notifications: "Email notifications", applications_open: "Applications open",
   application_open_date: "Opening date", application_close_date: "Closing date",
   maintenance_mode: "Maintenance mode", maintenance_message: "Maintenance message",
@@ -151,7 +151,7 @@ export default function SettingsPanel({ rows, auditLogs, onSave, readOnly = fals
       <fieldset disabled={readOnly} className="space-y-4 min-w-0">
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Academic Year & Semester</CardTitle><CardDescription>New applications are stamped with these.</CardDescription></CardHeader>
+        <CardHeader><CardTitle className="text-base">Academic Year & Semester</CardTitle><CardDescription>New applications are stamped with these. Changing the academic year starts a new cycle: students can apply to every program again, earlier scholars apply as renewals, and program slots and budgets refill.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div><Label>Academic Year</Label><Input value={draft.academic_year} placeholder="2025-2026" onChange={(e) => set("academic_year", e.target.value)} /><Err k="academic_year" /></div>

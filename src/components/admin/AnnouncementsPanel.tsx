@@ -20,8 +20,8 @@ import type { Tables } from "@/integrations/supabase/types";
 const AUDIENCES: Record<string, { label: string; hint: string }> = {
   all: { label: "All active students", hint: "Everyone with an active account" },
   scholars: { label: "Scholars", hint: "Students who have ever been approved" },
-  applicants: { label: "Current applicants", hint: "Pending or waitlisted this year" },
-  no_application: { label: "Not yet applied", hint: "No application this year" },
+  applicants: { label: "Current applicants", hint: "Pending or waitlisted this academic year" },
+  no_application: { label: "Not yet applied", hint: "No application this academic year" },
 };
 
 const LINKS: Record<string, string> = {

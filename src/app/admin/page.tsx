@@ -48,6 +48,7 @@ import {
   type DocSummary, type ReportData, type ReportDef, type StaffMember,
 } from "@/lib/reports";
 import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
+import { RELEASE_SCHEDULES, asSchedule, openTerms, secondSemesterGradeWarning, termAmount, termLabel, termsFor, type PaymentTerm } from "@/lib/release-schedule";
 import { permissionsFor, ROLE_LABEL } from "@/lib/permissions";
 import { printReceiptSlip } from "@/lib/receipt-slip";
 import type { Tables, Json } from "@/integrations/supabase/types";
@@ -151,6 +152,14 @@ export default function AdminDashboardPage() {
   const [payDialog, setPayDialog] = useState<"new" | Tables<"payments"> | null>(null);
   const [payAppId, setPayAppId] = useState("");
   const [payMethod, setPayMethod] = useState<"Cash" | "Cheque">("Cash");
+  // Which period a payment is for (null: an older payment made before payments had a term).
+  const [payTerm, setPayTerm] = useState<PaymentTerm | null>(null);
+  // Scheduling one semester's payments for every eligible scholar at once.
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkTerm, setBulkTerm] = useState<PaymentTerm>("1st Semester");
+  const [bulkPicked, setBulkPicked] = useState<Set<string>>(new Set());
+  const [bulkDate, setBulkDate] = useState("");
+  const [bulkPayBusy, setBulkPayBusy] = useState(false);
   const [cancelPay, setCancelPay] = useState<Tables<"payments"> | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [payIssues, setPayIssues] = useState<Tables<"payment_issues">[]>([]);
@@ -521,16 +530,63 @@ export default function AdminDashboardPage() {
   }, [viewStudent?.id, docsVersion]);
 
   const isClosed = (sch: Tables<"scholarships">) => !!sch.deadline && sch.deadline < new Date().toISOString().slice(0, 10);
-  const approvedCount = (schId: string) => applications.filter((a) => a.scholarship_id === schId && a.status === "Approved").length;
+  // Slots and budgets are per academic year: they count that year's approvals (the current one by default).
+  const currentAY = parseSettings(systemSettings).academic_year;
+  const approvedCount = (schId: string, ay = currentAY) => applications.filter((a) => a.scholarship_id === schId && a.status === "Approved" && a.academic_year === ay).length;
   // Money committed to a program: approved awards (the program amount where none was set).
-  const committedFor = (sch: Tables<"scholarships">) =>
-    applications.filter((a) => a.scholarship_id === sch.id && a.status === "Approved")
+  const committedFor = (sch: Tables<"scholarships">, ay = currentAY) =>
+    applications.filter((a) => a.scholarship_id === sch.id && a.status === "Approved" && a.academic_year === ay)
       .reduce((t, a) => t + Number(a.amount_approved ?? sch.amount ?? 0), 0);
-  // Default payment amount for an application: its approved award, else the program's award.
-  const awardFor = (appId: string) => {
-    const a = applications.find((x) => x.id === appId);
-    const v = Number(a?.amount_approved ?? scholarships.find((x) => x.id === a?.scholarship_id)?.amount ?? 0);
+  // How an application's award is released, and which of its terms have no payment yet.
+  const scheduleOf = (a: { scholarship_id: string | null }) => asSchedule(scholarships.find((x) => x.id === a.scholarship_id)?.release_schedule);
+  const awardOf = (a: { scholarship_id: string | null; amount_approved: number | null }) =>
+    Number(a.amount_approved ?? scholarships.find((x) => x.id === a.scholarship_id)?.amount ?? 0);
+  const paymentsOf = (appId: string) => payments.filter((p) => p.application_id === appId);
+  const openTermsOf = (a: { id: string; scholarship_id: string | null; amount_approved: number | null }) =>
+    openTerms(scheduleOf(a), awardOf(a), paymentsOf(a.id));
+  // A term's default amount: its share of the award, but never more than what's left of it.
+  const termDefaultAmount = (a: { id: string; scholarship_id: string | null; amount_approved: number | null }) => {
+    const award = awardOf(a);
+    const left = award - paymentsOf(a.id).filter((p) => p.status !== "Cancelled").reduce((t, p) => t + Number(p.amount), 0);
+    const v = Math.min(termAmount(award, scheduleOf(a)), left);
     return v > 0 ? v : "";
+  };
+  // Before a 2nd-semester payment: a verified 1st-semester grade that meets the application's minimum.
+  const gradeWarningFor = (a: { user_id: string; scholarship_id: string | null; academic_year: string | null; is_renewal: boolean }, term: string | null) => {
+    if (term !== "2nd Semester") return null;
+    const s = parseSettings(systemSettings);
+    const program = scholarships.find((x) => x.id === a.scholarship_id);
+    const min = a.is_renewal && s.renewal_enabled ? s.renewal_min_grade : Math.max(Number(program?.min_grade ?? 0), s.min_grade_requirement);
+    return secondSemesterGradeWarning(profiles.find((x) => x.id === a.user_id), a.academic_year, min);
+  };
+  // The first open term of an application, preferring the semester set in Settings.
+  const defaultTermFor = (appId: string): PaymentTerm | null => {
+    const a = applications.find((x) => x.id === appId);
+    if (!a) return null;
+    const open = openTermsOf(a);
+    const sem = parseSettings(systemSettings).current_semester as PaymentTerm;
+    return open.includes(sem) ? sem : open[0] ?? termsFor(scheduleOf(a))[0];
+  };
+  // Scholars of per-semester programs in the current academic year who still need this term's payment.
+  const bulkCandidates = (term: PaymentTerm) => applications
+    .filter((a) => a.status === "Approved" && a.academic_year === currentAY && scheduleOf(a) === "semester" && openTermsOf(a).includes(term))
+    .map((a) => ({ app: a, amount: Number(termDefaultAmount(a) || 0), warning: gradeWarningFor(a, term) }))
+    .filter((c) => c.amount > 0);
+  const scheduleBulk = async () => {
+    const picked = bulkCandidates(bulkTerm).filter((c) => bulkPicked.has(c.app.id));
+    if (picked.length === 0) return;
+    const method = parseSettings(systemSettings).default_payment_method;
+    const rows = picked.map((c) => ({
+      application_id: c.app.id, user_id: c.app.user_id, amount: c.amount, method, term: bulkTerm,
+      scheduled_date: bulkDate || null, status: "Pending",
+    }));
+    setBulkPayBusy(true);
+    const { data, error } = await supabase.from("payments").insert(rows).select("id");
+    setBulkPayBusy(false);
+    if (error) { toast.error("Couldn't schedule the payments", { description: error.message }); return; }
+    await logAudit("bulk_schedule_payments", "payments", undefined, null, { term: bulkTerm, academic_year: currentAY, count: rows.length, payment_ids: (data ?? []).map((d) => d.id) });
+    toast.success(`Scheduled ${rows.length} ${bulkTerm} payment${rows.length === 1 ? "" : "s"}`);
+    setBulkOpen(false); loadData();
   };
   const applicantCount = (schId: string) => applications.filter((a) => a.scholarship_id === schId).length;
   const filteredScholarships = scholarships.filter((sch) => {
@@ -553,6 +609,7 @@ export default function AdminDashboardPage() {
       open_date: text("open_date") || null, deadline: text("deadline") || null,
       min_grade: text("min_grade").trim() === "" ? null : Number(text("min_grade")),
       year_levels: schYearLevels, municipality: HOME_MUNICIPALITY, barangays: schBarangays, is_active: schActive,
+      release_schedule: text("release_schedule") || "yearly",
     });
     if (!parsed.success) { toast.error(parsed.error.issues[0]?.message ?? "Check the form"); return; }
     const payload = parsed.data;
@@ -591,6 +648,7 @@ export default function AdminDashboardPage() {
       name: `${sch.name} (copy)`, description: sch.description, eligibility: sch.eligibility,
       amount: sch.amount, total_budget: sch.total_budget, slots: sch.slots, min_grade: sch.min_grade,
       year_levels: sch.year_levels, municipality: sch.municipality, barangays: sch.barangays, open_date: null, deadline: null, is_active: false,
+      release_schedule: sch.release_schedule,
     };
     const { data, error } = await supabase.from("scholarships").insert(copy).select().single();
     if (error) { toast.error(error.message); return; }
@@ -639,7 +697,7 @@ export default function AdminDashboardPage() {
   const pagedPayments = filteredPayments.slice((currentPayPage - 1) * PAY_PAGE_SIZE, currentPayPage * PAY_PAGE_SIZE);
 
   const openNewPayment = (applicationId = "") => {
-    setPayAppId(applicationId); setPayMethod(parseSettings(systemSettings).default_payment_method); setPayDialog("new");
+    setPayAppId(applicationId); setPayTerm(defaultTermFor(applicationId)); setPayMethod(parseSettings(systemSettings).default_payment_method); setPayDialog("new");
   };
 
   const savePayment = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -653,11 +711,12 @@ export default function AdminDashboardPage() {
       reference: String(fd.get("reference") || "").trim() || null,
       scheduled_date: String(fd.get("scheduled_date") || "") || null,
       notes: String(fd.get("notes") || "").trim() || null,
+      ...(payTerm ? { term: payTerm } : {}),
     };
     if (payDialog && payDialog !== "new") {
       const { error } = await supabase.from("payments").update(fields).eq("id", payDialog.id);
       if (error) { toast.error(error.message); return; }
-      await logAudit("update_payment", "payments", payDialog.id, { amount: payDialog.amount, method: payDialog.method, reference: payDialog.reference, scheduled_date: payDialog.scheduled_date }, fields);
+      await logAudit("update_payment", "payments", payDialog.id, { amount: payDialog.amount, method: payDialog.method, reference: payDialog.reference, scheduled_date: payDialog.scheduled_date, term: payDialog.term }, fields);
       toast.success("Payment updated");
     } else {
       const app = applications.find((a) => a.id === payAppId);
@@ -696,7 +755,7 @@ export default function AdminDashboardPage() {
     const receiptNo = receiptNos[p.id];
     if (!receiptNo) { toast.error("This payment has no receipt number"); return; }
     const prof = profiles.find((x) => x.id === p.user_id);
-    printReceiptSlip({ receiptNo, studentName: payStudent(p), studentId: prof?.student_id_number, program: payProgram(p), amount: p.amount, method, reference });
+    printReceiptSlip({ receiptNo, studentName: payStudent(p), studentId: prof?.student_id_number, program: payProgram(p), period: termLabel(p.term, p.academic_year) || null, amount: p.amount, method, reference });
   };
 
   // Verify or disapprove a grade a student submitted. Verifying replaces their average grade; the student is notified.
@@ -928,13 +987,12 @@ export default function AdminDashboardPage() {
   };
 
   // Each program (office) decides on its own: the student must pass that program's requirements and
-  // have every required document verified. Documents are shared by the student's applications for the year.
-  const requirementChecks = (a: { id: string; user_id: string; created_at: string; scholarship_id: string | null; is_renewal: boolean }): RequirementCheck[] => {
+  // have every required document verified. Documents are shared by the student's applications for the academic year.
+  const requirementChecks = (a: { id: string; user_id: string; academic_year: string | null; scholarship_id: string | null; is_renewal: boolean }): RequirementCheck[] => {
     const settings = parseSettings(systemSettings);
     const program = scholarships.find((sc) => sc.id === a.scholarship_id);
     const profile = profiles.find((pr) => pr.id === a.user_id);
-    const year = new Date(a.created_at).getFullYear();
-    const sameYearIds = new Set(applications.filter((x) => x.user_id === a.user_id && new Date(x.created_at).getFullYear() === year).map((x) => x.id));
+    const sameYearIds = new Set(applications.filter((x) => x.user_id === a.user_id && x.academic_year === a.academic_year).map((x) => x.id));
     const docs = settings.required_documents.map((type): RequirementCheck => {
       // Latest copy wins.
       const latest = allDocs
@@ -949,12 +1007,12 @@ export default function AdminDashboardPage() {
     return [...rules, ...docs];
   };
 
-  // Slots and budget left in the application's program. The database enforces the same limits.
+  // Slots and budget left in the application's program for its academic year. The database enforces the same limits.
   const capacityFor = (a: AppRow, award?: number) => {
     const sch = scholarships.find((x) => x.id === a.scholarship_id);
     if (!sch) return null;
-    const approved = approvedCount(sch.id);
-    const committed = committedFor(sch);
+    const approved = approvedCount(sch.id, a.academic_year ?? currentAY);
+    const committed = committedFor(sch, a.academic_year ?? currentAY);
     const amount = award ?? Number(a.amount_approved ?? sch.amount ?? 0);
     const slotsFull = sch.slots > 0 && approved >= sch.slots;
     const overBudget = Number(sch.total_budget) > 0 && committed + amount > Number(sch.total_budget);
@@ -1068,10 +1126,9 @@ export default function AdminDashboardPage() {
   };
 
   // Documents that count for an application: unattached ones, or those filed with one of the student's
-  // applications from the same year (the database's in_document_set()).
+  // applications from the same academic year (the database's in_document_set()).
   const countsForApp = (a: AppRow) => {
-    const year = new Date(a.created_at).getFullYear();
-    const ids = new Set(applications.filter((x) => x.user_id === a.user_id && new Date(x.created_at).getFullYear() === year).map((x) => x.id));
+    const ids = new Set(applications.filter((x) => x.user_id === a.user_id && x.academic_year === a.academic_year).map((x) => x.id));
     return (d: AdminDoc) => d.applicationId === null || ids.has(d.applicationId);
   };
   const logAudit = async (action: string, entityType: string, entityId?: string, prev?: Json | null, next?: Json | null) => {
@@ -1430,12 +1487,11 @@ export default function AdminDashboardPage() {
 
     const recent = [...inRange].sort((x, y) => new Date(payDate(y)).getTime() - new Date(payDate(x)).getTime()).slice(0, 8);
 
-    // Approved applications that have no payment yet.
-    const paidAppIds = new Set(payments.filter((p) => p.status !== "Cancelled").map((p) => p.application_id).filter(Boolean));
-    const awaiting = applications.filter((a) => a.status === "Approved" && !paidAppIds.has(a.id));
 
-    return { pipeline, byProgram, byMethod, monthly, recent, awaiting, disbursedTotal };
+    return { pipeline, byProgram, byMethod, monthly, recent, disbursedTotal };
   }, [payments, applications, scholarships, fundPeriod, fromDate, toDate]);
+  // Approved applications with a term that has no payment yet (a per-semester award has two).
+  const awaitingPayment = applications.filter((a) => a.status === "Approved" && openTermsOf(a).length > 0);
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
@@ -1947,14 +2003,22 @@ export default function AdminDashboardPage() {
                         <div><Label>Description</Label><Textarea name="description" defaultValue={cur?.description ?? ""} placeholder="Description" /></div>
                         <div><Label>Eligibility</Label><Textarea name="eligibility" defaultValue={cur?.eligibility ?? ""} placeholder="Who can apply?" /></div>
                         <div className="grid grid-cols-2 gap-3">
-                          <div><Label>Award per scholar (₱)</Label><Input name="amount" type="number" min={0} step="0.01" defaultValue={cur?.amount ?? 0} /></div>
-                          <div><Label>Total budget (₱, 0 = no cap)</Label><Input name="total_budget" type="number" min={0} step="0.01" defaultValue={cur?.total_budget ?? 0} /></div>
+                          <div><Label>Award per scholar per year (₱)</Label><Input name="amount" type="number" min={0} step="0.01" defaultValue={cur?.amount ?? 0} /></div>
+                          <div><Label>Budget per academic year (₱, 0 = no cap)</Label><Input name="total_budget" type="number" min={0} step="0.01" defaultValue={cur?.total_budget ?? 0} /></div>
                         </div>
                         <p className="-mt-2 text-xs text-muted-foreground">
-                          Approving a scholar awards this amount, and approvals stop once the budget is used up.
-                          {cur && cur.total_budget > 0 && ` Committed so far: ${formatPHP(committedFor(cur))} of ${formatPHP(cur.total_budget)}.`}
+                          Approving a scholar awards this amount, and approvals stop once the budget is used up. Slots and budget refill when a new academic year starts.
+                          {cur && cur.total_budget > 0 && ` Committed in ${currentAY}: ${formatPHP(committedFor(cur))} of ${formatPHP(cur.total_budget)}.`}
                         </p>
-                        <div><Label>Slots (0 = unlimited)</Label><Input name="slots" type="number" min={0} step={1} defaultValue={cur?.slots ?? ""} placeholder="50" /></div>
+                        <div>
+                          <Label>Release schedule</Label>
+                          <Select name="release_schedule" defaultValue={cur?.release_schedule ?? "yearly"}>
+                            <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                            <SelectContent>{RELEASE_SCHEDULES.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}</SelectContent>
+                          </Select>
+                          <p className="mt-1 text-xs text-muted-foreground">Once a year: the whole award in one payment. Per semester: half in the 1st semester and half in the 2nd.</p>
+                        </div>
+                        <div><Label>Slots per academic year (0 = unlimited)</Label><Input name="slots" type="number" min={0} step={1} defaultValue={cur?.slots ?? ""} placeholder="50" /></div>
                         <div className="grid grid-cols-2 gap-3">
                           <div><Label>Applications open</Label><Input name="open_date" type="date" defaultValue={cur?.open_date ?? ""} /></div>
                           <div><Label>Deadline</Label><Input name="deadline" type="date" defaultValue={cur?.deadline ?? ""} /></div>
@@ -2046,6 +2110,7 @@ export default function AdminDashboardPage() {
                           </TableCell>
                           <TableCell className="text-sm">
                             <p>{Number(sch.amount) > 0 ? `${formatPHP(Number(sch.amount))} each` : <span className="text-muted-foreground">No award set</span>}</p>
+                            <p className="text-xs text-muted-foreground">{sch.release_schedule === "semester" ? `Per semester${Number(sch.amount) > 0 ? ` (${formatPHP(termAmount(Number(sch.amount), "semester"))} each)` : ""}` : "Once a year"}</p>
                             {Number(sch.total_budget) > 0 && (() => {
                               const committed = committedFor(sch);
                               const pct = Math.min(100, Math.round((committed / Number(sch.total_budget)) * 100));
@@ -2285,15 +2350,15 @@ export default function AdminDashboardPage() {
                 </Card>
                 <Card>
                   <CardHeader className="flex-row items-center justify-between space-y-0">
-                    <CardTitle className="text-base">Awaiting Payment ({fundData.awaiting.length})</CardTitle>
+                    <CardTitle className="text-base">Awaiting Payment ({awaitingPayment.length})</CardTitle>
                     <Button size="sm" variant="ghost" onClick={() => { openNewPayment(); setActiveSection("disbursement"); }}>Schedule payment <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>
                   </CardHeader>
                   <Table>
                     <TableBody>
-                      {fundData.awaiting.length === 0 && <TableRow><TableCell className="text-center py-6 text-muted-foreground">All approved scholars have a payment</TableCell></TableRow>}
-                      {fundData.awaiting.map((a) => (
+                      {awaitingPayment.length === 0 && <TableRow><TableCell className="text-center py-6 text-muted-foreground">Every approved award is fully scheduled</TableCell></TableRow>}
+                      {awaitingPayment.map((a) => (
                         <TableRow key={a.id}>
-                          <TableCell><p className="font-medium">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"}</p><p className="text-xs text-muted-foreground">{a.scholarships?.name || "—"}</p></TableCell>
+                          <TableCell><p className="font-medium">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"}</p><p className="text-xs text-muted-foreground">{a.scholarships?.name || "—"}{scheduleOf(a) === "semester" && ` · ${openTermsOf(a).join(", ")}`}</p></TableCell>
                           <TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => { openNewPayment(a.id); setActiveSection("disbursement"); }}>Schedule payment</Button></TableCell>
                         </TableRow>
                       ))}
@@ -2326,6 +2391,11 @@ export default function AdminDashboardPage() {
                       <SelectItem value="issues">Open problems</SelectItem>
                     </SelectContent>
                   </Select>
+                  <Button variant="outline" onClick={() => {
+                    const sem = parseSettings(systemSettings).current_semester;
+                    const term: PaymentTerm = sem === "2nd Semester" ? "2nd Semester" : "1st Semester";
+                    setBulkTerm(term); setBulkDate(defaultScheduledDate); setBulkPicked(new Set(bulkCandidates(term).filter((c) => !c.warning).map((c) => c.app.id))); setBulkOpen(true);
+                  }}>Schedule semester payments</Button>
                   <Button className="bg-gradient-primary shadow-primary" onClick={() => openNewPayment()}><Plus className="mr-1 h-4 w-4" /> Schedule Payment</Button>
                 </div>
               </div>
@@ -2346,7 +2416,7 @@ export default function AdminDashboardPage() {
                       const open = p.status === "Pending" || p.status === "Processing";
                       return (
                         <TableRow key={p.id} className={p.status === "Cancelled" ? "opacity-60" : undefined}>
-                          <TableCell><p className="font-medium">{payStudent(p)}</p><p className="text-xs text-muted-foreground">{payProgram(p)}</p></TableCell>
+                          <TableCell><p className="font-medium">{payStudent(p)}</p><p className="text-xs text-muted-foreground">{payProgram(p)}{termLabel(p.term, p.academic_year) && ` · ${termLabel(p.term, p.academic_year)}`}</p></TableCell>
                           <TableCell className="font-mono text-xs">{p.reference || "—"}</TableCell>
                           <TableCell className="font-medium">{formatPHP(p.amount)}</TableCell>
                           <TableCell>
@@ -2428,7 +2498,7 @@ export default function AdminDashboardPage() {
                               <Button size="icon" variant="ghost" title="View receipt" onClick={() => viewReceipt(p)}><Receipt className="h-4 w-4" /></Button>
                             )}
                             {open && (<>
-                              <Button size="icon" variant="ghost" title="Edit" onClick={() => { setPayMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash"); setPayDialog(p); }}><Pencil className="h-4 w-4" /></Button>
+                              <Button size="icon" variant="ghost" title="Edit" onClick={() => { setPayMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash"); setPayTerm((p.term as PaymentTerm | null) ?? null); setPayDialog(p); }}><Pencil className="h-4 w-4" /></Button>
                               {p.status === "Pending" && (
                                 <Button size="sm" variant="outline" onClick={() => setPaymentStatus(p, "Processing")}>Process</Button>
                               )}
@@ -2465,6 +2535,8 @@ export default function AdminDashboardPage() {
                   <DialogHeader><DialogTitle className="font-display">{payDialog && payDialog !== "new" ? "Edit Payment" : "Schedule Payment"}</DialogTitle></DialogHeader>
                   {payDialog && (() => {
                     const cur = payDialog === "new" ? null : payDialog;
+                    const payApp = applications.find((a) => a.id === (cur ? cur.application_id : payAppId));
+                    const payWarning = payApp ? gradeWarningFor(payApp, payTerm) : null;
                     return (
                       <form key={cur?.id ?? `new-${payAppId}`} onSubmit={savePayment} className="space-y-4">
                         {cur ? (
@@ -2472,10 +2544,10 @@ export default function AdminDashboardPage() {
                         ) : (
                           <div>
                             <Label>Approved applicant *</Label>
-                            <Select value={payAppId} onValueChange={setPayAppId}>
-                              <SelectTrigger><SelectValue placeholder={fundData.awaiting.length ? "Select applicant" : "No approved applicants awaiting payment"} /></SelectTrigger>
+                            <Select value={payAppId} onValueChange={(v) => { setPayAppId(v); setPayTerm(defaultTermFor(v)); }}>
+                              <SelectTrigger><SelectValue placeholder={awaitingPayment.length ? "Select applicant" : "No approved applicants awaiting payment"} /></SelectTrigger>
                               <SelectContent>
-                                {fundData.awaiting.map((a) => (
+                                {awaitingPayment.map((a) => (
                                   <SelectItem key={a.id} value={a.id}>
                                     {a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"} — {a.scholarships?.name || "—"}
                                   </SelectItem>
@@ -2484,8 +2556,30 @@ export default function AdminDashboardPage() {
                             </Select>
                           </div>
                         )}
+                        {payApp && (
+                          <div>
+                            <Label>Period</Label>
+                            <div className="grid grid-cols-2 gap-3 mt-1">
+                              {termsFor(scheduleOf(payApp)).map((t) => {
+                                const taken = t !== cur?.term && !openTermsOf(payApp).includes(t);
+                                return (
+                                  <button key={t} type="button" disabled={taken || cur?.status === "Disbursed"} onClick={() => setPayTerm(t)}
+                                    className={`rounded-lg border p-2 text-sm font-medium ${taken ? "cursor-not-allowed opacity-50" : "cursor-pointer"} ${payTerm === t ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/40"}`}>
+                                    {t === "Yearly" ? `Whole year${payApp.academic_year ? ` ${payApp.academic_year}` : ""}` : t}{taken && " · scheduled"}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            {payWarning && (
+                              <p className="mt-2 flex items-start gap-1.5 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-foreground">
+                                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning mt-px" />
+                                <span>{payWarning}. You can still schedule this payment if the office approves it.</span>
+                              </p>
+                            )}
+                          </div>
+                        )}
                         <div className="grid grid-cols-2 gap-4">
-                          <div><Label>Amount (₱) *</Label><Input key={cur?.id ?? payAppId} name="amount" type="number" min={0.01} step="0.01" required defaultValue={cur?.amount ?? awardFor(payAppId)} /></div>
+                          <div><Label>Amount (₱) *</Label><Input key={cur?.id ?? `${payAppId}-${payTerm}`} name="amount" type="number" min={0.01} step="0.01" required defaultValue={cur?.amount ?? (payApp ? termDefaultAmount(payApp) : "")} /></div>
                           <div><Label>Scheduled date</Label><Input name="scheduled_date" type="date" defaultValue={cur ? (cur.scheduled_date ?? "") : defaultScheduledDate} /></div>
                         </div>
                         <div>
@@ -2502,6 +2596,62 @@ export default function AdminDashboardPage() {
                         <div><Label>Notes</Label><Textarea name="notes" defaultValue={cur?.notes ?? ""} placeholder="Optional" /></div>
                         <Button type="submit" className="w-full bg-gradient-primary" disabled={!cur && !payAppId}>{cur ? "Save Changes" : "Schedule Payment"}</Button>
                       </form>
+                    );
+                  })()}
+                </DialogContent>
+              </Dialog>
+
+              {/* Schedule one semester's payments for every eligible scholar */}
+              <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
+                <DialogContent className="max-w-2xl">
+                  <DialogHeader><DialogTitle className="font-display">Schedule semester payments</DialogTitle></DialogHeader>
+                  {bulkOpen && (() => {
+                    const list = bulkCandidates(bulkTerm);
+                    const picked = list.filter((c) => bulkPicked.has(c.app.id));
+                    const pickDefaults = (t: PaymentTerm) => setBulkPicked(new Set(bulkCandidates(t).filter((c) => !c.warning).map((c) => c.app.id)));
+                    return (
+                      <div className="space-y-4">
+                        <p className="text-sm text-muted-foreground">
+                          Approved scholars of per-semester programs in A.Y. {currentAY} who don&apos;t have a {bulkTerm} payment yet. Each gets half of their yearly award.
+                          {bulkTerm === "2nd Semester" && " Scholars without a verified 1st-semester grade that meets the minimum are left unticked; tick them to pay anyway."}
+                        </p>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <Label>Semester</Label>
+                            <Select value={bulkTerm} onValueChange={(v) => { setBulkTerm(v as PaymentTerm); pickDefaults(v as PaymentTerm); }}>
+                              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                              <SelectContent>{termsFor("semester").map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+                            </Select>
+                          </div>
+                          <div><Label>Scheduled date</Label><Input className="mt-1" type="date" value={bulkDate} onChange={(e) => setBulkDate(e.target.value)} /></div>
+                        </div>
+                        <div className="max-h-80 overflow-y-auto rounded-lg border divide-y">
+                          {list.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">No scholars need a {bulkTerm} payment.</p>}
+                          {list.map((c) => (
+                            <label key={c.app.id} className="flex items-start gap-3 p-3 cursor-pointer hover:bg-muted/40">
+                              <Checkbox className="mt-0.5" checked={bulkPicked.has(c.app.id)}
+                                onCheckedChange={(v) => setBulkPicked((prev) => { const n = new Set(prev); if (v) n.add(c.app.id); else n.delete(c.app.id); return n; })} />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium">
+                                  {c.app.profiles ? `${c.app.profiles.first_name || ""} ${c.app.profiles.last_name || ""}`.trim() : "Unknown"}
+                                  <span className="text-xs font-normal text-muted-foreground"> · {c.app.scholarships?.name || "—"}</span>
+                                </p>
+                                {c.warning
+                                  ? <p className="flex items-center gap-1 text-xs text-warning"><AlertTriangle className="h-3 w-3" /> {c.warning}</p>
+                                  : bulkTerm === "2nd Semester" && <p className="text-xs text-muted-foreground">1st-semester grade verified</p>}
+                              </div>
+                              <p className="text-sm font-medium tabular-nums">{formatPHP(c.amount)}</p>
+                            </label>
+                          ))}
+                        </div>
+                        <DialogFooter className="items-center">
+                          <p className="mr-auto text-sm text-muted-foreground">{picked.length} selected · {formatPHP(picked.reduce((t, c) => t + c.amount, 0))}</p>
+                          <Button variant="outline" onClick={() => setBulkOpen(false)}>Cancel</Button>
+                          <Button className="bg-gradient-primary" disabled={bulkPayBusy || picked.length === 0} onClick={scheduleBulk}>
+                            Schedule {picked.length} payment{picked.length === 1 ? "" : "s"}
+                          </Button>
+                        </DialogFooter>
+                      </div>
                     );
                   })()}
                 </DialogContent>
@@ -2714,7 +2864,7 @@ export default function AdminDashboardPage() {
                   <div className="space-y-3">
                     <p className="text-sm text-muted-foreground">This scholar has no payment yet. Schedule one first, then set its reference number and status.</p>
                     <Button variant="outline" onClick={() => {
-                      const app = fundData.awaiting.find((a) => a.user_id === editDisb.id);
+                      const app = awaitingPayment.find((a) => a.user_id === editDisb.id);
                       setEditDisb(null); openNewPayment(app?.id ?? ""); setActiveSection("disbursement");
                     }}>Schedule payment <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>
                   </div>
