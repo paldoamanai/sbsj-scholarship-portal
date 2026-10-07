@@ -238,14 +238,14 @@ DECLARE
   g public.grade_updates%ROWTYPE;
 BEGIN
   IF NOT public.staff_may(auth.uid(), 'review') THEN RAISE EXCEPTION 'Only reviewers and admins can do this'; END IF;
-  IF _status NOT IN ('Verified', 'Rejected') THEN RAISE EXCEPTION 'Choose Verified or Rejected'; END IF;
+  IF _status NOT IN ('Verified', 'Disapproved') THEN RAISE EXCEPTION 'Choose Verified or Disapproved'; END IF;
   SELECT * INTO g FROM public.grade_updates WHERE id = _id;
   IF NOT FOUND THEN RAISE EXCEPTION 'Grade update not found'; END IF;
   IF g.status <> 'Pending' THEN RAISE EXCEPTION 'This grade update was already reviewed'; END IF;
-  IF _status = 'Rejected' AND btrim(COALESCE(_note, '')) = '' THEN RAISE EXCEPTION 'Add a reason so the student knows what to fix'; END IF;
+  IF _status = 'Disapproved' AND btrim(COALESCE(_note, '')) = '' THEN RAISE EXCEPTION 'Add a reason so the student knows what to fix'; END IF;
 
   UPDATE public.grade_updates
-     SET status = _status, review_note = CASE WHEN _status = 'Rejected' THEN btrim(_note) ELSE NULL END,
+     SET status = _status, review_note = CASE WHEN _status = 'Disapproved' THEN btrim(_note) ELSE NULL END,
          reviewed_by = auth.uid(), reviewed_at = now()
    WHERE id = _id;
 
@@ -257,7 +257,7 @@ BEGIN
     PERFORM public.notify(g.user_id, 'Grade Update Needs Attention', 'Your grade update was not accepted. Reason: ' || btrim(_note) || ' Please submit it again.',
       'warning', 'verification', '/student-dashboard?section=profile', 'grade_updates', g.id);
   END IF;
-  PERFORM public.write_audit(CASE WHEN _status = 'Verified' THEN 'verify_grade' ELSE 'reject_grade' END, 'grade_updates', g.id,
+  PERFORM public.write_audit(CASE WHEN _status = 'Verified' THEN 'verify_grade' ELSE 'disapprove_grade' END, 'grade_updates', g.id,
     jsonb_build_object('status', 'Pending'), jsonb_build_object('status', _status, 'grade', g.grade, 'note', _note));
 END;
 $$;
@@ -273,18 +273,18 @@ DECLARE
   pay public.payments%ROWTYPE;
 BEGIN
   IF NOT public.staff_may(auth.uid(), 'finance') THEN RAISE EXCEPTION 'Only finance staff and admins can do this'; END IF;
-  IF _status NOT IN ('Accepted', 'Rejected') THEN RAISE EXCEPTION 'Choose Accepted or Rejected'; END IF;
+  IF _status NOT IN ('Accepted', 'Disapproved') THEN RAISE EXCEPTION 'Choose Accepted or Disapproved'; END IF;
 
   SELECT * INTO pay FROM public.payments WHERE id = _payment_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'Payment not found'; END IF;
   IF pay.student_receipt_at IS NULL THEN RAISE EXCEPTION 'The student has not submitted a receipt yet'; END IF;
-  IF _status = 'Rejected' AND btrim(COALESCE(_note, '')) = '' THEN
+  IF _status = 'Disapproved' AND btrim(COALESCE(_note, '')) = '' THEN
     RAISE EXCEPTION 'Add a reason so the student knows what to fix';
   END IF;
 
   UPDATE public.payments
      SET receipt_review_status = _status,
-         receipt_review_note = CASE WHEN _status = 'Rejected' THEN btrim(_note) ELSE NULL END,
+         receipt_review_note = CASE WHEN _status = 'Disapproved' THEN btrim(_note) ELSE NULL END,
          receipt_reviewed_by = auth.uid(), receipt_reviewed_at = now()
    WHERE id = _payment_id;
 
@@ -295,7 +295,7 @@ BEGIN
     PERFORM public.notify(pay.user_id, 'Receipt Needs Attention', 'Your receipt was not accepted. Reason: ' || btrim(_note) || ' Please submit a new one.',
       'warning', 'payment', '/student-dashboard?section=disbursement', 'payments', pay.id);
   END IF;
-  PERFORM public.write_audit(CASE WHEN _status = 'Accepted' THEN 'accept_receipt' ELSE 'reject_receipt' END, 'payments', pay.id,
+  PERFORM public.write_audit(CASE WHEN _status = 'Accepted' THEN 'accept_receipt' ELSE 'disapprove_receipt' END, 'payments', pay.id,
     jsonb_build_object('receipt_review_status', pay.receipt_review_status),
     jsonb_build_object('receipt_review_status', _status, 'note', _note));
 END;
