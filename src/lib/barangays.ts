@@ -1,13 +1,27 @@
 /**
- * Barangays of San Jose, Occidental Mindoro: students pick from this list, and programs can be limited
- * to some of them. VERIFY against the official PSGC list before relying on it; add or rename entries
- * here only (existing profile values that aren't on the list are kept and still shown).
+ * The 39 barangays of San Jose, Occidental Mindoro: students pick from this list, and programs can be
+ * limited to some of them. Add or rename entries here only (existing profile values that aren't on the
+ * list are kept and still shown).
  */
 export const HOME_MUNICIPALITY = "San Jose";
 
 export const BARANGAYS = [
+  "Ambulong",
+  "Ansiray",
   "Bagong Sikat",
+  "Bangkal",
+  "Barangay 1",
+  "Barangay 2",
+  "Barangay 3",
+  "Barangay 4",
+  "Barangay 5",
+  "Barangay 6",
+  "Barangay 7",
+  "Barangay 8",
+  "Batasan",
+  "Bayotbot",
   "Bubog",
+  "Buri",
   "Camburay",
   "Caminawit",
   "Catayungan",
@@ -24,17 +38,10 @@ export const BARANGAYS = [
   "Mapaya",
   "Monte Claro",
   "Murtha",
+  "Naibuan",
   "Natandol",
   "Pag-Asa",
   "Pawican",
-  "Poblacion I",
-  "Poblacion II",
-  "Poblacion III",
-  "Poblacion IV",
-  "Poblacion V",
-  "Poblacion VI",
-  "Poblacion VII",
-  "Poblacion VIII",
   "San Agustin",
   "San Isidro",
   "San Roque",
