@@ -244,12 +244,12 @@ INSERT INTO public.applications (
     NULL,
     '2026-04-25 08:45:00+08', '2026-04-25 08:45:00+08'
   ),
-  -- Jose: Rejected for STEM (missed aptitude test)
+  -- Jose: Disapproved for STEM (missed aptitude test)
   (
     'd0000000-0000-0000-0000-000000000005',
     'b0000000-0000-0000-0000-000000000005',
     'c0000000-0000-0000-0000-000000000003',
-    'Rejected', 'Pending',
+    'Disapproved', 'Pending',
     NULL,
     'Applicant did not complete the required technical aptitude assessment.',
     '2026-03-01 13:00:00+08', '2026-03-20 10:00:00+08'
@@ -367,8 +367,8 @@ INSERT INTO public.notifications (
   (
     '10000000-0000-0000-0000-000000000008',
     'b0000000-0000-0000-0000-000000000005',
-    'Application Rejected',
-    'We regret to inform you that your application for the SB STEM Scholarship has been rejected. Reason: Applicant did not complete the required technical aptitude assessment. You may reapply next semester.',
+    'Application Disapproved',
+    'We regret to inform you that your application for the SB STEM Scholarship has been disapproved. Reason: Applicant did not complete the required technical aptitude assessment. You may reapply next semester.',
     'error', false, '2026-03-20 10:05:00+08'
   )
 ON CONFLICT (id) DO NOTHING;
@@ -449,7 +449,7 @@ INSERT INTO public.audit_logs (
     'admin@sbsj.gov.ph',
     'UPDATE_APPLICATION_STATUS', 'applications',
     'd0000000-0000-0000-0000-000000000005',
-    '{"status":"Pending"}', '{"status":"Rejected","notes":"Applicant did not complete the required technical aptitude assessment."}',
+    '{"status":"Pending"}', '{"status":"Disapproved","notes":"Applicant did not complete the required technical aptitude assessment."}',
     '2026-03-20 10:00:00+08'
   )
 ON CONFLICT (id) DO NOTHING;

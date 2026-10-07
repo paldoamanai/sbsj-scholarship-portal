@@ -46,4 +46,48 @@ export function requirementLines(
 
 /** Where "Apply" should send someone. */
 export const applyHref = (programId: string, signedIn: boolean) =>
-  signedIn ? `/student-dashboard?section=application&apply=${encodeURIComponent(programId)}` : `/register?program=${encodeURIComponent(programId)}`;
+  signedIn ? `/student-dashboard?section=application&apply=${encodeURIComponent(programId)}` : "/register";
+
+export type RequirementCheck = { key: string; label: string; ok: boolean; detail: string };
+
+/**
+ * Whether a student meets one program's requirements, one line per rule. Each program (office) sets
+ * its own grade, year level and residency rules on top of the global minimum grade; a renewal of the
+ * same program is held to the renewal minimum instead. The database runs the same checks on approval.
+ */
+export function programChecks(
+  s: Pick<PublicScholarship, "min_grade" | "year_levels" | "municipality">,
+  profile: { average_grade: number | null; year_level: string | null; municipality: string | null } | null | undefined,
+  rules: { globalMinGrade: number; renewalMinGrade: number; renewalEnabled: boolean; isRenewal: boolean }
+): RequirementCheck[] {
+  const checks: RequirementCheck[] = [];
+  const renewal = rules.isRenewal && rules.renewalEnabled;
+  const programGrade = Number(s.min_grade ?? 0);
+  const grade = renewal ? rules.renewalMinGrade : Math.max(programGrade, rules.globalMinGrade);
+  if (grade > 0) {
+    const mine = profile?.average_grade ?? null;
+    checks.push({
+      key: "grade", label: `Average grade of at least ${grade}${renewal ? " (renewal)" : ""}`,
+      ok: mine != null && mine >= grade,
+      detail: mine == null ? "No average grade on the profile" : `Grade on file: ${mine}`,
+    });
+  }
+  if (s.year_levels && s.year_levels.length > 0) {
+    const mine = profile?.year_level ?? null;
+    checks.push({
+      key: "year", label: `Year level: ${s.year_levels.join(", ")}`,
+      ok: !!mine && s.year_levels.includes(mine),
+      detail: mine ? `Year level on file: ${mine}` : "No year level on the profile",
+    });
+  }
+  const town = s.municipality?.trim();
+  if (town) {
+    const mine = profile?.municipality?.trim() ?? "";
+    checks.push({
+      key: "residency", label: `Resident of ${town}`,
+      ok: mine.toLowerCase() === town.toLowerCase(),
+      detail: mine ? `Municipality on file: ${mine}` : "No municipality on the profile",
+    });
+  }
+  return checks;
+}

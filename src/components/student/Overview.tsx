@@ -8,7 +8,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import ProfileImage from "@/components/ProfileImage";
-import { Panel, SectionTitle, StatCard } from "@/components/student/ui";
+import { Panel, SectionTitle, StatCard, StatusBadge } from "@/components/student/ui";
+import ApplicationHistory from "@/components/student/ApplicationHistory";
 import { profileCompleteness } from "@/lib/profile";
 import { availabilityInfo, deadlineLabel, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
 import { daysUntil, formatDate, peso } from "@/lib/format";
@@ -21,11 +22,16 @@ export type OverviewProps = {
   displayName: string;
   profile: Tables<"profiles"> | null;
   applications: AppRow[];
+  /** The application in focus: the approved one, else the latest still in review. */
   currentApp: AppRow | undefined;
+  /** This year's applications (withdrawn ones excluded). */
+  yearApps: AppRow[];
+  /** Whether the student may submit another application now (applications open, no maintenance). */
+  canApplyMore: boolean;
   payments: Tables<"payments">[];
   issues: Tables<"payment_issues">[];
   gradeUpdates: Tables<"grade_updates">[];
-  docStatus: { uploaded: number; required: number; missing: string[]; rejected: { type: string; note: string | null }[] };
+  docStatus: { uploaded: number; required: number; missing: string[]; disapproved: { type: string; note: string | null }[] };
   scholarships: PublicScholarship[];
   notifications: Tables<"notifications">[];
   settings: AppSettings;
@@ -37,6 +43,7 @@ export type OverviewProps = {
   currentYear: number;
   onNavigate: (tab: string) => void;
   onApply: (programId: string) => void;
+  onViewApplication: (id: string) => void;
   unreadCount: number;
   onOpenNotification: (n: Tables<"notifications">) => void;
   onMarkAllRead: () => void;
@@ -54,7 +61,9 @@ const toneCls: Record<Action["tone"], string> = {
 };
 
 export default function Overview(p: OverviewProps) {
-  const { profile, applications, currentApp, payments, settings, applyBlocked, scholarships } = p;
+  const { profile, applications, currentApp, yearApps, canApplyMore, payments, settings, applyBlocked, scholarships } = p;
+  const appliedTo = (programId: string) => yearApps.find((a) => a.scholarship_id === programId);
+  const approvedApps = yearApps.filter((a) => a.status === "Approved");
   const [showAllPrograms, setShowAllPrograms] = useState(false);
   const [program, setProgram] = useState<PublicScholarship | null>(null);
 
@@ -74,7 +83,7 @@ export default function Overview(p: OverviewProps) {
     const out: { tone: "red" | "amber" | "blue"; text: string }[] = [];
     if (settings.maintenance_mode) out.push({ tone: "red", text: settings.maintenance_message });
     else if (applyBlocked) out.push({ tone: "amber", text: applyBlocked });
-    else if (!currentApp) {
+    else if (canApplyMore) {
       if (settings.application_close_date) {
         const d = daysUntil(settings.application_close_date);
         if (d >= 0 && d <= 14) out.push({ tone: "amber", text: `Applications close on ${short(settings.application_close_date)}${d === 0 ? " (today)" : ` (${d} day${d === 1 ? "" : "s"} left)`}.` });
@@ -85,34 +94,34 @@ export default function Overview(p: OverviewProps) {
       if (soonest?.deadline) out.push({ tone: "blue", text: `${soonest.name} closes ${daysUntil(soonest.deadline) === 0 ? "today" : `in ${daysUntil(soonest.deadline)} day${daysUntil(soonest.deadline) === 1 ? "" : "s"}`} (${short(soonest.deadline)}).` });
     }
     return out;
-  }, [settings, applyBlocked, currentApp, scholarships]);
+  }, [settings, applyBlocked, canApplyMore, scholarships]);
 
   // ── things that need the student ──
   const actions = useMemo(() => {
     const out: Action[] = [];
     const lastGrade = p.gradeUpdates[0];
 
-    p.docStatus.rejected.forEach((d) =>
+    p.docStatus.disapproved.forEach((d) =>
       out.push({ id: `doc-${d.type}`, tone: "red", title: `Upload a new ${d.type}`, detail: d.note ? `The office said: ${d.note}` : "The office didn't accept your copy.", tab: "documents", cta: "Replace" }));
 
-    live.filter((x) => x.status === "Disbursed" && (!x.student_receipt_at || x.receipt_review_status === "Rejected")).forEach((x) =>
-      out.push({ id: `rcpt-${x.id}`, tone: x.receipt_review_status === "Rejected" ? "red" : "amber",
-        title: x.receipt_review_status === "Rejected" ? `Send your receipt again for ${peso(x.amount)}` : `Submit your signed receipt for ${peso(x.amount)}`,
-        detail: x.receipt_review_status === "Rejected" ? x.receipt_review_note ?? undefined : "Upload it, or for cash confirm you received it.", tab: "disbursement", cta: "Open" }));
+    live.filter((x) => x.status === "Disbursed" && (!x.student_receipt_at || x.receipt_review_status === "Disapproved")).forEach((x) =>
+      out.push({ id: `rcpt-${x.id}`, tone: x.receipt_review_status === "Disapproved" ? "red" : "amber",
+        title: x.receipt_review_status === "Disapproved" ? `Re-enter your receipt number for ${peso(x.amount)}` : `Enter your receipt number for ${peso(x.amount)}`,
+        detail: x.receipt_review_status === "Disapproved" ? x.receipt_review_note ?? undefined : "Type the reference number printed on the receipt you signed.", tab: "disbursement", cta: "Open" }));
 
-    if (lastGrade?.status === "Rejected") {
+    if (lastGrade?.status === "Disapproved") {
       out.push({ id: "grade", tone: "red", title: "Your grade update was not accepted", detail: lastGrade.review_note ?? undefined, tab: "profile", cta: "Fix it" });
     }
 
     if (completeness.missing.length > 0) {
       out.push({ id: "profile", tone: "amber", title: `Complete your profile (${completeness.percent}%)`, detail: `Still needed: ${completeness.missing.map((m) => m.label).join(", ")}.`, tab: "profile", cta: "Complete" });
     }
-    const rejectedTypes = new Set(p.docStatus.rejected.map((d) => d.type));
-    const gone = p.docStatus.missing.filter((m) => !rejectedTypes.has(m));
-    if (gone.length > 0 && (!currentApp || currentApp.status === "Pending")) {
+    const disapprovedTypes = new Set(p.docStatus.disapproved.map((d) => d.type));
+    const gone = p.docStatus.missing.filter((m) => !disapprovedTypes.has(m));
+    if (gone.length > 0 && approvedApps.length === 0) {
       out.push({ id: "docs", tone: "amber", title: `Upload ${gone.length} required document${gone.length === 1 ? "" : "s"}`, detail: gone.join(", "), tab: "documents", cta: "Upload" });
     }
-    if (profile?.average_grade != null && !profile.grade_verified_at && !p.gradeUpdates.some((g) => g.status === "Pending" || g.status === "Rejected")) {
+    if (profile?.average_grade != null && !profile.grade_verified_at && !p.gradeUpdates.some((g) => g.status === "Pending" || g.status === "Disapproved")) {
       out.push({ id: "verify-grade", tone: "blue", title: "Get your grade verified", detail: "Submit your grade report in your profile. Programs and renewals check it.", tab: "profile", cta: "Verify" });
     }
 
@@ -121,21 +130,22 @@ export default function Overview(p: OverviewProps) {
 
     const order = { red: 0, amber: 1, blue: 2, green: 3 } as const;
     return out.sort((a, b) => order[a.tone] - order[b.tone]);
-  }, [p.docStatus, p.gradeUpdates, p.issues, live, completeness, currentApp, profile]);
+  }, [p.docStatus, p.gradeUpdates, p.issues, live, completeness, approvedApps.length, profile]);
 
   // ── programs ──
   // Open programs first, so students see what they can apply for right now.
   const sortedPrograms = [...scholarships].sort((a, b) => Number(availabilityInfo(b).canApply) - Number(availabilityInfo(a).canApply));
   const shownPrograms = showAllPrograms ? sortedPrograms : sortedPrograms.slice(0, 3);
   const openCount = scholarships.filter((s) => availabilityInfo(s).canApply).length;
-  const canApplyNow = !currentApp && !applyBlocked;
-  // While the student can still apply, the program list moves to the top of the dashboard.
-  const promotePrograms = canApplyNow && openCount > 0;
+  const toApplyCount = scholarships.filter((s) => availabilityInfo(s).canApply && !appliedTo(s.id)).length;
+  // While the student can still apply somewhere, the program list moves to the top of the dashboard.
+  const promotePrograms = canApplyMore && toApplyCount > 0;
   const programGrade = program
-    ? requirementLines(program, currentApp?.is_renewal || applications.some((a) => a.status === "Approved") ? settings.renewal_min_grade : settings.min_grade_requirement)
+    // A renewal means this program approved the student in an earlier year.
+    ? requirementLines(program, applications.some((a) => a.status === "Approved" && a.scholarship_id === program.id && new Date(a.created_at).getFullYear() < p.currentYear) ? settings.renewal_min_grade : settings.min_grade_requirement)
     : [];
   const programBlock = !program ? null
-    : currentApp ? `You already have an application for ${p.currentYear}.`
+    : appliedTo(program.id) ? `You already applied to this program (${appliedTo(program.id)?.status.toLowerCase()}).`
     : applyBlocked ? applyBlocked
     : !availabilityInfo(program).canApply ? availabilityInfo(program).label
     : null;
@@ -183,7 +193,11 @@ export default function Overview(p: OverviewProps) {
                     className="inline-flex items-center gap-1 rounded-lg border border-primary/30 text-primary text-xs font-semibold px-3 py-1.5 hover:bg-accent transition-colors cursor-pointer">
                     Details <ArrowRight className="h-3 w-3" />
                   </button>
-                  {av.canApply && canApplyNow && (
+                  {appliedTo(s.id) ? (
+                    <button onClick={() => p.onViewApplication(appliedTo(s.id)!.id)} className="cursor-pointer" title="View your application">
+                      <StatusBadge status={appliedTo(s.id)!.status} />
+                    </button>
+                  ) : av.canApply && canApplyMore && (
                     <button onClick={() => p.onApply(s.id)}
                       className="inline-flex items-center gap-1 rounded-lg bg-primary text-white text-xs font-semibold px-3 py-1.5 hover:bg-primary/90 transition-colors cursor-pointer">
                       Apply
@@ -205,7 +219,9 @@ export default function Overview(p: OverviewProps) {
   );
 
   const statusSub = !currentApp ? `No application for ${p.currentYear}`
-    : currentApp.status === "Rejected" ? "See the reason below"
+    : approvedApps.length > 0 ? `${approvedApps.length} approved of ${yearApps.length} for ${p.currentYear}`
+    : yearApps.length > 1 ? `${yearApps.length} applications for ${p.currentYear}`
+    : currentApp.status === "Disapproved" ? "See the reason in your history"
     : currentApp.status === "Waitlisted" ? "On the waitlist"
     : `${currentApp.is_renewal ? "Renewal · " : ""}Submitted ${new Date(currentApp.created_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}`;
 
@@ -222,8 +238,8 @@ export default function Overview(p: OverviewProps) {
           <div className="flex items-center gap-3 sm:shrink-0">
             <button onClick={() => p.onNavigate("application")}
               className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl bg-white text-primary text-sm font-semibold px-4 py-3 sm:py-2.5 hover:bg-white/90 transition-colors cursor-pointer shadow-sm">
-              {currentApp ? <Eye className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
-              {currentApp ? "View Application" : applyBlocked ? "Applications unavailable" : "Apply for Scholarship"}
+              {promotePrograms || !currentApp ? <FileText className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              {promotePrograms ? "Apply for Scholarship" : currentApp ? "View Applications" : applyBlocked ? "Applications unavailable" : "Apply for Scholarship"}
             </button>
           </div>
         </div>
@@ -244,7 +260,7 @@ export default function Overview(p: OverviewProps) {
           <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-sm ${toneCls.green}`}>
             <CheckCircle className="h-4 w-4 shrink-0" />
             <span>
-              {currentApp ? "You're all set. Nothing needs your attention right now."
+              {currentApp && !promotePrograms ? "You're all set. Nothing needs your attention right now."
                 : applyBlocked ? "You're all set. Applications aren't open right now."
                 : "Your profile and documents are ready. Use the button above to apply for a scholarship."}
             </span>
@@ -268,12 +284,12 @@ export default function Overview(p: OverviewProps) {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={FileText} label="Application Status" value={currentApp?.status || "None"} sub={statusSub}
-          subTone={currentApp?.status === "Approved" ? "positive" : currentApp?.status === "Rejected" ? "warning" : "neutral"}
+        <StatCard icon={FileText} label="Application Status" value={approvedApps.length > 0 ? "Approved" : currentApp?.status || "None"} sub={statusSub}
+          subTone={currentApp?.status === "Approved" ? "positive" : currentApp?.status === "Disapproved" ? "warning" : "neutral"}
           accent={currentApp?.status === "Approved"} onClick={() => p.onNavigate("application")} />
         <StatCard icon={Upload} label="Documents" value={`${p.docStatus.uploaded} / ${p.docStatus.required}`}
-          sub={p.docStatus.rejected.length > 0 ? `${p.docStatus.rejected.length} need${p.docStatus.rejected.length === 1 ? "s" : ""} a new copy` : p.docStatus.uploaded === p.docStatus.required ? "All complete" : `${p.docStatus.required - p.docStatus.uploaded} remaining`}
-          subTone={p.docStatus.rejected.length === 0 && p.docStatus.uploaded === p.docStatus.required ? "positive" : "warning"} onClick={() => p.onNavigate("documents")} />
+          sub={p.docStatus.disapproved.length > 0 ? `${p.docStatus.disapproved.length} need${p.docStatus.disapproved.length === 1 ? "s" : ""} a new copy` : p.docStatus.uploaded === p.docStatus.required ? "All complete" : `${p.docStatus.required - p.docStatus.uploaded} remaining`}
+          subTone={p.docStatus.disapproved.length === 0 && p.docStatus.uploaded === p.docStatus.required ? "positive" : "warning"} onClick={() => p.onNavigate("documents")} />
         <StatCard icon={Banknote} label="Payouts" value={peso(disbursedTotal)}
           sub={nextPayment ? `Next: ${peso(nextPayment.amount)}${nextPayment.scheduled_date ? ` on ${short(nextPayment.scheduled_date)}` : ""}` : p.approvedTotal > 0 ? `of ${peso(p.approvedTotal)} approved` : "No payments yet"}
           onClick={() => p.onNavigate("disbursement")} />
@@ -302,6 +318,19 @@ export default function Overview(p: OverviewProps) {
                 <p className="text-sm text-muted-foreground">{profile?.school_name || "—"}</p>
               </div>
             </div>
+          </Panel>
+
+          {/* Application history */}
+          <Panel>
+            <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-2">
+              <SectionTitle>My Applications</SectionTitle>
+              {applications.length > 5 && (
+                <button onClick={() => p.onNavigate("application")} className="text-xs text-primary font-semibold hover:text-primary/80 cursor-pointer -mt-3">
+                  View all {applications.length}
+                </button>
+              )}
+            </div>
+            <ApplicationHistory applications={applications} onView={p.onViewApplication} limit={5} />
           </Panel>
 
           {!promotePrograms && programsPanel}

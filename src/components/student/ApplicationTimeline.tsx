@@ -25,9 +25,9 @@ export function buildTimeline(app: App, payments: Payment[]): Step[] {
     { key: "submitted", title: app.is_renewal ? "Renewal submitted" : "Application submitted", date: app.created_at, state: "done" },
   ];
 
-  if (app.status === "Rejected") {
-    steps.push({ key: "decision", title: "Not approved", date: app.updated_at, state: "bad",
-      detail: app.notes || "Your application was not approved this time. You can apply again next year." });
+  if (app.status === "Disapproved") {
+    steps.push({ key: "decision", title: "Not approved", date: app.decided_at ?? app.updated_at, state: "bad",
+      detail: app.notes || "Your application was not approved this time. You can still apply to other open programs." });
     return steps;
   }
   if (app.status === "Waitlisted") {
@@ -43,7 +43,7 @@ export function buildTimeline(app: App, payments: Payment[]): Step[] {
   }
 
   // Approved
-  steps.push({ key: "approved", title: "Approved", date: app.updated_at, state: "done",
+  steps.push({ key: "approved", title: "Approved", date: app.approved_at ?? app.updated_at, state: "done",
     detail: [app.amount_approved != null ? `Award ${pesoFixed(app.amount_approved)}` : null, app.notes].filter(Boolean).join(" · ") || undefined });
 
   if (disbursed.length > 0) {
@@ -51,12 +51,12 @@ export function buildTimeline(app: App, payments: Payment[]): Step[] {
     const last = [...disbursed].sort((a, b) => (b.disbursed_at ?? "").localeCompare(a.disbursed_at ?? ""))[0];
     steps.push({ key: "disbursed", title: "Payment released", date: last.disbursed_at, state: "done",
       detail: `${pesoFixed(disbursed.reduce((t, p) => t + p.amount, 0))} disbursed${open.length ? `, ${open.length} more scheduled` : ""}` });
-    const unconfirmed = disbursed.filter((p) => !p.student_receipt_at || p.receipt_review_status === "Rejected");
+    const unconfirmed = disbursed.filter((p) => !p.student_receipt_at || p.receipt_review_status === "Disapproved");
     const waiting = disbursed.filter((p) => p.student_receipt_at && p.receipt_review_status === "Pending");
     steps.push(unconfirmed.length > 0
-      ? { key: "receipt", title: "Submit your signed receipt", state: "current", detail: `${unconfirmed.length} payment${unconfirmed.length === 1 ? "" : "s"} still need${unconfirmed.length === 1 ? "s" : ""} your receipt.` }
+      ? { key: "receipt", title: "Enter your receipt number", state: "current", detail: `${unconfirmed.length} payment${unconfirmed.length === 1 ? "" : "s"} still need${unconfirmed.length === 1 ? "s" : ""} the reference number from your receipt.` }
       : waiting.length > 0
-        ? { key: "receipt", title: "Receipt under review", state: "current", detail: "The office is checking your receipt." }
+        ? { key: "receipt", title: "Receipt under review", state: "current", detail: "The office is checking your receipt number." }
         : { key: "receipt", title: "Receipt accepted", state: "done" });
   } else if (open.length > 0) {
     const next = [...open].sort((a, b) => (a.scheduled_date ?? "9999").localeCompare(b.scheduled_date ?? "9999"))[0];

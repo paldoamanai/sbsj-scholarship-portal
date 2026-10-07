@@ -25,7 +25,7 @@ export function StatusBadge({ status }: { status: string | null | undefined }) {
   const map: Record<string, { icon: LucideIcon; cls: string }> = {
     Approved:   { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
     Pending:    { icon: Clock,        cls: "bg-amber-50 text-amber-700 border-amber-200" },
-    Rejected:   { icon: XCircle,      cls: "bg-red-50 text-red-700 border-red-200" },
+    Disapproved:   { icon: XCircle,      cls: "bg-red-50 text-red-700 border-red-200" },
     Disbursed:  { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
     Processing: { icon: Clock,        cls: "bg-accent text-primary border-primary/20" },
     Waitlisted: { icon: Clock,        cls: "bg-muted text-muted-foreground border-border" },

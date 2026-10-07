@@ -3,7 +3,20 @@ import { NextResponse, type NextRequest } from "next/server";
 import { normalizeSupabaseUrl } from "./url";
 import { isAdminRole } from "@/lib/settings";
 
+const protectedRoutes = ["/student-dashboard", "/admin"];
+const authRoutes = ["/login", "/register", "/forgot-password"];
+// Endpoints that return or change the signed-in person's data.
+const protectedApis = ["/api/applications", "/api/notifications", "/api/payments"];
+
 export async function updateSession(request: NextRequest) {
+  const path = request.nextUrl.pathname;
+
+  // Public pages need no auth check, so skip the round trip to Supabase. The browser client
+  // keeps the session refreshed on its own.
+  if (![...protectedRoutes, ...authRoutes, ...protectedApis].some((route) => path.startsWith(route))) {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -30,13 +43,6 @@ export async function updateSession(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-
-  const path = request.nextUrl.pathname;
-
-  const protectedRoutes = ["/student-dashboard", "/admin"];
-  const authRoutes = ["/login", "/register"];
-  // Endpoints that return or change the signed-in person's data.
-  const protectedApis = ["/api/applications", "/api/notifications", "/api/payments"];
 
   // Two-factor: a password-only session for an account with a verified factor may not go past the
   // login page until the code is entered.

@@ -14,14 +14,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import {
-  LayoutDashboard, GraduationCap, FileText, Users, ShieldCheck,
+  LayoutDashboard, GraduationCap, FileText, Users,
   Plus, Pencil, Trash2, CheckCircle, XCircle, Clock, Eye,
   Menu, X, Search, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock,
   FileDown, Receipt, Loader2, User, Upload, ArrowRight,
-   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle,
+   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -29,7 +30,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { scholarshipSchema } from "@/validations/scholarship";
 import ProfileImage from "@/components/ProfileImage";
-import { YEAR_LEVELS } from "@/lib/scholarships";
+import { YEAR_LEVELS, programChecks, type RequirementCheck } from "@/lib/scholarships";
 import NotificationInbox, { NOTIFICATION_PAGE } from "@/components/notifications/NotificationInbox";
 import AnnouncementsPanel from "@/components/admin/AnnouncementsPanel";
 import ReminderJobsCard from "@/components/admin/ReminderJobsCard";
@@ -39,13 +40,18 @@ import NotificationPreferences from "@/components/notifications/NotificationPref
 import OverviewPanel from "@/components/admin/OverviewPanel";
 import AdminProfilePanel from "@/components/admin/AdminProfilePanel";
 import SettingsPanel from "@/components/admin/SettingsPanel";
+import StaffPanel from "@/components/admin/StaffPanel";
+import ReportsPanel from "@/components/admin/ReportsPanel";
+import {
+  ALL_FILTERS, buildReport, getRange, logsToSection, personName, renderExcel, renderPDF,
+  type DocSummary, type ReportData, type ReportDef, type StaffMember,
+} from "@/lib/reports";
 import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
 const sidebarItems = [
   { icon: LayoutDashboard, label: "Dashboard", key: "overview" },
   { icon: FileText, label: "Applicants", key: "applications" },
-  { icon: ShieldCheck, label: "Verification", key: "verification" },
   { icon: Users, label: "Students", key: "students" },
   { icon: GraduationCap, label: "Scholarships", key: "scholarships" },
   { icon: Wallet, label: "Funds", key: "funds" },
@@ -53,6 +59,7 @@ const sidebarItems = [
   { icon: BarChart3, label: "Reports", key: "reports" },
   { icon: ScrollText, label: "Audit Logs", key: "audit-logs" },
   { icon: Bell, label: "Notifications", key: "notifications" },
+  { icon: ShieldCheck, label: "Staff", key: "staff" }, // super admins only (see canManageSettings)
   { icon: SettingsIcon, label: "Settings", key: "settings" },
   { icon: User, label: "Profile", key: "profile" },
 ];
@@ -65,7 +72,7 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
   const map: Record<string, { icon: typeof CheckCircle; cls: string }> = {
     Approved:   { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
     Pending:    { icon: Clock,        cls: "bg-amber-50 text-amber-700 border-amber-200" },
-    Rejected:   { icon: XCircle,      cls: "bg-red-50 text-red-700 border-red-200" },
+    Disapproved:   { icon: XCircle,      cls: "bg-red-50 text-red-700 border-red-200" },
     Disbursed:  { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
     Processing: { icon: Clock,        cls: "bg-accent text-primary border-primary/20" },
     Waitlisted: { icon: Clock,        cls: "bg-muted text-muted-foreground border-border" },
@@ -83,24 +90,7 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
 }
 
 // ── Reports / audit helpers ──
-type DocSummary = { id: string; user_id: string; application_id: string | null; document_type: string; status: string; uploaded_at: string };
-type AdminDoc = { id: string; name: string; type: string; url: string; status: string; note: string | null; size: number | null; uploadedAt: string };
-type ReportSection = { name: string; head: string[]; rows: (string | number)[][]; money?: string[] };
-type ReportDef = { title: string; filters: string[]; sections: ReportSection[]; count: number; countLabel: string };
-
-function getRange(period: string, from: string, to: string): { since: Date | null; until: Date | null } {
-  const now = new Date();
-  if (period === "year") return { since: new Date(now.getFullYear(), 0, 1), until: null };
-  if (period === "6m") return { since: new Date(now.getFullYear(), now.getMonth() - 5, 1), until: null };
-  if (period === "30d") return { since: new Date(now.getTime() - 30 * 86400000), until: null };
-  if (period === "custom") {
-    return {
-      since: from ? new Date(`${from}T00:00:00`) : null,
-      until: to ? new Date(`${to}T23:59:59.999`) : null,
-    };
-  }
-  return { since: null, until: null };
-}
+type AdminDoc = { id: string; applicationId: string | null; name: string; type: string; url: string; status: string; note: string | null; size: number | null; uploadedAt: string };
 
 // Older audit rows stored their values as JSON-encoded strings; newer ones are real JSON.
 function parseJson(v: Json | null | undefined): unknown {
@@ -113,7 +103,6 @@ function asObj(v: Json | null | undefined): Record<string, unknown> {
   return x === null ? {} : { value: x };
 }
 const fmtVal = (v: unknown) => (v === null || v === undefined ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v));
-const jsonText = (v: Json | null | undefined) => { const x = parseJson(v); return x === null ? "—" : typeof x === "string" ? x : JSON.stringify(x); };
 
 export default function AdminDashboardPage() {
   const router = useRouter();
@@ -133,8 +122,6 @@ export default function AdminDashboardPage() {
   const [fundPeriod, setFundPeriod] = useState("all"); // shared by Fund Management and Reports
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [reportProgram, setReportProgram] = useState("all");
-  const [reportPayStatus, setReportPayStatus] = useState("all");
   const [auditSearch, setAuditSearch] = useState("");
   const [auditAction, setAuditAction] = useState("all");
   const [auditEntity, setAuditEntity] = useState("all");
@@ -153,20 +140,28 @@ export default function AdminDashboardPage() {
   const [payIssues, setPayIssues] = useState<Tables<"payment_issues">[]>([]);
   const [issueDialog, setIssueDialog] = useState<Tables<"payments"> | null>(null);
   const [issueResponse, setIssueResponse] = useState("");
-  const [rejectReceipt, setRejectReceipt] = useState<Tables<"payments"> | null>(null);
+  const [disapproveReceipt, setDisapproveReceipt] = useState<Tables<"payments"> | null>(null);
   const [receiptNote, setReceiptNote] = useState("");
   const [payBusy, setPayBusy] = useState(false);
   const [gradeReviews, setGradeReviews] = useState<Tables<"grade_updates">[]>([]);
   const [dataReqs, setDataReqs] = useState<Tables<"data_requests">[]>([]);
-  const [rejectGrade, setRejectGrade] = useState<Tables<"grade_updates"> | null>(null);
+  const [disapproveGrade, setDisapproveGrade] = useState<Tables<"grade_updates"> | null>(null);
   const [gradeNote, setGradeNote] = useState("");
   const [handleReq, setHandleReq] = useState<{ req: Tables<"data_requests">; status: "Completed" | "Declined" } | null>(null);
   const [reqResponse, setReqResponse] = useState("");
   const [studentSearch, setStudentSearch] = useState("");
   const [studentFilter, setStudentFilter] = useState("all");
   const [studentSort, setStudentSort] = useState("name");
+  const [studentProgram, setStudentProgram] = useState("all");
+  const [studentDisb, setStudentDisb] = useState("all");
   const [studentPage, setStudentPage] = useState(1);
   const [viewStudent, setViewStudent] = useState<Tables<"profiles"> | null>(null);
+  // Student Management: quick edit of a scholar's payment reference number and disbursement status.
+  const [editDisb, setEditDisb] = useState<Tables<"profiles"> | null>(null);
+  const [editDisbPayId, setEditDisbPayId] = useState("");
+  const [editDisbRef, setEditDisbRef] = useState("");
+  const [editDisbStatus, setEditDisbStatus] = useState("Pending");
+  const [editDisbReason, setEditDisbReason] = useState("");
   const [studentDocs, setStudentDocs] = useState<AdminDoc[]>([]);
   const [studentDocsLoading, setStudentDocsLoading] = useState(false);
 
@@ -179,23 +174,42 @@ export default function AdminDashboardPage() {
   const [appPage, setAppPage] = useState(1);
   const [viewDocs, setViewDocs] = useState<AdminDoc[]>([]);
   const [allDocs, setAllDocs] = useState<DocSummary[]>([]);
-  const [rejectDoc, setRejectDoc] = useState<AdminDoc | null>(null);
-  const [rejectNote, setRejectNote] = useState("");
+  const [disapproveDoc, setDisapproveDoc] = useState<AdminDoc | null>(null);
+  const [disapproveNote, setDisapproveNote] = useState("");
+  const [disapproveApp, setDisapproveApp] = useState<(typeof applications)[number] | null>(null);
+  const [disapproveAppNote, setDisapproveAppNote] = useState("");
+  const [disapprovingApp, setDisapprovingApp] = useState(false);
+  // Revoke an approval (back to Pending); the reason is sent to the student.
+  const [revokeApp, setRevokeApp] = useState<(typeof applications)[number] | null>(null);
+  const [revokeNote, setRevokeNote] = useState("");
+  const [revokingApp, setRevokingApp] = useState(false);
+  // Award amount in the application dialog: set when approving, editable once approved.
+  const [awardInput, setAwardInput] = useState("");
+  // Internal notes on the open application (staff only; never shown to the student).
+  const [appNotes, setAppNotes] = useState<Tables<"application_notes">[]>([]);
+  const [newAppNote, setNewAppNote] = useState("");
+  const [savingAppNote, setSavingAppNote] = useState(false);
+  // Bulk actions on Pending / Waitlisted applications.
+  const [selectedApps, setSelectedApps] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDisapprove, setBulkDisapprove] = useState(false);
+  const [bulkNote, setBulkNote] = useState("");
+  // Bumped when a document changes over realtime, so open dialogs re-read their document list.
+  const [docsVersion, setDocsVersion] = useState(0);
   const [reviewingDoc, setReviewingDoc] = useState(false);
   const [docsLoading, setDocsLoading] = useState(false);
   const [auditLogs, setAuditLogs] = useState<Tables<"audit_logs">[]>([]);
-  const [verifications, setVerifications] = useState<Tables<"scholar_verifications">[]>([]);
+  const [staff, setStaff] = useState<StaffMember[]>([]);
   const [systemSettings, setSystemSettings] = useState<Tables<"system_settings">[]>([]);
   const [adminProfile, setAdminProfile] = useState<Tables<"profiles"> | null>(null);
   const [adminEmail, setAdminEmail] = useState("");
   const [adminUserId, setAdminUserId] = useState("");
   const [adminRole, setAdminRole] = useState("admin");
+  // A super admin, or any admin while no super admin exists (migration 020). Gates Settings edits and Staff.
+  const [canManageSettings, setCanManageSettings] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [verifFilter, setVerifFilter] = useState("all");
-  const [verifAction, setVerifAction] = useState<{ v: Tables<"scholar_verifications">; status: "Verified" | "Flagged" | "Cleared" } | null>(null);
-  const [verifNotes, setVerifNotes] = useState("");
   const [notifications, setNotifications] = useState<Tables<"notifications">[]>([]);
   const [unreadTotal, setUnreadTotal] = useState(0);
   // The realtime handler is created once, so it reads the current section and link handler through refs.
@@ -219,10 +233,12 @@ export default function AdminDashboardPage() {
   useEffect(() => { loadData(); }, []);
 
   // Profiles of students only — staff accounts (anyone with a non-student role) are excluded.
+  // Staff are kept aside (with their role) so reports can name who disbursed, reviewed or changed something.
   const withoutStaff = async (rows: Tables<"profiles">[]) => {
-    const { data } = await supabase.from("user_roles").select("user_id").neq("role", "student");
-    const staff = new Set((data ?? []).map((r: { user_id: string }) => r.user_id));
-    return rows.filter((p) => !staff.has(p.id));
+    const { data } = await supabase.from("user_roles").select("user_id, role").neq("role", "student");
+    const roles = new Map((data ?? []).map((r: { user_id: string; role: string }) => [r.user_id, r.role]));
+    setStaff(rows.filter((p) => roles.has(p.id)).map((p) => ({ id: p.id, name: personName(p), email: p.email, role: roles.get(p.id)! })));
+    return rows.filter((p) => !roles.has(p.id));
   };
 
   const joinProfiles = (apps: (Tables<"applications"> & { scholarships: { name: string } | null })[], rows: Tables<"profiles">[]) => {
@@ -241,14 +257,15 @@ export default function AdminDashboardPage() {
     const role = (roleData as { role?: string } | null)?.role;
     if (!isAdminRole(role)) { router.push("/student-dashboard"); return; }
     setAdminRole(role as string);
+    const { data: canManage } = await supabase.rpc("can_manage_settings", { _user_id: user.id });
+    setCanManageSettings(canManage === true);
 
-    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes] = await Promise.all([
+    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("scholarships").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
       supabase.from("payments").select("*").order("created_at", { ascending: false }),
       supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(1000),
-      supabase.from("scholar_verifications").select("*").order("created_at", { ascending: false }),
       supabase.from("system_settings").select("*"),
       supabase.from("profiles").select("*").eq("id", user.id).single(),
       supabase.from("notifications").select("*").eq("user_id", user.id).eq("muted", false).order("created_at", { ascending: false }).limit(NOTIFICATION_PAGE),
@@ -259,14 +276,13 @@ export default function AdminDashboardPage() {
       supabase.from("data_requests").select("*").order("created_at", { ascending: false }),
     ]);
 
-    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, verifRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes].find((r) => r.error);
+    const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes].find((r) => r.error);
     setLoadError(failed?.error ? failed.error.message : null);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (scholsRes.data) setScholarships(scholsRes.data);
     if (profilesRes.data) setProfiles(await withoutStaff(profilesRes.data));
     if (paymentsRes.data) setPayments(paymentsRes.data);
     if (logsRes.data) setAuditLogs(logsRes.data);
-    if (verifRes.data) setVerifications(verifRes.data);
     if (settingsRes.data) setSystemSettings(settingsRes.data);
     if (adminProfRes.data) setAdminProfile(adminProfRes.data);
     if (notifsRes.data) setNotifications(notifsRes.data);
@@ -321,6 +337,11 @@ export default function AdminDashboardPage() {
         }
       )
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles" }, () => silentRefreshAdmin())
+      // Uploads and reviews change the requirement checks (see migration 041 for the publication).
+      .on("postgres_changes", { event: "*", schema: "public", table: "documents" }, () => {
+        silentRefreshAdmin();
+        setDocsVersion((v) => v + 1);
+      })
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${adminUserId}` },
@@ -364,29 +385,29 @@ export default function AdminDashboardPage() {
         const { data: signed } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
         if (signed?.signedUrl) url = signed.signedUrl;
       }
-      return { id: d.id, name: d.file_name, type: d.document_type, url, status: d.status, note: d.review_note, size: d.file_size, uploadedAt: d.uploaded_at };
+      return { id: d.id, applicationId: d.application_id, name: d.file_name, type: d.document_type, url, status: d.status, note: d.review_note, size: d.file_size, uploadedAt: d.uploaded_at };
     }));
   };
 
-  // Verify or reject a document. The database records who reviewed it, audits it and notifies the student.
-  const reviewDocument = async (doc: AdminDoc, status: "Verified" | "Rejected" | "Pending", note?: string) => {
+  // Verify or disapprove a document. The database records who reviewed it, audits it and notifies the student.
+  const reviewDocument = async (doc: AdminDoc, status: "Verified" | "Disapproved" | "Pending", note?: string) => {
     setReviewingDoc(true);
     const { data, error } = await supabase.from("documents")
-      .update({ status, review_note: status === "Rejected" ? note?.trim() || null : null })
+      .update({ status, review_note: status === "Disapproved" ? note?.trim() || null : null })
       .eq("id", doc.id).select("status, review_note").single();
     setReviewingDoc(false);
     if (error || !data) { toast.error(error?.message ?? "Could not update the document"); return false; }
     const patch = (list: AdminDoc[]) => list.map((x) => (x.id === doc.id ? { ...x, status: data.status, note: data.review_note } : x));
     setViewDocs(patch); setStudentDocs(patch);
     setAllDocs((prev) => prev.map((x) => (x.id === doc.id ? { ...x, status: data.status } : x)));
-    toast.success(status === "Verified" ? `${doc.type} verified` : status === "Rejected" ? `${doc.type} rejected` : `${doc.type} reopened`);
+    toast.success(status === "Verified" ? `${doc.type} verified` : status === "Disapproved" ? `${doc.type} disapproved` : `${doc.type} reopened`);
     return true;
   };
 
   const docList = (docs: AdminDoc[], loading: boolean) => {
     if (loading) return <p className="text-sm text-muted-foreground">Loading…</p>;
     if (docs.length === 0) return <p className="text-sm text-muted-foreground">No documents uploaded</p>;
-    const tone = (st: string) => st === "Verified" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : st === "Rejected" ? "bg-red-50 text-red-700 border-red-200" : "bg-amber-50 text-amber-700 border-amber-200";
+    const tone = (st: string) => st === "Verified" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : st === "Disapproved" ? "bg-red-50 text-red-700 border-red-200" : "bg-amber-50 text-amber-700 border-amber-200";
     return (
       <ul className="mt-1 space-y-2">
         {docs.map((d) => (
@@ -405,35 +426,58 @@ export default function AdminDashboardPage() {
               </span>
               <span className="flex gap-1.5">
                 {d.status !== "Verified" && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={reviewingDoc} onClick={() => reviewDocument(d, "Verified")}>Verify</Button>}
-                {d.status !== "Rejected" && <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={reviewingDoc} onClick={() => { setRejectNote(""); setRejectDoc(d); }}>Reject</Button>}
+                {d.status !== "Disapproved" && <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={reviewingDoc} onClick={() => { setDisapproveNote(""); setDisapproveDoc(d); }}>Disapprove</Button>}
                 {d.status !== "Pending" && <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={reviewingDoc} onClick={() => reviewDocument(d, "Pending")}>Reset</Button>}
               </span>
             </div>
-            {d.status === "Rejected" && d.note && <p className="mt-1 text-xs text-destructive">Reason: {d.note}</p>}
+            {d.status === "Disapproved" && d.note && <p className="mt-1 text-xs text-destructive">Reason: {d.note}</p>}
           </li>
         ))}
       </ul>
     );
   };
 
+  // The open application follows live data, so its status and buttons never act on a stale copy.
   useEffect(() => {
-    if (!viewApp) { setViewDocs([]); return; }
-    setRemarks(viewApp.notes || "");
-    let cancelled = false;
+    setViewApp((v) => (v ? applications.find((a) => a.id === v.id) ?? v : v));
+  }, [applications]);
+
+  // Opening an application: reset the form and load its internal notes.
+  useEffect(() => {
+    if (!viewApp) { setViewDocs([]); setAppNotes([]); return; }
+    // A new decision carries a new message; an earlier one (e.g. a disapproval reason) is never resent.
+    setRemarks(["Pending", "Waitlisted"].includes(viewApp.status) ? "" : viewApp.notes || "");
+    setAwardInput(viewApp.amount_approved != null ? String(viewApp.amount_approved) : "");
+    setNewAppNote("");
     setDocsLoading(true);
-    loadSignedDocs(viewApp.user_id).then((docs) => { if (!cancelled) { setViewDocs(docs); setDocsLoading(false); } });
+    let cancelled = false;
+    supabase.from("application_notes").select("*").eq("application_id", viewApp.id).order("created_at")
+      .then(({ data }) => { if (!cancelled) setAppNotes(data ?? []); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewApp?.id]);
 
+  // Documents: loaded on open and re-read (without a loading state) when a document changes.
+  useEffect(() => {
+    if (!viewApp) return;
+    let cancelled = false;
+    loadSignedDocs(viewApp.user_id).then((docs) => { if (!cancelled) { setViewDocs(docs); setDocsLoading(false); } });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewApp?.id, docsVersion]);
+
   useEffect(() => {
     if (!viewStudent) { setStudentDocs([]); return; }
-    let cancelled = false;
     setStudentDocsLoading(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewStudent?.id]);
+  useEffect(() => {
+    if (!viewStudent) return;
+    let cancelled = false;
     loadSignedDocs(viewStudent.id).then((docs) => { if (!cancelled) { setStudentDocs(docs); setStudentDocsLoading(false); } });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewStudent?.id]);
+  }, [viewStudent?.id, docsVersion]);
 
   const isClosed = (sch: Tables<"scholarships">) => !!sch.deadline && sch.deadline < new Date().toISOString().slice(0, 10);
   const approvedCount = (schId: string) => applications.filter((a) => a.scholarship_id === schId && a.status === "Approved").length;
@@ -603,15 +647,17 @@ export default function AdminDashboardPage() {
     if (win) win.location.href = data.signedUrl; else window.location.href = data.signedUrl;
   };
   const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment");
+  // Compare reference numbers the way people type them: case, spaces and dashes don't matter.
+  const refKey = (r: string) => r.toUpperCase().replace(/[\s\-_./#]/g, "");
   const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The student hasn't submitted a receipt");
 
-  // Verify or reject a grade a student submitted. Verifying replaces their average grade; the student is notified.
-  const reviewGrade = async (g: Tables<"grade_updates">, status: "Verified" | "Rejected", note?: string) => {
+  // Verify or disapprove a grade a student submitted. Verifying replaces their average grade; the student is notified.
+  const reviewGrade = async (g: Tables<"grade_updates">, status: "Verified" | "Disapproved", note?: string) => {
     setPayBusy(true);
     const { error } = await supabase.rpc("review_grade_update", { _id: g.id, _status: status, _note: note ?? null });
     setPayBusy(false);
     if (error) { toast.error(error.message); return false; }
-    toast.success(status === "Verified" ? "Grade verified" : "Grade rejected — the student was asked to resubmit");
+    toast.success(status === "Verified" ? "Grade verified" : "Grade disapproved — the student was asked to resubmit");
     if (status === "Verified") {
       setViewStudent((v) => (v && v.id === g.user_id ? { ...v, average_grade: g.grade, grade_verified_at: new Date().toISOString(), grade_term: g.term } : v));
     }
@@ -630,13 +676,13 @@ export default function AdminDashboardPage() {
     loadData();
   };
 
-  // Accept or reject the receipt a student submitted. The student is notified by the database.
-  const reviewReceipt = async (p: Tables<"payments">, status: "Accepted" | "Rejected", note?: string) => {
+  // Accept or disapprove the receipt a student submitted. The student is notified by the database.
+  const reviewReceipt = async (p: Tables<"payments">, status: "Accepted" | "Disapproved", note?: string) => {
     setPayBusy(true);
     const { error } = await supabase.rpc("review_student_receipt", { _payment_id: p.id, _status: status, _note: note ?? null });
     setPayBusy(false);
     if (error) { toast.error(error.message); return false; }
-    toast.success(status === "Accepted" ? "Receipt accepted" : "Receipt rejected — the student was asked to resubmit");
+    toast.success(status === "Accepted" ? "Receipt accepted" : "Receipt disapproved — the student was asked to resubmit");
     loadData();
     return true;
   };
@@ -707,13 +753,28 @@ export default function AdminDashboardPage() {
   const auditDef = (): ReportDef => ({
     title: "Audit Log", count: filteredLogs.length, countLabel: "entries",
     filters: [`${filteredLogs.length} of ${auditLogs.length} loaded entries`, ...(auditAction !== "all" ? [`Action: ${auditAction}`] : []), ...(auditEntity !== "all" ? [`Entity: ${auditEntity}`] : []), ...(auditFrom || auditTo ? [`Dates: ${auditFrom || "…"} to ${auditTo || "…"}`] : [])],
-    sections: [logsToSection(filteredLogs)],
+    sections: [logsToSection(filteredLogs, reportData())],
   });
 
   const STUDENT_PAGE_SIZE = 10;
-  const verificationForUser = (userId: string) => verifications.find((v) => v.user_id === userId);
   // The Students section lists scholars only: accounts with at least one approved application.
   // Everyone else is reached through Applicants.
+  // A student's payments, newest first; the "current" one is the newest that isn't cancelled.
+  const studentPayments = (userId: string) => payments
+    .filter((pm) => pm.user_id === userId)
+    .sort((x, y) => y.created_at.localeCompare(x.created_at));
+  const currentPayment = (userId: string) => {
+    const list = studentPayments(userId);
+    return list.find((pm) => pm.status !== "Cancelled") ?? list[0];
+  };
+
+  // A scholar's approved applications (newest first) and the award for each.
+  const approvedApps = (userId: string) => applications.filter((a) => a.user_id === userId && a.status === "Approved");
+  const appAward = (a: typeof applications[0]) => Number(a.amount_approved ?? scholarships.find((x) => x.id === a.scholarship_id)?.amount ?? 0);
+  const disbursedTotal = (userId: string) => payments
+    .filter((pm) => pm.user_id === userId && pm.status === "Disbursed")
+    .reduce((t, pm) => t + Number(pm.amount), 0);
+
   const scholars = useMemo(() => {
     const ids = new Set(applications.filter((a) => a.status === "Approved").map((a) => a.user_id));
     return profiles.filter((p) => ids.has(p.id));
@@ -723,6 +784,11 @@ export default function AdminDashboardPage() {
     const list = scholars.filter((p) => {
       if (studentFilter === "active" && !p.is_active) return false;
       if (studentFilter === "inactive" && p.is_active) return false;
+      if (studentProgram !== "all" && !approvedApps(p.id).some((a) => a.scholarship_id === studentProgram)) return false;
+      if (studentDisb !== "all") {
+        const pay = currentPayment(p.id);
+        if (studentDisb === "none" ? !!pay : pay?.status !== studentDisb) return false;
+      }
       if (!q) return true;
       return [`${p.first_name} ${p.last_name}`, p.email, p.school_name, p.course, p.student_id_number]
         .some((f) => (f || "").toLowerCase().includes(q));
@@ -730,7 +796,8 @@ export default function AdminDashboardPage() {
     return list.sort((x, y) => studentSort === "grade"
       ? (y.average_grade ?? -1) - (x.average_grade ?? -1)
       : `${x.last_name} ${x.first_name}`.localeCompare(`${y.last_name} ${y.first_name}`));
-  }, [scholars, studentSearch, studentFilter, studentSort]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scholars, studentSearch, studentFilter, studentSort, studentProgram, studentDisb, payments]);
   const studentPages = Math.max(1, Math.ceil(filteredStudents.length / STUDENT_PAGE_SIZE));
   const pagedStudents = filteredStudents.slice((studentPage - 1) * STUDENT_PAGE_SIZE, studentPage * STUDENT_PAGE_SIZE);
 
@@ -744,73 +811,220 @@ export default function AdminDashboardPage() {
     loadData();
   };
 
+  const selectEditDisbPayment = (pm: Tables<"payments"> | undefined) => {
+    setEditDisbPayId(pm?.id ?? "");
+    setEditDisbRef(pm?.reference ?? "");
+    setEditDisbStatus(pm?.status ?? "Pending");
+    setEditDisbReason("");
+  };
+  const openEditDisb = (p: Tables<"profiles">) => { selectEditDisbPayment(currentPayment(p.id)); setEditDisb(p); };
+
+  const saveEditDisb = async () => {
+    const pm = payments.find((x) => x.id === editDisbPayId);
+    if (!pm) return;
+    const reference = editDisbRef.trim() || null;
+    // Marking disbursed needs a receipt upload, so hand off to the disbursement dialog.
+    if (editDisbStatus === "Disbursed") {
+      setDisbPaymentId(pm.id);
+      setDisbMethod((pm.preferred_method ?? pm.method) === "Cheque" ? "Cheque" : "Cash");
+      setDisbRef(reference ?? "");
+      setDisbReceipt(null);
+      setEditDisb(null);
+      setDisbDialog(true);
+      return;
+    }
+    const update: Partial<Tables<"payments">> = { reference };
+    if (editDisbStatus !== pm.status) update.status = editDisbStatus;
+    if (editDisbStatus === "Cancelled" && pm.status !== "Cancelled") update.cancel_reason = editDisbReason.trim() || null;
+    setPayBusy(true);
+    const { error } = await supabase.from("payments").update(update).eq("id", pm.id);
+    setPayBusy(false);
+    if (error) { toast.error(error.message); return; }
+    await logAudit("update_payment", "payments", pm.id, { status: pm.status, reference: pm.reference }, update);
+    toast.success("Disbursement updated");
+    setEditDisb(null);
+    loadData();
+  };
+
   const exportStudents = async () => {
     const XLSX = await import("xlsx");
-    const rows = filteredStudents.map((p) => ({
-      Name: `${p.first_name || ""} ${p.last_name || ""}`.trim(),
-      Email: p.email || "—",
-      "Student ID": p.student_id_number || "—",
-      School: p.school_name || "—",
-      Course: p.course || "—",
-      "Year Level": p.year_level || "—",
-      Grade: p.average_grade ?? "—",
-      Applications: applications.filter((a) => a.user_id === p.id).length,
-      Verification: verificationForUser(p.id)?.verification_status || "—",
-      Status: p.is_active ? "Active" : "Inactive",
-    }));
+    const rows = filteredStudents.map((p) => {
+      const apps = approvedApps(p.id);
+      const pay = currentPayment(p.id);
+      return {
+        Name: `${p.first_name || ""} ${p.middle_name || ""} ${p.last_name || ""}`.replace(/\s+/g, " ").trim(),
+        "Student ID": p.student_id_number || "—",
+        Email: p.email || "—",
+        Phone: p.phone || "—",
+        Address: [p.street_address, p.barangay, p.municipality, p.province, p.zip_code].filter(Boolean).join(", ") || "—",
+        Guardian: p.guardian_name || "—",
+        "Guardian Phone": p.guardian_phone || "—",
+        School: p.school_name || "—",
+        Course: p.course || "—",
+        "Year Level": p.year_level || "—",
+        Grade: p.average_grade ?? "—",
+        Program: apps.map((a) => a.scholarships?.name || "—").join(", ") || "—",
+        "Award (PHP)": apps.reduce((t, a) => t + appAward(a), 0),
+        "Reference No.": pay?.reference || "—",
+        "Disbursement Status": pay?.status || "No payment",
+        "Total Disbursed (PHP)": disbursedTotal(p.id),
+        "Approved / Total": `${apps.length} / ${applications.filter((a) => a.user_id === p.id).length}`,
+        Account: p.is_active ? "Active" : "Inactive",
+      };
+    });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Students");
     XLSX.writeFile(wb, "students.xlsx");
     toast.success("Excel downloaded");
   };
 
-  const verificationFor = (applicationId: string) => verifications.find((v) => v.application_id === applicationId);
-  // Why an application can't be approved yet (null = it can). The database enforces the same rules.
-  const approveBlocker = (a: { id: string; user_id: string }): string | null => {
-    const st = verificationFor(a.id)?.verification_status;
-    if (st !== "Verified" && st !== "Cleared") return "Verify the scholar first";
-    const outstanding = parseSettings(systemSettings).required_documents.flatMap((type) => {
-      // Latest copy wins: this application's own upload, or one still unattached.
+  // Each program (office) decides on its own: the student must pass that program's requirements and
+  // have every required document verified. Documents are shared by the student's applications for the year.
+  const requirementChecks = (a: { id: string; user_id: string; created_at: string; scholarship_id: string | null; is_renewal: boolean }): RequirementCheck[] => {
+    const settings = parseSettings(systemSettings);
+    const program = scholarships.find((sc) => sc.id === a.scholarship_id);
+    const profile = profiles.find((pr) => pr.id === a.user_id);
+    const year = new Date(a.created_at).getFullYear();
+    const sameYearIds = new Set(applications.filter((x) => x.user_id === a.user_id && new Date(x.created_at).getFullYear() === year).map((x) => x.id));
+    const docs = settings.required_documents.map((type): RequirementCheck => {
+      // Latest copy wins.
       const latest = allDocs
-        .filter((d) => d.user_id === a.user_id && d.document_type === type && (d.application_id === a.id || d.application_id === null))
+        .filter((d) => d.user_id === a.user_id && d.document_type === type && (d.application_id === null || sameYearIds.has(d.application_id)))
         .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
-      return latest?.status === "Verified" ? [] : [`${type} (${latest ? latest.status.toLowerCase() : "missing"})`];
+      return { key: `doc-${type}`, label: `${type} verified`, ok: latest?.status === "Verified", detail: latest ? latest.status : "Missing" };
     });
-    return outstanding.length ? `Verify all required documents first: ${outstanding.join(", ")}` : null;
-  };
-  type AppRow = typeof applications[number];
-  type AppDecision = "Approved" | "Rejected" | "Waitlisted" | "Pending";
-  const decideApplication = async (a: AppRow, status: AppDecision, note?: string) => {
-    const blocker = status === "Approved" ? approveBlocker(a) : null;
-    if (blocker) {
-      toast.error("Can't approve yet", { description: blocker });
-      return false;
-    }
-    const notes = note !== undefined ? note.trim() || null : a.notes ?? null;
-    const update = { status, notes };
-    const { error } = await supabase.from("applications").update(update).eq("id", a.id);
-    if (error) { toast.error(error.message); return false; }
-    const auditAction = { Approved: "approve_application", Rejected: "reject_application", Waitlisted: "waitlist_application", Pending: "reopen_application" }[status];
-    await logAudit(auditAction, "applications", a.id, { status: a.status }, update);
-    // The student is notified by a database trigger (see migration 018).
-    return true;
-  };
-  const submitVerification = async () => {
-    if (!verifAction) return;
-    const { v, status } = verifAction;
-    const note = verifNotes.trim();
-    const { error } = await supabase.from("scholar_verifications").update({
-      verification_status: status,
-      verified_by: adminUserId || null,
-      verified_at: new Date().toISOString(),
-      notes: note ? (v.notes ? `${v.notes}\n${note}` : note) : v.notes,
-    }).eq("id", v.id);
-    if (error) { toast.error(error.message); return; }
-    await logAudit(`${status === "Verified" ? "verify" : status === "Flagged" ? "flag" : "clear"}_scholar`, "scholar_verifications", v.id, { status: v.verification_status }, { status, notes: note || null });
-    toast.success(`Marked ${status}`);
-    setVerifAction(null); setVerifNotes(""); loadData();
+    const rules = program ? programChecks(program, profile, {
+      globalMinGrade: settings.min_grade_requirement, renewalMinGrade: settings.renewal_min_grade,
+      renewalEnabled: settings.renewal_enabled, isRenewal: a.is_renewal,
+    }) : [];
+    return [...rules, ...docs];
   };
 
+  // Slots and budget left in the application's program. The database enforces the same limits.
+  const capacityFor = (a: AppRow, award?: number) => {
+    const sch = scholarships.find((x) => x.id === a.scholarship_id);
+    if (!sch) return null;
+    const approved = approvedCount(sch.id);
+    const committed = committedFor(sch);
+    const amount = award ?? Number(a.amount_approved ?? sch.amount ?? 0);
+    const slotsFull = sch.slots > 0 && approved >= sch.slots;
+    const overBudget = Number(sch.total_budget) > 0 && committed + amount > Number(sch.total_budget);
+    return { sch, approved, committed, amount, slotsFull, overBudget };
+  };
+  // Why an application can't be approved yet (null = it can). The database enforces the same rules.
+  const approveBlocker = (a: AppRow, award?: number): string | null => {
+    const failed = requirementChecks(a).filter((c) => !c.ok);
+    if (failed.length) return `Requirements not met: ${failed.map((c) => `${c.label} (${c.detail.toLowerCase()})`).join(", ")}`;
+    const cap = capacityFor(a, award);
+    if (cap?.slotsFull) return `All ${cap.sch.slots} slots for ${cap.sch.name} are filled`;
+    if (cap?.overBudget) return `This would exceed the budget for ${cap.sch.name} (${formatPHP(cap.committed)} of ${formatPHP(Number(cap.sch.total_budget))} committed)`;
+    return null;
+  };
+  type AppRow = typeof applications[number];
+  type AppDecision = "Approved" | "Disapproved" | "Waitlisted" | "Pending";
+  // The statuses each decision may be made from. The update only matches a row still in one of them,
+  // so a decision made on a stale screen (another admin decided, or the student withdrew) changes nothing.
+  const DECIDE_FROM: Record<AppDecision, string[]> = {
+    Approved: ["Pending", "Waitlisted"],
+    Disapproved: ["Pending", "Waitlisted"],
+    Waitlisted: ["Pending"],
+    Pending: ["Disapproved", "Waitlisted", "Approved"],
+  };
+  // A live (non-cancelled) payment ties an approval down: it can't be revoked until it's cancelled.
+  const hasLivePayment = (appId: string) => payments.some((p) => p.application_id === appId && p.status !== "Cancelled");
+  const hasDisbursed = (appId: string) => payments.some((p) => p.application_id === appId && p.status === "Disbursed");
+
+  // Makes the decision without any toasts, so bulk actions can summarise. `note` is the message sent to
+  // the student with this decision; each decision has its own, so an earlier one is never resent.
+  const runDecision = async (a: AppRow, status: AppDecision, note?: string | null, award?: number | null): Promise<string | null> => {
+    if (status === "Approved") {
+      const blocker = approveBlocker(a, award ?? undefined);
+      if (blocker) return blocker;
+    }
+    const update: { status: AppDecision; notes: string | null; amount_approved?: number } = { status, notes: note?.trim() || null };
+    if (status === "Approved" && award != null) update.amount_approved = award;
+    const { data, error } = await supabase.from("applications").update(update)
+      .eq("id", a.id).in("status", DECIDE_FROM[status]).select("id");
+    if (error) return error.message;
+    if (!data?.length) {
+      silentRefreshAdmin();
+      return "This application was changed elsewhere (another reviewer, or the student withdrew it). The list has been refreshed.";
+    }
+    const auditAction = status === "Pending"
+      ? (a.status === "Approved" ? "revoke_approval" : "reopen_application")
+      : { Approved: "approve_application", Disapproved: "disapprove_application", Waitlisted: "waitlist_application" }[status];
+    await logAudit(auditAction, "applications", a.id, { status: a.status, notes: a.notes }, update);
+    // The student is notified by a database trigger (see migrations 031 and 041).
+    return null;
+  };
+  const decideApplication = async (a: AppRow, status: AppDecision, note?: string | null, award?: number | null) => {
+    const problem = await runDecision(a, status, note, award);
+    if (problem) {
+      toast.error(status === "Approved" ? "Couldn't approve" : "Couldn't update the application", { description: problem });
+      return false;
+    }
+    return true;
+  };
+
+  const bulkDecide = async (status: "Approved" | "Waitlisted" | "Disapproved", note?: string) => {
+    const targets = applications.filter((a) => selectedApps.has(a.id) && DECIDE_FROM[status].includes(a.status));
+    const skipped = selectedApps.size - targets.length;
+    if (!targets.length) { toast.error("None of the selected applications can be changed that way"); return false; }
+    setBulkBusy(true);
+    const failures: string[] = [];
+    // One at a time: each approval uses up a slot / budget that the next one is checked against.
+    for (const a of targets) {
+      const problem = await runDecision(a, status, note);
+      if (problem) failures.push(`${personName(a.profiles)}: ${problem}`);
+    }
+    setBulkBusy(false);
+    const done = targets.length - failures.length;
+    const verb = { Approved: "approved", Waitlisted: "waitlisted", Disapproved: "disapproved" }[status];
+    const summary = `${done} ${verb}${failures.length ? `, ${failures.length} failed` : ""}${skipped ? `, ${skipped} skipped (status didn't allow it)` : ""}`;
+    if (failures.length) toast.warning(summary, { description: failures.slice(0, 3).join("\n") + (failures.length > 3 ? `\n…and ${failures.length - 3} more` : "") });
+    else toast.success(summary);
+    setSelectedApps(new Set());
+    loadData(true);
+    return true;
+  };
+
+  const saveAward = async (a: AppRow) => {
+    const amount = Number(awardInput);
+    if (awardInput.trim() === "" || !Number.isFinite(amount) || amount <= 0) { toast.error("Enter an award greater than 0"); return; }
+    if (amount === Number(a.amount_approved)) { toast.info("No changes to save"); return; }
+    const { data, error } = await supabase.from("applications").update({ amount_approved: amount })
+      .eq("id", a.id).eq("status", "Approved").select("id");
+    if (error) { toast.error("Couldn't update the award", { description: error.message }); return; }
+    if (!data?.length) { toast.error("This application is no longer approved"); silentRefreshAdmin(); return; }
+    await logAudit("update_award", "applications", a.id, { amount_approved: a.amount_approved }, { amount_approved: amount });
+    toast.success("Award updated — the student was notified");
+    loadData(true);
+  };
+
+  const addAppNote = async (a: AppRow) => {
+    const body = newAppNote.trim();
+    if (!body) return;
+    setSavingAppNote(true);
+    const { data, error } = await supabase.from("application_notes")
+      .insert({ application_id: a.id, author_id: adminUserId, author_email: adminEmail, body }).select().single();
+    setSavingAppNote(false);
+    if (error || !data) { toast.error("Couldn't add the note", { description: error?.message }); return; }
+    setAppNotes((prev) => [...prev, data]);
+    setNewAppNote("");
+  };
+  const deleteAppNote = async (n: Tables<"application_notes">) => {
+    const { error } = await supabase.from("application_notes").delete().eq("id", n.id);
+    if (error) { toast.error("Couldn't delete the note", { description: error.message }); return; }
+    setAppNotes((prev) => prev.filter((x) => x.id !== n.id));
+  };
+
+  // Documents that count for an application: unattached ones, or those filed with one of the student's
+  // applications from the same year (the database's in_document_set()).
+  const countsForApp = (a: AppRow) => {
+    const year = new Date(a.created_at).getFullYear();
+    const ids = new Set(applications.filter((x) => x.user_id === a.user_id && new Date(x.created_at).getFullYear() === year).map((x) => x.id));
+    return (d: AdminDoc) => d.applicationId === null || ids.has(d.applicationId);
+  };
   const logAudit = async (action: string, entityType: string, entityId?: string, prev?: Json | null, next?: Json | null) => {
     const { data: { user } } = await supabase.auth.getUser();
     const { error } = await supabase.from("audit_logs").insert({
@@ -870,170 +1084,28 @@ export default function AdminDashboardPage() {
     return true;
   };
 
-  // ── Reports ──
-  const periodLabel = () => {
-    if (fundPeriod === "year") return "This year";
-    if (fundPeriod === "6m") return "Last 6 months";
-    if (fundPeriod === "30d") return "Last 30 days";
-    if (fundPeriod === "custom") return `${fromDate || "…"} to ${toDate || "…"}`;
-    return "All time";
-  };
-  const programLabel = () => (reportProgram === "all" ? "All programs" : scholarships.find((sc) => sc.id === reportProgram)?.name || "Unknown program");
-  const personName = (p?: Tables<"profiles"> | null) => (p ? `${p.first_name || ""} ${p.last_name || ""}`.trim() || p.email || "—" : "—");
-
-  const logsToSection = (logs: Tables<"audit_logs">[]): ReportSection => ({
-    name: "Audit Log",
-    head: ["Date", "User", "Action", "Entity", "Entity ID", "Before", "After"],
-    rows: logs.map((l) => [new Date(l.created_at).toLocaleString(), l.user_email || "System", l.action, l.entity_type, l.entity_id || "—", jsonText(l.previous_value), jsonText(l.new_value)]),
+  // ── Report exports outside the Reports section (Fund Management, Audit Logs) ──
+  const reportData = (): ReportData => ({
+    applications, scholarships, profiles, staff, payments, auditLogs, payIssues, gradeUpdates: gradeReviews, dataRequests: dataReqs, documents: allDocs,
+    requiredDocuments: parseSettings(systemSettings).required_documents, minGrade: Number(parseSettings(systemSettings).min_grade_requirement),
   });
-
-  const buildReport = (key: string): ReportDef => {
-    const { since, until } = getRange(fundPeriod, fromDate, toDate);
-    const within = (d: string | null | undefined) => {
-      if (!d) return !since && !until;
-      const t = new Date(d);
-      return (!since || t >= since) && (!until || t <= until);
-    };
-    const inProgram = (schId: string | null | undefined) => reportProgram === "all" || schId === reportProgram;
-    const filters = [`Period: ${periodLabel()}`, `Program: ${programLabel()}`];
-    const count = (list: { length: number }) => list.length;
-
-    if (key === "scholars") {
-      const apps = applications.filter((a) => a.status === "Approved" && inProgram(a.scholarship_id) && within(a.updated_at));
-      return {
-        title: "List of Scholars", filters, count: count(apps), countLabel: "scholars",
-        sections: [{
-          name: "Scholars",
-          head: ["Name", "Email", "Student ID", "School", "Course", "Year Level", "Scholarship", "Approved On"],
-          rows: apps.map((a) => [personName(a.profiles), a.profiles?.email || "—", a.profiles?.student_id_number || "—", a.profiles?.school_name || "—", a.profiles?.course || "—", a.profiles?.year_level || "—", a.scholarships?.name || "—", new Date(a.updated_at).toLocaleDateString()]),
-        }],
-      };
-    }
-
-    if (key === "funds") {
-      const programs = fundData.byProgram.filter((r) => reportProgram === "all" || r.id === reportProgram);
-      const sections: ReportSection[] = [];
-      if (reportProgram === "all") {
-        sections.push({ name: "Payment Pipeline", head: ["Status", "Payments", "Amount"], rows: fundData.pipeline.map((r) => [r.status, r.count, r.amount]), money: ["Amount"] });
-      }
-      sections.push({ name: "By Scholarship Program", head: ["Scholarship", "Scholars Paid", "Disbursed", "Queued"], rows: programs.map((r) => [r.name, r.scholars, r.disbursed, r.queued]), money: ["Disbursed", "Queued"] });
-      if (reportProgram === "all") {
-        sections.push({ name: "By Payment Method", head: ["Method", "Payments", "Amount", "Share %"], rows: fundData.byMethod.map((r) => [r.method, r.count, r.amount, r.share]), money: ["Amount"] });
-      }
-      return { title: "Fund Utilization Report", filters, count: count(programs), countLabel: "programs", sections };
-    }
-
-    if (key === "disbursements") {
-      const programOf = (p: Tables<"payments">) => applications.find((a) => a.id === p.application_id)?.scholarship_id;
-      const list = payments.filter((p) => {
-        if (!within(p.disbursed_at || p.scheduled_date || p.created_at)) return false;
-        if (!inProgram(programOf(p))) return false;
-        return reportPayStatus === "all" ? p.status !== "Cancelled" : p.status === reportPayStatus;
-      });
-      const totals = (["Pending", "Processing", "Disbursed", "Cancelled"] as const)
-        .map((st) => { const l = list.filter((p) => p.status === st); return [st, l.length, l.reduce((t, p) => t + Number(p.amount || 0), 0)] as (string | number)[]; })
-        .filter((r) => (r[1] as number) > 0);
-      return {
-        title: "Disbursement Summary",
-        filters: [...filters, `Payments: ${reportPayStatus === "all" ? "All except cancelled" : reportPayStatus}`],
-        count: count(list), countLabel: "payments",
-        sections: [
-          {
-            name: "Payments",
-            head: ["Student", "Program", "Reference", "Method", "Status", "Scheduled", "Disbursed", "Amount"],
-            rows: list.map((p) => [payStudent(p), payProgram(p), p.reference || "—", p.method || "—", p.status, p.scheduled_date || "—", p.disbursed_at ? new Date(p.disbursed_at).toLocaleDateString() : "—", Number(p.amount)]),
-            money: ["Amount"],
-          },
-          { name: "Totals by Status", head: ["Status", "Payments", "Amount"], rows: totals, money: ["Amount"] },
-        ],
-      };
-    }
-
-    if (key === "audit") {
-      const logs = auditLogs.filter((l) => within(l.created_at));
-      return { title: "Audit Trail", filters: [`Period: ${periodLabel()}`], count: count(logs), countLabel: "entries", sections: [logsToSection(logs)] };
-    }
-
-    // statistics
-    const apps = applications.filter((a) => inProgram(a.scholarship_id) && within(a.created_at));
-    const by = (st: string) => apps.filter((a) => a.status === st).length;
-    const approved = by("Approved");
-    const group = (label: (a: typeof apps[number]) => string): (string | number)[][] => {
-      const m = new Map<string, { total: number; approved: number }>();
-      apps.forEach((a) => {
-        const k = label(a) || "Not specified";
-        const v = m.get(k) ?? { total: 0, approved: 0 };
-        v.total += 1; if (a.status === "Approved") v.approved += 1;
-        m.set(k, v);
-      });
-      return [...m.entries()].sort((x, y) => y[1].total - x[1].total).map(([k, v]) => [k, v.total, v.approved]);
-    };
+  const exportOpts = (landscape = false) => {
+    const s = parseSettings(systemSettings);
     return {
-      title: "Applicant Statistics", filters, count: count(apps), countLabel: "applications",
-      sections: [
-        { name: "Summary", head: ["Metric", "Value"], rows: [["Total Applications", apps.length], ["Approved", approved], ["Rejected", by("Rejected")], ["Pending", by("Pending")], ["Waitlisted", by("Waitlisted")], ["Approval Rate (of all)", `${apps.length ? ((approved / apps.length) * 100).toFixed(1) : 0}%`]] },
-        { name: "By Scholarship Program", head: ["Scholarship", "Total", "Approved", "Rejected", "Pending", "Waitlisted"], rows: scholarships.filter((sc) => inProgram(sc.id)).map((sc) => { const l = apps.filter((a) => a.scholarship_id === sc.id); const c = (st: string) => l.filter((a) => a.status === st).length; return [sc.name, l.length, c("Approved"), c("Rejected"), c("Pending"), c("Waitlisted")]; }) },
-        { name: "By Sex", head: ["Sex", "Applicants", "Approved"], rows: group((a) => a.profiles?.sex || "") },
-        { name: "By Year Level", head: ["Year Level", "Applicants", "Approved"], rows: group((a) => a.profiles?.year_level || "") },
-        { name: "By School", head: ["School", "Applicants", "Approved"], rows: group((a) => a.profiles?.school_name || "") },
-      ],
+      landscape, generatedBy: adminEmail, programName: s.program_name,
+      signatories: { preparedBy: s.report_prepared_by, preparedTitle: s.report_prepared_title, approvedBy: s.report_approved_by, approvedTitle: s.report_approved_title },
     };
   };
-
-  const renderPDF = async (def: ReportDef, file: string, landscape = false) => {
-    const { default: jsPDF } = await import("jspdf");
-    const { default: autoTable } = await import("jspdf-autotable");
-    const doc = new jsPDF(landscape ? { orientation: "landscape" } : undefined);
-    const pageH = doc.internal.pageSize.getHeight();
-    doc.setFontSize(16);
-    doc.text("SB San Jose Scholarship Portal", 14, 15);
-    doc.setFontSize(12);
-    doc.text(def.title, 14, 22);
-    doc.setFontSize(9);
-    doc.text(`Generated ${new Date().toLocaleString()}${adminEmail ? ` by ${adminEmail}` : ""}`, 14, 28);
-    doc.text(def.filters.join("   |   "), 14, 33);
-    let y = 40;
-    for (const sec of def.sections) {
-      if (y > pageH - 30) { doc.addPage(); y = 15; }
-      doc.setFontSize(11);
-      doc.text(sec.name, 14, y);
-      autoTable(doc, {
-        startY: y + 3,
-        head: [sec.head],
-        body: sec.rows.map((r) => r.map((c, i) => (sec.money?.includes(sec.head[i]) && typeof c === "number" ? formatPHP(c) : String(c)))),
-        styles: { fontSize: 8 },
-      });
-      y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10;
+  const exportDef = async (def: ReportDef, file: string, kind: "pdf" | "xlsx", landscape = false) => {
+    try {
+      if (kind === "pdf") await renderPDF(def, `${file}.pdf`, exportOpts(landscape));
+      else await renderExcel(def, `${file}.xlsx`, exportOpts());
+      toast.success(kind === "pdf" ? "PDF downloaded" : "Excel downloaded");
+    } catch (e) {
+      toast.error("Export failed", { description: e instanceof Error ? e.message : String(e) });
     }
-    const pages = doc.getNumberOfPages();
-    for (let i = 1; i <= pages; i++) {
-      doc.setPage(i);
-      doc.setFontSize(8);
-      doc.text(`Page ${i} of ${pages}`, doc.internal.pageSize.getWidth() - 30, pageH - 8);
-    }
-    doc.save(file);
-    toast.success("PDF downloaded");
   };
-
-  const renderExcel = async (def: ReportDef, file: string) => {
-    const XLSX = await import("xlsx");
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[def.title], [`Generated ${new Date().toLocaleString()}`], ...def.filters.map((f) => [f])]), "About");
-    const used = new Set<string>(["About"]);
-    for (const sec of def.sections) {
-      let name = sec.name.replace(/[\\/?*[\]:]/g, "").slice(0, 31) || "Sheet";
-      let n = 2;
-      while (used.has(name)) name = `${sec.name.slice(0, 28)} ${n++}`;
-      used.add(name);
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([sec.head, ...sec.rows]), name);
-    }
-    XLSX.writeFile(wb, file);
-    toast.success("Excel downloaded");
-  };
-
-  const exportPDF = (key: string) => renderPDF(buildReport(key), `${key}-report.pdf`, key === "disbursements" || key === "audit");
-  const exportExcel = (key: string) => renderExcel(buildReport(key), `${key}-report.xlsx`);
-
+  const fundsDef = () => buildReport("funds", reportData(), { ...ALL_FILTERS, period: fundPeriod, from: fromDate, to: toDate });
 
 
   const statusBadge = (status: string) => <StatusBadge status={status} />;
@@ -1066,18 +1138,18 @@ export default function AdminDashboardPage() {
     const applied = new Set(applications.map((a) => a.user_id));
     return profiles.filter((p) => !applied.has(p.id));
   }, [profiles, applications]);
-  // Required documents uploaded (and not rejected) by a student who hasn't applied yet.
+  // Required documents uploaded (and not disapproved) by a student who hasn't applied yet.
   const docsReady = (userId: string) => {
     const required = parseSettings(systemSettings).required_documents;
     const ok = required.filter((type) => {
       const latest = allDocs
         .filter((d) => d.user_id === userId && d.document_type === type && d.application_id === null)
         .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
-      return latest && latest.status !== "Rejected";
+      return latest && latest.status !== "Disapproved";
     });
     return { done: ok.length, total: required.length, missing: required.filter((t) => !ok.includes(t)) };
   };
-  // Applicant pipeline: registered → applied (pending) → approved / rejected → scholar → paid.
+  // Applicant pipeline: registered → applied (pending) → approved / disapproved → scholar → paid.
   const pipeline = useMemo(() => {
     const by = (st: string) => applications.filter((a) => a.status === st).length;
     const paidScholars = new Set(payments.filter((p) => p.status === "Disbursed").map((p) => p.user_id));
@@ -1087,7 +1159,7 @@ export default function AdminDashboardPage() {
       pending: by("Pending"),
       waitlisted: by("Waitlisted"),
       approved: by("Approved"),
-      rejected: by("Rejected"),
+      disapproved: by("Disapproved"),
       scholars: scholars.length,
       disbursed: paidScholars.size,
     };
@@ -1100,9 +1172,9 @@ export default function AdminDashboardPage() {
       {([
         { label: "Total applicants", value: pipeline.total, sub: "registered students", go: () => showApplicants("all") },
         { label: "Not yet applied", value: pipeline.notApplied, sub: "registered, no application", go: () => showApplicants("not_applied"), warn: pipeline.notApplied > 0 },
-        { label: "Pending", value: pipeline.pending, sub: pipeline.waitlisted ? `+ ${pipeline.waitlisted} waitlisted` : "awaiting review", go: () => showApplicants("pending") },
+        { label: "Pending", value: pipeline.pending, sub: pipeline.waitlisted ? `+ ${pipeline.waitlisted} waitlisted` : "awaiting review", go: () => showApplicants(pipeline.waitlisted ? "open" : "pending") },
         { label: "Approved", value: pipeline.approved, sub: "applications", go: () => showApplicants("approved") },
-        { label: "Rejected", value: pipeline.rejected, sub: "applications", go: () => showApplicants("rejected") },
+        { label: "Disapproved", value: pipeline.disapproved, sub: "applications", go: () => showApplicants("disapproved") },
         { label: "Students", value: pipeline.scholars, sub: "approved scholars", go: () => setActiveSection("students") },
         { label: "Disbursed", value: pipeline.disbursed, sub: "scholars paid", go: () => setActiveSection("disbursement") },
       ] as { label: string; value: number; sub: string; go: () => void; warn?: boolean }[]).map((t) => (
@@ -1118,20 +1190,70 @@ export default function AdminDashboardPage() {
 
   type ApplicantRow = { kind: "app"; app: typeof applications[number]; at: string } | { kind: "none"; profile: Tables<"profiles">; at: string };
   const q = appSearch.trim().toLowerCase();
+  // Name, email, student ID and school for everyone; the program name for applications too.
+  const personText = (p?: Tables<"profiles"> | null) => `${personName(p)} ${p?.email || ""} ${p?.student_id_number || ""} ${p?.school_name || ""}`.toLowerCase();
+  const statusMatches = (st: string) =>
+    statusFilter === "all" || (statusFilter === "open" ? st === "Pending" || st === "Waitlisted" : st.toLowerCase() === statusFilter);
   const filteredApps: ApplicantRow[] = [
     ...(statusFilter === "all" || statusFilter === "not_applied"
       ? notApplied
-          .filter((p) => !q || `${personName(p)} ${p.email || ""}`.toLowerCase().includes(q))
+          .filter((p) => !q || personText(p).includes(q))
           .map((p): ApplicantRow => ({ kind: "none", profile: p, at: p.created_at }))
       : []),
     ...applications
-      .filter((a) => statusFilter === "all" || a.status.toLowerCase() === statusFilter)
-      .filter((a) => !q || personName(a.profiles).toLowerCase().includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q))
+      .filter((a) => statusMatches(a.status))
+      .filter((a) => !q || personText(a.profiles).includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q))
       .map((a): ApplicantRow => ({ kind: "app", app: a, at: a.created_at })),
   ].sort((x, y) => y.at.localeCompare(x.at));
   const appPages = Math.max(1, Math.ceil(filteredApps.length / APP_PAGE_SIZE));
   const currentAppPage = Math.min(appPage, appPages);
   const pagedApps = filteredApps.slice((currentAppPage - 1) * APP_PAGE_SIZE, currentAppPage * APP_PAGE_SIZE);
+  // Bulk selection covers applications that can still be decided (Pending / Waitlisted).
+  const isOpenApp = (a: AppRow) => a.status === "Pending" || a.status === "Waitlisted";
+  const selectablePaged = pagedApps.flatMap((r) => (r.kind === "app" && isOpenApp(r.app) ? [r.app.id] : []));
+  const allPagedSelected = selectablePaged.length > 0 && selectablePaged.every((id) => selectedApps.has(id));
+  const toggleSelected = (id: string, on: boolean) => setSelectedApps((prev) => {
+    const next = new Set(prev);
+    if (on) next.add(id); else next.delete(id);
+    return next;
+  });
+  // Drop selections that are no longer open (decided elsewhere, withdrawn) or no longer exist.
+  useEffect(() => {
+    setSelectedApps((prev) => {
+      const open = new Set(applications.filter(isOpenApp).map((a) => a.id));
+      const next = new Set([...prev].filter((id) => open.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applications]);
+
+  const exportApplicants = async () => {
+    const XLSX = await import("xlsx");
+    const date = (v?: string | null) => (v ? new Date(v).toLocaleDateString("en-PH") : "—");
+    const rows = filteredApps.map((r) => {
+      if (r.kind === "none") {
+        const p = r.profile;
+        return {
+          Name: personName(p), Email: p.email || "—", "Student ID": p.student_id_number || "—", School: p.school_name || "—",
+          Scholarship: "—", Type: "—", Term: "—", "Grade when applied": "—", "Current grade": p.average_grade ?? "—",
+          Status: "Not yet applied", "Applied / Registered": date(p.created_at), Decided: "—", "Award (PHP)": "—", "Message to student": "—",
+        };
+      }
+      const a = r.app;
+      return {
+        Name: personName(a.profiles), Email: a.profiles?.email || "—", "Student ID": a.profiles?.student_id_number || "—",
+        School: a.profiles?.school_name || "—", Scholarship: a.scholarships?.name || "—",
+        Type: a.is_renewal ? "Renewal" : "New", Term: [a.academic_year, a.semester].filter(Boolean).join(" · ") || "—",
+        "Grade when applied": a.average_grade ?? "—", "Current grade": a.profiles?.average_grade ?? "—",
+        Status: a.status, "Applied / Registered": date(a.created_at), Decided: date(a.decided_at),
+        "Award (PHP)": a.status === "Approved" ? appAward(a) : "—", "Message to student": a.notes || "—",
+      };
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Applicants");
+    XLSX.writeFile(wb, "applicants.xlsx");
+    toast.success("Excel downloaded");
+  };
 
   // ── Fund management (derived from payments + applications) ──
   const fundData = useMemo(() => {
@@ -1209,7 +1331,7 @@ export default function AdminDashboardPage() {
           <button className="lg:hidden" onClick={() => setSidebarOpen(false)}><X className="h-5 w-5" /></button>
         </div>
         <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
-          {sidebarItems.map((item) => {
+          {sidebarItems.filter((item) => item.key !== "staff" || canManageSettings).map((item) => {
             const unread = item.key === "notifications" ? unreadTotal : 0;
             return (
               <button key={item.key} onClick={() => { setActiveSection(item.key); setSidebarOpen(false); }}
@@ -1259,7 +1381,6 @@ export default function AdminDashboardPage() {
               profiles={scholars}
               notApplied={notApplied}
               payments={payments}
-              verifications={verifications}
               auditLogs={auditLogs}
               firstName={adminProfile?.first_name}
               refreshing={refreshing}
@@ -1270,7 +1391,6 @@ export default function AdminDashboardPage() {
               onNavigate={(section, opts) => {
                 setActiveSection(section);
                 if (opts?.status !== undefined) { setStatusFilter(opts.status); setAppPage(1); }
-                if (opts?.verif !== undefined) setVerifFilter(opts.verif);
               }}
             />
           )}
@@ -1283,36 +1403,66 @@ export default function AdminDashboardPage() {
                 <div className="flex gap-2 flex-wrap">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Search name, scholarship..." value={appSearch} onChange={(e) => { setAppSearch(e.target.value); setAppPage(1); }} className="pl-9 w-60" />
+                    <Input placeholder="Search name, email, ID, school, program..." value={appSearch} onChange={(e) => { setAppSearch(e.target.value); setAppPage(1); }} className="pl-9 w-72" />
                   </div>
                   <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setAppPage(1); }}>
-                    <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Status</SelectItem>
                       <SelectItem value="not_applied">Not yet applied</SelectItem>
+                      <SelectItem value="open">Pending + waitlisted</SelectItem>
                       <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="approved">Approved</SelectItem>
                       <SelectItem value="waitlisted">Waitlisted</SelectItem>
-                      <SelectItem value="rejected">Rejected</SelectItem>
+                      <SelectItem value="approved">Approved</SelectItem>
+                      <SelectItem value="disapproved">Disapproved</SelectItem>
                       <SelectItem value="withdrawn">Withdrawn</SelectItem>
                     </SelectContent>
                   </Select>
+                  <Button variant="outline" onClick={exportApplicants} disabled={filteredApps.length === 0}>
+                    <FileDown className="mr-1 h-4 w-4" /> Export
+                  </Button>
                 </div>
               </div>
               {pipelineStrip}
+              {selectedApps.size > 0 && (
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-accent px-3 py-2 text-sm">
+                  <span className="font-medium">{selectedApps.size} selected</span>
+                  <Button size="sm" disabled={bulkBusy} onClick={() => bulkDecide("Approved")}>
+                    {bulkBusy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-1 h-4 w-4" />} Approve
+                  </Button>
+                  <Button size="sm" variant="outline" disabled={bulkBusy} onClick={() => bulkDecide("Waitlisted")}>
+                    <Hourglass className="mr-1 h-4 w-4" /> Waitlist
+                  </Button>
+                  <Button size="sm" variant="destructive" disabled={bulkBusy} onClick={() => { setBulkNote(""); setBulkDisapprove(true); }}>
+                    <XCircle className="mr-1 h-4 w-4" /> Disapprove
+                  </Button>
+                  <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={() => setSelectedApps(new Set())}>Clear</Button>
+                  <span className="text-xs text-muted-foreground">Each one is checked on its own; any that can&apos;t be changed are listed afterwards.</span>
+                </div>
+              )}
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
+                    <TableHead className="w-10">
+                      <Checkbox aria-label="Select all open applications on this page" disabled={selectablePaged.length === 0}
+                        checked={allPagedSelected}
+                        onCheckedChange={(on) => setSelectedApps((prev) => {
+                          const next = new Set(prev);
+                          selectablePaged.forEach((id) => (on ? next.add(id) : next.delete(id)));
+                          return next;
+                        })} />
+                    </TableHead>
                     <TableHead>Applicant</TableHead><TableHead>Scholarship</TableHead><TableHead>Grade</TableHead><TableHead>Date</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {filteredApps.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No applicants found</TableCell></TableRow>}
+                    {filteredApps.length === 0 && <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No applicants found</TableCell></TableRow>}
                     {pagedApps.map((row) => {
                       if (row.kind === "none") {
                         const p = row.profile;
                         const docs = docsReady(p.id);
                         return (
                           <TableRow key={`none-${p.id}`} className="bg-amber-50/40 dark:bg-amber-950/10">
+                            <TableCell />
                             <TableCell>
                               <p className="font-medium">{personName(p)}</p>
                               <p className="text-xs text-muted-foreground">{p.email}</p>
@@ -1335,39 +1485,57 @@ export default function AdminDashboardPage() {
                         );
                       }
                       const a = row.app;
-                      const name = a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "—";
+                      const name = personName(a.profiles);
+                      const blocker = isOpenApp(a) ? approveBlocker(a) : null;
+                      const currentGrade = a.profiles?.average_grade ?? null;
                       return (
-                        <TableRow key={a.id}>
+                        <TableRow key={a.id} data-state={selectedApps.has(a.id) ? "selected" : undefined}>
+                          <TableCell>
+                            {isOpenApp(a) && (
+                              <Checkbox aria-label={`Select ${name}`} checked={selectedApps.has(a.id)} onCheckedChange={(on) => toggleSelected(a.id, on === true)} />
+                            )}
+                          </TableCell>
                           <TableCell>
                             <p className="font-medium">{name}</p>
+                            {a.profiles?.email && <p className="text-xs text-muted-foreground">{a.profiles.email}</p>}
                             <div className="mt-1 flex gap-1 flex-wrap empty:hidden">
                               {gradeReviews.some((g) => g.user_id === a.user_id && g.status === "Pending") && <Badge variant="secondary" className="text-[10px]">Grade to review</Badge>}
                               {dataReqs.some((r) => r.user_id === a.user_id && r.status === "Pending") && <Badge variant="destructive" className="text-[10px]">Deletion requested</Badge>}
                             </div>
                           </TableCell>
                           <TableCell>{a.scholarships?.name || "—"}</TableCell>
-                          <TableCell>{a.profiles?.average_grade || "—"}</TableCell>
+                          <TableCell title="Grade when applied">
+                            {a.average_grade ?? currentGrade ?? "—"}
+                            {a.average_grade != null && currentGrade != null && Number(currentGrade) !== Number(a.average_grade) && (
+                              <span className="block text-xs text-muted-foreground" title="Current grade on the profile">now {currentGrade}</span>
+                            )}
+                          </TableCell>
                           <TableCell>{new Date(a.created_at).toLocaleDateString()}</TableCell>
                           <TableCell>{statusBadge(a.status)}</TableCell>
                           <TableCell className="text-right space-x-1">
                             <Button size="icon" variant="ghost" onClick={() => setViewApp(a)} title="View"><Eye className="h-4 w-4" /></Button>
-                            {(a.status === "Pending" || a.status === "Waitlisted") && (<>
-                              <Button size="icon" variant="ghost" disabled={!!approveBlocker(a)} title={approveBlocker(a) ?? "Approve"} onClick={async () => {
-                                if (await decideApplication(a, "Approved")) { toast.success(`${name} approved!`); loadData(); }
+                            {isOpenApp(a) && (<>
+                              <Button size="icon" variant="ghost" disabled={!!blocker} title={blocker ?? "Approve"} onClick={async () => {
+                                if (await decideApplication(a, "Approved", null)) { toast.success(`${name} approved!`); loadData(true); }
                               }}><CheckCircle className="h-4 w-4 text-success" /></Button>
                               {a.status === "Pending" && (
                                 <Button size="icon" variant="ghost" title="Waitlist" onClick={async () => {
-                                  if (await decideApplication(a, "Waitlisted")) { toast.info(`${name} waitlisted`); loadData(); }
+                                  if (await decideApplication(a, "Waitlisted", null)) { toast.info(`${name} waitlisted`); loadData(true); }
                                 }}><Hourglass className="h-4 w-4 text-warning" /></Button>
                               )}
-                              <Button size="icon" variant="ghost" title="Reject" onClick={async () => {
-                                if (await decideApplication(a, "Rejected")) { toast.error(`${name} rejected`); loadData(); }
-                              }}><XCircle className="h-4 w-4 text-destructive" /></Button>
+                              <Button size="icon" variant="ghost" title="Disapprove" onClick={() => { setDisapproveAppNote(""); setDisapproveApp(a); }}>
+                                <XCircle className="h-4 w-4 text-destructive" />
+                              </Button>
                             </>)}
-                            {a.status === "Rejected" && (
+                            {a.status === "Disapproved" && (
                               <Button size="icon" variant="ghost" title="Reopen" onClick={async () => {
-                                if (await decideApplication(a, "Pending")) { toast.success(`${name} reopened`); loadData(); }
+                                if (await decideApplication(a, "Pending", null)) { toast.success(`${name} reopened`); loadData(true); }
                               }}><RotateCcw className="h-4 w-4" /></Button>
+                            )}
+                            {a.status === "Approved" && (
+                              <Button size="icon" variant="ghost" disabled={hasLivePayment(a.id)}
+                                title={hasLivePayment(a.id) ? "This application has payments. Cancel them before revoking the approval" : "Revoke approval"}
+                                onClick={() => { setRevokeNote(""); setRevokeApp(a); }}><Undo2 className="h-4 w-4 text-destructive" /></Button>
                             )}
                           </TableCell>
                         </TableRow>
@@ -1386,23 +1554,33 @@ export default function AdminDashboardPage() {
               </div>
 
               <Dialog open={!!viewApp} onOpenChange={(open) => !open && setViewApp(null)}>
-                <DialogContent className="max-w-lg">
+                <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
                   <DialogHeader><DialogTitle>Application Details</DialogTitle></DialogHeader>
-                  {viewApp && (
+                  {viewApp && (() => {
+                    const open = isOpenApp(viewApp);
+                    const awardOverride = open && awardInput.trim() !== "" ? Number(awardInput) : undefined;
+                    const awardValid = awardOverride === undefined || (Number.isFinite(awardOverride) && awardOverride > 0);
+                    const blocker = open ? (awardValid ? approveBlocker(viewApp, awardOverride) : "Enter an award greater than 0") : null;
+                    const cap = capacityFor(viewApp, awardOverride);
+                    const counts = countsForApp(viewApp);
+                    const currentDocs = viewDocs.filter(counts);
+                    const olderDocs = viewDocs.filter((d) => !counts(d));
+                    const livePay = hasLivePayment(viewApp.id);
+                    return (
                     <div className="space-y-4">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <Label className="text-muted-foreground text-xs">Applicant</Label>
-                          <p className="font-medium">{viewApp.profiles ? `${viewApp.profiles.first_name} ${viewApp.profiles.last_name}` : "—"}</p>
+                          <p className="font-medium">{personName(viewApp.profiles)}</p>
                           {profiles.some((p) => p.id === viewApp.user_id) && (
                             <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => setViewStudent(profiles.find((p) => p.id === viewApp.user_id) ?? null)}>View full profile</button>
                           )}
                         </div>
-                        <div><Label className="text-muted-foreground text-xs">Email</Label><p className="font-medium">{viewApp.profiles?.email || "—"}</p></div>
+                        <div><Label className="text-muted-foreground text-xs">Email</Label><p className="font-medium break-all">{viewApp.profiles?.email || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">School</Label><p className="font-medium">{viewApp.profiles?.school_name || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Course</Label><p className="font-medium">{viewApp.profiles?.course || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Year Level</Label><p className="font-medium">{viewApp.profiles?.year_level || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Grade</Label><p className="font-medium">{viewApp.profiles?.average_grade || "—"}</p></div>
+                        <div><Label className="text-muted-foreground text-xs">Current grade</Label><p className="font-medium">{viewApp.profiles?.average_grade ?? "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Scholarship</Label><p className="font-medium">{viewApp.scholarships?.name || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Status</Label><div>{statusBadge(viewApp.status)}</div></div>
                         <div><Label className="text-muted-foreground text-xs">Type</Label><p className="font-medium">{viewApp.is_renewal ? "Renewal" : "New application"}</p></div>
@@ -1410,53 +1588,151 @@ export default function AdminDashboardPage() {
                         <div><Label className="text-muted-foreground text-xs">Grade when applied</Label><p className="font-medium">{viewApp.average_grade ?? "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Household income</Label><p className="font-medium">{viewApp.household_income != null ? `₱${Number(viewApp.household_income).toLocaleString("en-PH")}` : "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Household size</Label><p className="font-medium">{viewApp.household_size ?? "—"}</p></div>
+                        {cap && (
+                          <div>
+                            <Label className="text-muted-foreground text-xs">Program capacity</Label>
+                            <p className={`font-medium ${open && (cap.slotsFull || cap.overBudget) ? "text-destructive" : ""}`}>
+                              {cap.sch.slots > 0 ? `${cap.approved} of ${cap.sch.slots} slots filled` : `${cap.approved} approved (no slot limit)`}
+                            </p>
+                            {Number(cap.sch.total_budget) > 0 && (
+                              <p className="text-xs text-muted-foreground">{formatPHP(cap.committed)} of {formatPHP(Number(cap.sch.total_budget))} committed</p>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <div>
                         <Label className="text-xs">Applicant statement</Label>
                         <p className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/40 px-3 py-2 text-sm">{viewApp.statement || "—"}</p>
                       </div>
                       <div>
-                        <Label className="text-xs">Documents</Label>
-                        {docList(viewDocs, docsLoading)}
+                        <Label className="text-xs">Requirements for {viewApp.scholarships?.name || "this program"}</Label>
+                        <ul className="mt-1 space-y-1 rounded-md border px-3 py-2">
+                          {requirementChecks(viewApp).map((c) => (
+                            <li key={c.key} className="flex items-start gap-2 text-sm">
+                              {c.ok ? <CheckCircle className="h-4 w-4 mt-0.5 shrink-0 text-success" /> : <XCircle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" />}
+                              <span><span className="font-medium">{c.label}</span> <span className="text-muted-foreground">· {c.detail}</span></span>
+                            </li>
+                          ))}
+                        </ul>
                       </div>
                       <div>
-                        <Label className="text-xs">Reviewer Remarks</Label>
-                        <Textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Add notes..." />
-                        {!["Pending", "Waitlisted"].includes(viewApp.status) && (
-                          <Button size="sm" variant="outline" className="mt-2" onClick={async () => {
-                            const notes = remarks.trim() || null;
-                            const { error } = await supabase.from("applications").update({ notes }).eq("id", viewApp.id);
-                            if (error) { toast.error(error.message); return; }
-                            await logAudit("update_application_remarks", "applications", viewApp.id, { notes: viewApp.notes }, { notes });
-                            toast.success("Remarks saved"); loadData();
-                          }}>Save remarks</Button>
+                        <Label className="text-xs">Documents for this application</Label>
+                        {docList(currentDocs, docsLoading)}
+                        {!docsLoading && olderDocs.length > 0 && (
+                          <details className="mt-2 text-sm">
+                            <summary className="cursor-pointer text-xs text-muted-foreground">
+                              {olderDocs.length} document{olderDocs.length === 1 ? "" : "s"} from earlier years (don&apos;t count for this application)
+                            </summary>
+                            {docList(olderDocs, false)}
+                          </details>
                         )}
                       </div>
-                      {(viewApp.status === "Pending" || viewApp.status === "Waitlisted") && approveBlocker(viewApp) && (
-                        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Can&apos;t approve yet. {approveBlocker(viewApp)}.</p>
+
+                      {viewApp.status === "Approved" && (
+                        <div>
+                          <Label className="text-xs">Award amount (₱)</Label>
+                          <div className="mt-1 flex gap-2">
+                            <Input type="number" min={1} step="0.01" value={awardInput} onChange={(e) => setAwardInput(e.target.value)} disabled={hasDisbursed(viewApp.id)} />
+                            <Button variant="outline" disabled={hasDisbursed(viewApp.id)} onClick={() => saveAward(viewApp)}>Save award</Button>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {hasDisbursed(viewApp.id) ? "Locked: a payment for this award has been disbursed." : "The student is notified. Payments already scheduled keep their amount."}
+                          </p>
+                        </div>
                       )}
-                      {(viewApp.status === "Pending" || viewApp.status === "Waitlisted") && (
+                      {open && (
+                        <div>
+                          <Label className="text-xs">Award amount (₱, optional)</Label>
+                          <Input type="number" min={1} step="0.01" className="mt-1" value={awardInput} onChange={(e) => setAwardInput(e.target.value)}
+                            placeholder={cap?.sch.amount ? `Program award: ${formatPHP(Number(cap.sch.amount))}` : "Program award"} />
+                        </div>
+                      )}
+
+                      <div>
+                        <Label className="text-xs">{viewApp.status === "Disapproved" ? "Reason (shown to the student)" : "Message to the student"}</Label>
+                        <Textarea value={remarks} onChange={(e) => setRemarks(e.target.value)}
+                          placeholder={open ? "Sent with your decision and shown on the student's application. Required to disapprove." : "Shown on the student's application."} />
+                        {open && viewApp.notes && (
+                          <p className="mt-1 text-xs text-muted-foreground">Last message sent: “{viewApp.notes}”. It isn&apos;t sent again unless you write it here.</p>
+                        )}
+                        {["Approved", "Disapproved"].includes(viewApp.status) && (
+                          <Button size="sm" variant="outline" className="mt-2" disabled={viewApp.status === "Disapproved" && !remarks.trim()} onClick={async () => {
+                            const prev = viewApp.notes?.trim() || null;
+                            const notes = remarks.trim() || null;
+                            if (notes === prev) { toast.info("No changes to save"); return; }
+                            const { data, error } = await supabase.from("applications").update({ notes })
+                              .eq("id", viewApp.id).eq("status", viewApp.status).select("id");
+                            if (error) { toast.error(error.message); return; }
+                            if (!data?.length) { toast.error("This application was changed elsewhere. The list has been refreshed."); silentRefreshAdmin(); return; }
+                            await logAudit("update_application_remarks", "applications", viewApp.id, { notes: viewApp.notes }, { notes });
+                            setViewApp({ ...viewApp, notes });
+                            // For a disapproved application the database notifies the student (see migration 040).
+                            toast.success(viewApp.status === "Disapproved" ? "Reason updated — the student was notified" : "Message saved");
+                            loadData(true);
+                          }}>{viewApp.status === "Disapproved" ? "Save reason" : "Save message"}</Button>
+                        )}
+                      </div>
+
+                      <div>
+                        <Label className="text-xs">Internal notes (staff only — never shown to the student)</Label>
+                        {appNotes.length > 0 && (
+                          <ul className="mt-1 space-y-2">
+                            {appNotes.map((n) => (
+                              <li key={n.id} className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                                <p className="whitespace-pre-wrap">{n.body}</p>
+                                <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                                  <span>{n.author_email || "Staff"} · {new Date(n.created_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })}</span>
+                                  {n.author_id === adminUserId && (
+                                    <button type="button" className="hover:text-destructive" title="Delete note" onClick={() => deleteAppNote(n)}><Trash2 className="h-3.5 w-3.5" /></button>
+                                  )}
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <div className="mt-2 flex gap-2">
+                          <Textarea rows={2} value={newAppNote} onChange={(e) => setNewAppNote(e.target.value)} placeholder="e.g. Called the guardian to confirm household income." maxLength={2000} />
+                          <Button variant="outline" className="self-end" disabled={savingAppNote || !newAppNote.trim()} onClick={() => addAppNote(viewApp)}>Add</Button>
+                        </div>
+                      </div>
+
+                      {open && blocker && (
+                        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Can&apos;t approve yet. {blocker}.</p>
+                      )}
+                      {open && (
                         <div className="flex gap-2 pt-2 flex-wrap">
-                          <Button className="flex-1" disabled={!!approveBlocker(viewApp)} title={approveBlocker(viewApp) ?? undefined} onClick={async () => {
-                            if (await decideApplication(viewApp, "Approved", remarks)) { toast.success("Approved!"); setViewApp(null); loadData(); }
+                          <Button className="flex-1" disabled={!!blocker} title={blocker ?? undefined} onClick={async () => {
+                            if (await decideApplication(viewApp, "Approved", remarks, awardOverride ?? null)) { toast.success("Approved!"); setViewApp(null); loadData(true); }
                           }}><CheckCircle className="mr-1 h-4 w-4" /> Approve</Button>
                           {viewApp.status === "Pending" && (
                             <Button variant="outline" className="flex-1" onClick={async () => {
-                              if (await decideApplication(viewApp, "Waitlisted", remarks)) { toast.info("Waitlisted"); setViewApp(null); loadData(); }
+                              if (await decideApplication(viewApp, "Waitlisted", remarks)) { toast.info("Waitlisted"); setViewApp(null); loadData(true); }
                             }}><Hourglass className="mr-1 h-4 w-4" /> Waitlist</Button>
                           )}
-                          <Button variant="destructive" className="flex-1" onClick={async () => {
-                            if (await decideApplication(viewApp, "Rejected", remarks)) { toast.error("Rejected"); setViewApp(null); loadData(); }
-                          }}><XCircle className="mr-1 h-4 w-4" /> Reject</Button>
+                          <Button variant="destructive" className="flex-1" disabled={!remarks.trim()} title={remarks.trim() ? undefined : "Write the reason in the message first — it is shown to the student"} onClick={async () => {
+                            if (await decideApplication(viewApp, "Disapproved", remarks)) { toast.error("Disapproved"); setViewApp(null); loadData(true); }
+                          }}><XCircle className="mr-1 h-4 w-4" /> Disapprove</Button>
                         </div>
                       )}
-                      {viewApp.status === "Rejected" && (
+                      {viewApp.status === "Disapproved" && (
                         <Button variant="outline" className="w-full" onClick={async () => {
-                          if (await decideApplication(viewApp, "Pending", remarks)) { toast.success("Reopened"); setViewApp(null); loadData(); }
+                          // The disapproval reason is cleared, so it isn't resent with a later decision.
+                          if (await decideApplication(viewApp, "Pending", null)) { toast.success("Reopened"); setViewApp(null); loadData(true); }
                         }}><RotateCcw className="mr-1 h-4 w-4" /> Reopen for review</Button>
                       )}
+                      {viewApp.status === "Approved" && (
+                        <Button variant="outline" className="w-full text-destructive" disabled={livePay}
+                          title={livePay ? "This application has payments. Cancel them before revoking the approval" : undefined}
+                          onClick={() => { setRevokeNote(""); setRevokeApp(viewApp); }}>
+                          <Undo2 className="mr-1 h-4 w-4" /> Revoke approval
+                        </Button>
+                      )}
+                      {viewApp.status === "Approved" && livePay && (
+                        <p className="text-xs text-muted-foreground">To revoke this approval, cancel its payments in Disbursement first.</p>
+                      )}
                     </div>
-                  )}
+                    );
+                  })()}
                 </DialogContent>
               </Dialog>
             </div>
@@ -1627,6 +1903,24 @@ export default function AdminDashboardPage() {
                       <SelectItem value="inactive">Inactive</SelectItem>
                     </SelectContent>
                   </Select>
+                  <Select value={studentProgram} onValueChange={(v) => { setStudentProgram(v); setStudentPage(1); }}>
+                    <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All programs</SelectItem>
+                      {scholarships.map((sch) => <SelectItem key={sch.id} value={sch.id}>{sch.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Select value={studentDisb} onValueChange={(v) => { setStudentDisb(v); setStudentPage(1); }}>
+                    <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All disbursements</SelectItem>
+                      <SelectItem value="none">No payment yet</SelectItem>
+                      <SelectItem value="Pending">Pending</SelectItem>
+                      <SelectItem value="Processing">Processing</SelectItem>
+                      <SelectItem value="Disbursed">Disbursed</SelectItem>
+                      <SelectItem value="Cancelled">Cancelled</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <Select value={studentSort} onValueChange={setStudentSort}>
                     <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -1640,37 +1934,42 @@ export default function AdminDashboardPage() {
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Name</TableHead><TableHead>Student ID</TableHead><TableHead>School / Course</TableHead><TableHead>Year</TableHead><TableHead>Grade</TableHead><TableHead>Apps</TableHead><TableHead>Verification</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Name</TableHead><TableHead>Student ID</TableHead><TableHead>School / Course</TableHead><TableHead>Year</TableHead><TableHead>Grade</TableHead><TableHead title="Approved applications / total applications">Approved / Total</TableHead><TableHead>Program / Award</TableHead><TableHead>Reference No.</TableHead><TableHead>Disbursement</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">{scholars.length === 0 ? "No scholars yet. Applicants appear here once approved." : "No scholars match your search"}</TableCell></TableRow>}
-                    {pagedStudents.map((p) => {
-                      const ver = verificationForUser(p.id);
-                      return (
-                        <TableRow key={p.id}>
-                          <TableCell>
-                            <p className="font-medium">{p.first_name} {p.last_name}</p><p className="text-xs text-muted-foreground">{p.email}</p>
-                            <div className="mt-1 flex gap-1 flex-wrap">
-                              {gradeReviews.some((g) => g.user_id === p.id && g.status === "Pending") && <Badge variant="secondary" className="text-[10px]">Grade to review</Badge>}
-                              {dataReqs.some((r) => r.user_id === p.id && r.status === "Pending") && <Badge variant="destructive" className="text-[10px]">Deletion requested</Badge>}
-                            </div>
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">{p.student_id_number || "—"}</TableCell>
-                          <TableCell className="text-xs"><p>{p.school_name || "—"}</p><p className="text-muted-foreground">{p.course || "—"}</p></TableCell>
-                          <TableCell>{p.year_level || "—"}</TableCell>
-                          <TableCell>{p.average_grade ?? "—"}</TableCell>
-                          <TableCell>{applications.filter((a) => a.user_id === p.id).length}</TableCell>
-                          <TableCell>{ver ? <Badge variant={ver.verification_status === "Verified" ? "default" : ver.verification_status === "Flagged" ? "destructive" : "secondary"}>{ver.verification_status}</Badge> : "—"}</TableCell>
-                          <TableCell><Badge variant={p.is_active ? "default" : "secondary"}>{p.is_active ? "Active" : "Inactive"}</Badge></TableCell>
-                          <TableCell className="text-right space-x-1">
-                            <Button size="icon" variant="ghost" title="View" onClick={() => setViewStudent(p)}><Eye className="h-4 w-4" /></Button>
-                            <Button size="icon" variant="ghost" title={p.is_active ? "Deactivate" : "Activate"} onClick={() => toggleStudentActive(p)}>
-                              <Power className={`h-4 w-4 ${p.is_active ? "text-destructive" : "text-success"}`} />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
+                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={11} className="text-center py-8 text-muted-foreground">{scholars.length === 0 ? "No scholars yet. Applicants appear here once approved." : "No scholars match your search"}</TableCell></TableRow>}
+                    {pagedStudents.map((p) => { const pay = currentPayment(p.id); const apps = approvedApps(p.id); return (
+                      <TableRow key={p.id}>
+                        <TableCell>
+                          <p className="font-medium">{p.first_name} {p.last_name}</p><p className="text-xs text-muted-foreground">{p.email}</p>
+                          <div className="mt-1 flex gap-1 flex-wrap">
+                            {gradeReviews.some((g) => g.user_id === p.id && g.status === "Pending") && <Badge variant="secondary" className="text-[10px]">Grade to review</Badge>}
+                            {dataReqs.some((r) => r.user_id === p.id && r.status === "Pending") && <Badge variant="destructive" className="text-[10px]">Deletion requested</Badge>}
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{p.student_id_number || "—"}</TableCell>
+                        <TableCell className="text-xs"><p>{p.school_name || "—"}</p><p className="text-muted-foreground">{p.course || "—"}</p></TableCell>
+                        <TableCell>{p.year_level || "—"}</TableCell>
+                        <TableCell>{p.average_grade ?? "—"}</TableCell>
+                        <TableCell>{apps.length} / {applications.filter((a) => a.user_id === p.id).length}</TableCell>
+                        <TableCell className="text-xs">
+                          {apps.length === 0 ? "—" : (<>
+                            <p className="font-medium">{apps[0].scholarships?.name || "—"}{apps.length > 1 && <span className="text-muted-foreground font-normal"> +{apps.length - 1} more</span>}</p>
+                            <p className="text-muted-foreground">{formatPHP(apps.reduce((t, a) => t + appAward(a), 0))}{disbursedTotal(p.id) > 0 && ` · ${formatPHP(disbursedTotal(p.id))} paid`}</p>
+                          </>)}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{pay?.reference || "—"}</TableCell>
+                        <TableCell>{pay ? disbStatusBadge(pay.status) : <span className="text-xs text-muted-foreground">No payment</span>}</TableCell>
+                        <TableCell><Badge variant={p.is_active ? "default" : "secondary"}>{p.is_active ? "Active" : "Inactive"}</Badge></TableCell>
+                        <TableCell className="text-right space-x-1">
+                          <Button size="icon" variant="ghost" title="View" onClick={() => setViewStudent(p)}><Eye className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" title="Edit reference number / disbursement status" onClick={() => openEditDisb(p)}><Pencil className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" title={p.is_active ? "Deactivate" : "Activate"} onClick={() => toggleStudentActive(p)}>
+                            <Power className={`h-4 w-4 ${p.is_active ? "text-destructive" : "text-success"}`} />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ); })}
                   </TableBody>
                 </Table>
               </Card>
@@ -1703,8 +2002,8 @@ export default function AdminDashboardPage() {
                       <SelectItem value="custom">Custom range (Reports)</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Button variant="outline" onClick={() => exportPDF("funds")}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
-                  <Button variant="outline" onClick={() => exportExcel("funds")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
+                  <Button variant="outline" onClick={() => exportDef(fundsDef(), "funds-report", "pdf")}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
+                  <Button variant="outline" onClick={() => exportDef(fundsDef(), "funds-report", "xlsx")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
                 </div>
               </div>
 
@@ -1872,27 +2171,38 @@ export default function AdminDashboardPage() {
                             {p.status !== "Disbursed" ? <span className="text-muted-foreground">—</span>
                               : p.student_receipt_at ? (
                                 <div className="space-y-1">
-                                  {p.student_receipt_path ? (
+                                  {p.student_receipt_ref ? (
+                                    <div className="space-y-0.5">
+                                      <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
+                                        <CheckCircle className="h-3.5 w-3.5" /> Ref. <span className="font-mono">{p.student_receipt_ref}</span> · {new Date(p.student_receipt_at).toLocaleDateString()}
+                                      </span>
+                                      {p.reference && (
+                                        refKey(p.reference) === refKey(p.student_receipt_ref)
+                                          ? <p className="text-[11px] text-success">Matches the payment reference</p>
+                                          : <p className="text-[11px] text-muted-foreground">Payment reference: <span className="font-mono">{p.reference}</span></p>
+                                      )}
+                                    </div>
+                                  ) : p.student_receipt_path ? (
                                     <button type="button" onClick={() => viewStudentReceipt(p)} className="inline-flex items-center gap-1 text-xs font-medium text-success hover:underline cursor-pointer">
                                       <CheckCircle className="h-3.5 w-3.5" /> Received · {new Date(p.student_receipt_at).toLocaleDateString()}
                                     </button>
                                   ) : (
-                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-success" title="Student confirmed receiving the cash without attaching a file">
+                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-success" title="Student confirmed receiving the cash without a receipt number (before reference numbers were required)">
                                       <CheckCircle className="h-3.5 w-3.5" /> Confirmed (no file) · {new Date(p.student_receipt_at).toLocaleDateString()}
                                     </span>
                                   )}
                                   <div className="flex items-center gap-1.5">
-                                    <Badge variant={p.receipt_review_status === "Accepted" ? "default" : "secondary"} className={p.receipt_review_status === "Rejected" ? "text-destructive" : undefined}>
+                                    <Badge variant={p.receipt_review_status === "Accepted" ? "default" : "secondary"} className={p.receipt_review_status === "Disapproved" ? "text-destructive" : undefined}>
                                       {p.receipt_review_status === "Pending" ? "To review" : p.receipt_review_status}
                                     </Badge>
                                     {p.receipt_review_status !== "Accepted" && (
                                       <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={payBusy} onClick={() => reviewReceipt(p, "Accepted")}>Accept</Button>
                                     )}
-                                    {p.receipt_review_status !== "Rejected" && (
-                                      <Button size="sm" variant="outline" className="h-6 px-2 text-xs text-destructive" disabled={payBusy} onClick={() => { setReceiptNote(""); setRejectReceipt(p); }}>Reject</Button>
+                                    {p.receipt_review_status !== "Disapproved" && (
+                                      <Button size="sm" variant="outline" className="h-6 px-2 text-xs text-destructive" disabled={payBusy} onClick={() => { setReceiptNote(""); setDisapproveReceipt(p); }}>Disapprove</Button>
                                     )}
                                   </div>
-                                  {p.receipt_review_status === "Rejected" && p.receipt_review_note && <p className="text-xs text-destructive">{p.receipt_review_note}</p>}
+                                  {p.receipt_review_status === "Disapproved" && p.receipt_review_note && <p className="text-xs text-destructive">{p.receipt_review_note}</p>}
                                 </div>
                               ) : <Badge variant="secondary">Awaiting</Badge>}
                           </TableCell>
@@ -2003,152 +2313,16 @@ export default function AdminDashboardPage() {
                 </DialogContent>
               </Dialog>
 
-              {/* Disburse dialog */}
-              <Dialog open={disbDialog} onOpenChange={setDisbDialog}>
-                <DialogContent className="max-w-md">
-                  <DialogHeader>
-                    <DialogTitle className="font-display">Confirm Disbursement</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-2">
-                    <div>
-                      <Label>Payment Method *</Label>
-                      <div className="grid grid-cols-2 gap-3 mt-2">
-                        {enabledMethods.map((m) => (
-                          <button
-                            key={m}
-                            type="button"
-                            disabled={disbLocked}
-                            onClick={() => { setDisbMethod(m); setDisbRef(""); }}
-                            className={`flex items-center justify-center gap-2 rounded-lg border p-3 text-sm font-medium transition-all cursor-pointer ${
-                              disbMethod === m
-                                ? "border-primary bg-primary/5 text-primary"
-                                : "border-border hover:border-primary/40"
-                            } ${disbLocked ? "opacity-60 cursor-not-allowed" : ""}`}
-                          >
-                            {m === "Cash" ? <Banknote className="h-4 w-4" /> : <Receipt className="h-4 w-4" />} {m}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    {disbLocked && (
-                      <p className="text-xs text-muted-foreground">The student chose <strong className="text-foreground">{disbPay?.preferred_method}</strong> for this payment, so the method is fixed.</p>
-                    )}
-                    <div>
-                      <Label>{disbMethod === "Cheque" ? "Cheque Number *" : "Reference Number"}</Label>
-                      <Input
-                        className="mt-1"
-                        placeholder={disbMethod === "Cheque" ? "e.g. CHK-2024-001" : "e.g. REF-001 (optional)"}
-                        value={disbRef}
-                        onChange={(e) => setDisbRef(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label>Receipt / Voucher *</Label>
-                      <p className="text-xs text-muted-foreground mb-2">Upload the signed receipt or disbursement voucher.</p>
-                      <label className="flex items-center gap-2 cursor-pointer rounded-lg border border-dashed p-3 hover:bg-muted/30 transition-colors">
-                        <Upload className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-sm text-muted-foreground">
-                          {disbReceipt ? disbReceipt.name : "Click to upload receipt (PDF / image)"}
-                        </span>
-                        <input
-                          type="file"
-                          accept=".pdf,.jpg,.jpeg,.png"
-                          className="hidden"
-                          onChange={(e) => setDisbReceipt(e.target.files?.[0] ?? null)}
-                        />
-                      </label>
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setDisbDialog(false)}>Cancel</Button>
-                    <Button
-                      className="bg-gradient-primary"
-                      disabled={disbLoading || !disbReceipt || (disbMethod === "Cheque" && !disbRef.trim())}
-                      onClick={confirmDisbursement}
-                    >
-                      {disbLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Confirm Disbursement
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
             </div>
           )}
 
           {/* REPORTS */}
           {activeSection === "reports" && (
-            <div className="space-y-4 animate-fade-in">
-              <h2 className="text-xl font-display font-bold">Reports & Analytics</h2>
-              <Card>
-                <CardContent className="py-4 flex gap-3 flex-wrap items-end">
-                  <div>
-                    <Label className="text-xs">Period</Label>
-                    <Select value={fundPeriod} onValueChange={setFundPeriod}>
-                      <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All time</SelectItem>
-                        <SelectItem value="year">This year</SelectItem>
-                        <SelectItem value="6m">Last 6 months</SelectItem>
-                        <SelectItem value="30d">Last 30 days</SelectItem>
-                        <SelectItem value="custom">Custom range</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {fundPeriod === "custom" && (<>
-                    <div><Label className="text-xs">From</Label><Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="w-40" /></div>
-                    <div><Label className="text-xs">To</Label><Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="w-40" /></div>
-                  </>)}
-                  <div>
-                    <Label className="text-xs">Program</Label>
-                    <Select value={reportProgram} onValueChange={setReportProgram}>
-                      <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All programs</SelectItem>
-                        {scholarships.map((sc) => <SelectItem key={sc.id} value={sc.id}>{sc.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label className="text-xs">Payments (disbursement report)</Label>
-                    <Select value={reportPayStatus} onValueChange={setReportPayStatus}>
-                      <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All except cancelled</SelectItem>
-                        <SelectItem value="Pending">Pending</SelectItem>
-                        <SelectItem value="Processing">Processing</SelectItem>
-                        <SelectItem value="Disbursed">Disbursed</SelectItem>
-                        <SelectItem value="Cancelled">Cancelled</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </CardContent>
-              </Card>
-              <p className="text-xs text-muted-foreground -mt-2">Period also applies to Fund Management. Each report shows how many rows your filters will export.</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {[
-                  { title: "List of Scholars", desc: "Approved scholars with contact, school and program", icon: Users, exportKey: "scholars" },
-                  { title: "Fund Utilization Report", desc: "Disbursed and queued funds per program, plus payment pipeline and methods", icon: Wallet, exportKey: "funds" },
-                  { title: "Disbursement Summary", desc: "Every payment with student, program, method and status, plus totals", icon: Banknote, exportKey: "disbursements" },
-                  { title: "Applicant Statistics", desc: "Applications and approval rates by program, sex, year level and school", icon: BarChart3, exportKey: "statistics" },
-                  { title: "Audit Trail", desc: "Every recorded admin and student action in the period", icon: ScrollText, exportKey: "audit" },
-                ].map((r) => {
-                  const def = buildReport(r.exportKey);
-                  return (
-                    <Card key={r.exportKey}>
-                      <CardHeader>
-                        <CardTitle className="text-base flex items-center gap-2"><r.icon className="h-4 w-4 text-primary" />{r.title}</CardTitle>
-                        <CardDescription>{r.desc}</CardDescription>
-                      </CardHeader>
-                      <CardContent className="flex items-center gap-2 flex-wrap">
-                        <Button variant="outline" size="sm" disabled={def.count === 0} onClick={() => exportPDF(r.exportKey)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
-                        <Button variant="outline" size="sm" disabled={def.count === 0} onClick={() => exportExcel(r.exportKey)}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
-                        <span className="text-xs text-muted-foreground ml-auto">{def.count} {def.countLabel}</span>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-            </div>
+            <ReportsPanel
+              data={{ applications, scholarships, profiles, staff, payments, payIssues, gradeUpdates: gradeReviews, dataRequests: dataReqs, documents: allDocs }}
+              settings={parseSettings(systemSettings)} adminEmail={adminEmail}
+              period={fundPeriod} setPeriod={setFundPeriod} fromDate={fromDate} setFromDate={setFromDate} toDate={toDate} setToDate={setToDate}
+            />
           )}
 
           {/* NOTIFICATIONS */}
@@ -2163,7 +2337,6 @@ export default function AdminDashboardPage() {
                 <CardContent>
                   <NotificationPreferences userId={adminUserId} email={adminEmail} categories={[
                     { key: "application", label: "Applications", hint: "New applications submitted" },
-                    { key: "verification", label: "Verification", hint: "Duplicate ID flags" },
                     { key: "payment", label: "Payments", hint: "Receipts, method choices and unpaid approvals" },
                   ]} />
                 </CardContent>
@@ -2172,97 +2345,14 @@ export default function AdminDashboardPage() {
           )}
 
           {/* SETTINGS */}
-          {/* SCHOLAR VERIFICATION */}
-          {activeSection === "verification" && (
-            <div className="space-y-4 animate-fade-in">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-xl font-display font-bold">Scholar Verification</h2>
-                <Select value={verifFilter} onValueChange={setVerifFilter}>
-                  <SelectTrigger className="w-40"><SelectValue placeholder="Status" /></SelectTrigger>
-                  <SelectContent>
-                    {["all", "Pending", "Flagged", "Verified", "Cleared"].map((st) => (
-                      <SelectItem key={st} value={st}>{st === "all" ? "All statuses" : st}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Card className="border-warning/30 bg-warning/5">
-                <CardContent className="py-3 flex items-start gap-2">
-                  <ShieldCheck className="h-4 w-4 text-warning mt-0.5" />
-                  <p className="text-sm text-muted-foreground">Applications can only be approved once their verification is Verified or Cleared. Flagged records share a student ID with another applicant.</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <Table>
-                  <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Applicant</TableHead><TableHead>Application</TableHead><TableHead>Student ID</TableHead><TableHead>Existing Scholarship</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
-                  </TableRow></TableHeader>
-                  <TableBody>
-                    {verifications.filter((v) => verifFilter === "all" || v.verification_status === verifFilter).length === 0 && (
-                      <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No verification records</TableCell></TableRow>
-                    )}
-                    {verifications.filter((v) => verifFilter === "all" || v.verification_status === verifFilter).map((v) => {
-                      const prof = profiles.find(p => p.id === v.user_id);
-                      const name = prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() : "Unknown";
-                      const app = applications.find((a) => a.id === v.application_id);
-                      return (
-                        <TableRow key={v.id}>
-                          <TableCell className="font-medium">{name}</TableCell>
-                          <TableCell className="text-xs">
-                            {app ? (<><div>{app.scholarships?.name || "—"}</div><div className="text-muted-foreground">{app.status}</div></>) : "—"}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">{v.student_id_number || "—"}</TableCell>
-                          <TableCell>
-                            {v.has_existing_scholarship ? <Badge variant="destructive">Yes</Badge> : <Badge variant="outline">No</Badge>}
-                            {v.existing_scholarship_details && <p className="text-xs text-muted-foreground mt-1 max-w-[200px]">{v.existing_scholarship_details}</p>}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={v.verification_status === "Verified" ? "default" : v.verification_status === "Flagged" ? "destructive" : "secondary"}>
-                              {v.verification_status}
-                            </Badge>
-                            {v.notes && <p className="text-xs text-muted-foreground mt-1 max-w-[200px] whitespace-pre-line">{v.notes}</p>}
-                          </TableCell>
-                          <TableCell className="text-right space-x-1">
-                            {(v.verification_status === "Pending" || v.verification_status === "Flagged") && (
-                              <Button size="sm" onClick={() => { setVerifNotes(""); setVerifAction({ v, status: "Verified" }); }}>Verify</Button>
-                            )}
-                            {v.verification_status === "Pending" && (
-                              <Button size="sm" variant="destructive" onClick={() => { setVerifNotes(""); setVerifAction({ v, status: "Flagged" }); }}>Flag</Button>
-                            )}
-                            {v.verification_status === "Flagged" && (
-                              <Button size="sm" variant="outline" onClick={() => { setVerifNotes(""); setVerifAction({ v, status: "Cleared" }); }}>Clear</Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </Card>
-              <Dialog open={!!verifAction} onOpenChange={(o) => { if (!o) setVerifAction(null); }}>
-                <DialogContent>
-                  <DialogHeader><DialogTitle>Mark as {verifAction?.status}</DialogTitle></DialogHeader>
-                  <div className="space-y-2">
-                    <Label className="text-xs">Notes (optional)</Label>
-                    <Textarea value={verifNotes} onChange={(e) => setVerifNotes(e.target.value)} placeholder="Reason or evidence..." />
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setVerifAction(null)}>Cancel</Button>
-                    <Button onClick={submitVerification}>Confirm</Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </div>
-          )}
-
           {/* AUDIT LOGS */}
           {activeSection === "audit-logs" && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <h2 className="text-xl font-display font-bold">Audit Logs</h2>
                 <div className="flex gap-2 flex-wrap">
-                  <Button variant="outline" onClick={() => renderPDF(auditDef(), "audit-log.pdf", true)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
-                  <Button variant="outline" onClick={() => renderExcel(auditDef(), "audit-log.xlsx")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
+                  <Button variant="outline" onClick={() => exportDef(auditDef(), "audit-log", "pdf", true)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
+                  <Button variant="outline" onClick={() => exportDef(auditDef(), "audit-log", "xlsx")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
                 </div>
               </div>
               <div className="flex gap-2 flex-wrap items-center">
@@ -2374,22 +2464,170 @@ export default function AdminDashboardPage() {
             />
           )}
 
+          {/* STAFF (super admins only) */}
+          {activeSection === "staff" && canManageSettings && (
+            <StaffPanel userId={adminUserId} onChanged={() => loadData(true)} />
+          )}
+
           {/* SETTINGS */}
           {activeSection === "settings" && (
             <div className="space-y-4">
-              <SettingsPanel rows={systemSettings} auditLogs={auditLogs} onSave={saveSettings} />
+              <SettingsPanel rows={systemSettings} auditLogs={auditLogs} onSave={saveSettings} readOnly={!canManageSettings} />
               <ReminderJobsCard />
             </div>
           )}
         </main>
       </div>
 
+      {/* Student Management: edit reference number / disbursement status */}
+      <Dialog open={!!editDisb} onOpenChange={(o) => !o && setEditDisb(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="font-display">Edit Disbursement</DialogTitle></DialogHeader>
+          {editDisb && (() => {
+            const list = studentPayments(editDisb.id);
+            const pm = list.find((x) => x.id === editDisbPayId);
+            const locked = pm?.status === "Disbursed" || pm?.status === "Cancelled";
+            return (
+              <div className="space-y-4">
+                <div><Label className="text-muted-foreground text-xs">Student</Label><p className="font-medium">{`${editDisb.first_name || ""} ${editDisb.last_name || ""}`.trim() || editDisb.email}</p></div>
+                {list.length === 0 ? (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">This scholar has no payment yet. Schedule one first, then set its reference number and status.</p>
+                    <Button variant="outline" onClick={() => {
+                      const app = fundData.awaiting.find((a) => a.user_id === editDisb.id);
+                      setEditDisb(null); openNewPayment(app?.id ?? ""); setActiveSection("disbursement");
+                    }}>Schedule payment <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>
+                  </div>
+                ) : (<>
+                  {list.length > 1 && (
+                    <div>
+                      <Label>Payment</Label>
+                      <Select value={editDisbPayId} onValueChange={(id) => selectEditDisbPayment(list.find((x) => x.id === id))}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {list.map((x) => (
+                            <SelectItem key={x.id} value={x.id}>{payProgram(x)} · {formatPHP(Number(x.amount))} · {x.status}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {pm && list.length === 1 && <p className="text-sm text-muted-foreground">{payProgram(pm)} · {formatPHP(Number(pm.amount))} · {pm.method || "—"}</p>}
+                  <div>
+                    <Label>{pm?.method === "Cheque" ? "Cheque number" : "Reference number"}</Label>
+                    <Input value={editDisbRef} onChange={(e) => setEditDisbRef(e.target.value)} disabled={locked} placeholder={pm?.method === "Cheque" ? "e.g. CHK-2024-001" : "e.g. REF-001"} />
+                  </div>
+                  <div>
+                    <Label>Disbursement status</Label>
+                    <Select value={editDisbStatus} onValueChange={setEditDisbStatus} disabled={locked}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {pm?.status === "Pending" && <SelectItem value="Pending">Pending</SelectItem>}
+                        <SelectItem value="Processing">Processing</SelectItem>
+                        <SelectItem value="Disbursed">Disbursed</SelectItem>
+                        <SelectItem value="Cancelled">Cancelled</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {locked && <p className="text-xs text-muted-foreground flex items-center gap-1"><Lock className="h-3.5 w-3.5" /> {pm?.status} payments are locked and can&apos;t be edited.</p>}
+                  {!locked && editDisbStatus === "Disbursed" && <p className="text-xs text-muted-foreground">You&apos;ll be asked to upload the receipt / voucher to confirm the disbursement.</p>}
+                  {!locked && editDisbStatus === "Cancelled" && (
+                    <div>
+                      <Label className="text-xs">Cancellation reason (shown to the student, optional)</Label>
+                      <Textarea rows={2} maxLength={300} value={editDisbReason} onChange={(e) => setEditDisbReason(e.target.value)} />
+                    </div>
+                  )}
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setEditDisb(null)}>Close</Button>
+                    {!locked && (
+                      <Button className="bg-gradient-primary" disabled={payBusy || !pm} onClick={saveEditDisb}>
+                        {payBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        {editDisbStatus === "Disbursed" ? "Continue" : "Save Changes"}
+                      </Button>
+                    )}
+                  </DialogFooter>
+                </>)}
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* Disburse dialog */}
+      <Dialog open={disbDialog} onOpenChange={setDisbDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display">Confirm Disbursement</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label>Payment Method *</Label>
+              <div className="grid grid-cols-2 gap-3 mt-2">
+                {enabledMethods.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    disabled={disbLocked}
+                    onClick={() => { setDisbMethod(m); setDisbRef(""); }}
+                    className={`flex items-center justify-center gap-2 rounded-lg border p-3 text-sm font-medium transition-all cursor-pointer ${
+                      disbMethod === m
+                        ? "border-primary bg-primary/5 text-primary"
+                        : "border-border hover:border-primary/40"
+                    } ${disbLocked ? "opacity-60 cursor-not-allowed" : ""}`}
+                  >
+                    {m === "Cash" ? <Banknote className="h-4 w-4" /> : <Receipt className="h-4 w-4" />} {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {disbLocked && (
+              <p className="text-xs text-muted-foreground">The student chose <strong className="text-foreground">{disbPay?.preferred_method}</strong> for this payment, so the method is fixed.</p>
+            )}
+            <div>
+              <Label>{disbMethod === "Cheque" ? "Cheque Number *" : "Reference Number"}</Label>
+              <Input
+                className="mt-1"
+                placeholder={disbMethod === "Cheque" ? "e.g. CHK-2024-001" : "e.g. REF-001 (optional)"}
+                value={disbRef}
+                onChange={(e) => setDisbRef(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label>Receipt / Voucher *</Label>
+              <p className="text-xs text-muted-foreground mb-2">Upload the signed receipt or disbursement voucher.</p>
+              <label className="flex items-center gap-2 cursor-pointer rounded-lg border border-dashed p-3 hover:bg-muted/30 transition-colors">
+                <Upload className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">
+                  {disbReceipt ? disbReceipt.name : "Click to upload receipt (PDF / image)"}
+                </span>
+                <input
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  className="hidden"
+                  onChange={(e) => setDisbReceipt(e.target.files?.[0] ?? null)}
+                />
+              </label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDisbDialog(false)}>Cancel</Button>
+            <Button
+              className="bg-gradient-primary"
+              disabled={disbLoading || !disbReceipt || (disbMethod === "Cheque" && !disbRef.trim())}
+              onClick={confirmDisbursement}
+            >
+              {disbLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Confirm Disbursement
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Student Details</DialogTitle></DialogHeader>
           {viewStudent && (() => {
             const stuApps = applications.filter((a) => a.user_id === viewStudent.id);
-            const ver = verificationForUser(viewStudent.id);
             const field = (label: string, value: React.ReactNode) => (
               <div><Label className="text-muted-foreground text-xs">{label}</Label><div className="font-medium">{value || "—"}</div></div>
             );
@@ -2397,6 +2635,7 @@ export default function AdminDashboardPage() {
               <div className="space-y-5">
                 <div className="grid grid-cols-2 gap-3">
                   {field("Name", `${viewStudent.first_name || ""} ${viewStudent.middle_name || ""} ${viewStudent.last_name || ""}`.replace(/\s+/g, " ").trim())}
+                  {field("Student ID", <span className="font-mono">{viewStudent.student_id_number || "—"}</span>)}
                   {field("Email", viewStudent.email)}
                   {field("Phone", viewStudent.phone)}
                   {field("Sex · Civil status", [viewStudent.sex, viewStudent.civil_status].filter(Boolean).join(" · "))}
@@ -2405,7 +2644,6 @@ export default function AdminDashboardPage() {
                   {field("Address", [viewStudent.street_address, viewStudent.barangay, viewStudent.municipality, viewStudent.province, viewStudent.zip_code].filter(Boolean).join(", "))}
                   {field("Guardian", [viewStudent.guardian_name, viewStudent.guardian_relationship && `(${viewStudent.guardian_relationship})`].filter(Boolean).join(" "))}
                   {field("Guardian phone", viewStudent.guardian_phone)}
-                  {field("Student ID", viewStudent.student_id_number)}
                   {field("School", viewStudent.school_name)}
                   {field("Course", viewStudent.course)}
                   {field("Year Level", viewStudent.year_level)}
@@ -2414,7 +2652,6 @@ export default function AdminDashboardPage() {
                       <Badge variant={viewStudent.grade_verified_at ? "default" : "secondary"}>{viewStudent.grade_verified_at ? `Verified${viewStudent.grade_term ? ` · ${viewStudent.grade_term}` : ""}` : "Self-declared"}</Badge>
                     </span>) : null)}
                   {field("Account", <Badge variant={viewStudent.is_active ? "default" : "secondary"}>{viewStudent.is_active ? "Active" : "Inactive"}</Badge>)}
-                  {field("Verification", ver ? <Badge variant={ver.verification_status === "Verified" ? "default" : ver.verification_status === "Flagged" ? "destructive" : "secondary"}>{ver.verification_status}</Badge> : null)}
                 </div>
                 <div>
                   <Label className="text-xs">Applications ({stuApps.length})</Label>
@@ -2430,6 +2667,44 @@ export default function AdminDashboardPage() {
                   )}
                 </div>
                 {(() => {
+                  const pays = studentPayments(viewStudent.id);
+                  return (
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs">Payments ({pays.length}){pays.length > 0 && <span className="font-normal text-muted-foreground"> · {formatPHP(disbursedTotal(viewStudent.id))} disbursed</span>}</Label>
+                        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { const v = viewStudent; setViewStudent(null); openEditDisb(v); }}>
+                          <Pencil className="mr-1 h-3.5 w-3.5" /> Edit disbursement
+                        </Button>
+                      </div>
+                      {pays.length === 0 ? <p className="text-sm text-muted-foreground">No payments yet</p> : (
+                        <ul className="mt-1 space-y-1">
+                          {pays.map((pm) => (
+                            <li key={pm.id} className="rounded-md border px-3 py-1.5 text-sm">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <span>
+                                  <span className="font-medium">{formatPHP(Number(pm.amount))}</span> · {payProgram(pm)}
+                                  <span className="text-xs text-muted-foreground"> · {pm.method || "—"} · Ref: <span className="font-mono">{pm.reference || "—"}</span></span>
+                                </span>
+                                <span className="flex items-center gap-1.5">
+                                  {pm.status === "Disbursed" && (
+                                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => viewReceipt(pm)}><Receipt className="mr-1 h-3.5 w-3.5" /> Receipt</Button>
+                                  )}
+                                  {disbStatusBadge(pm.status)}
+                                </span>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                {pm.status === "Disbursed" && pm.disbursed_at ? `Disbursed ${new Date(pm.disbursed_at).toLocaleDateString()}` : pm.scheduled_date ? `Scheduled ${pm.scheduled_date}` : `Created ${new Date(pm.created_at).toLocaleDateString()}`}
+                                {pm.status === "Disbursed" && ` · Student receipt: ${pm.student_receipt_at ? pm.receipt_review_status : "awaiting"}`}
+                                {pm.status === "Cancelled" && pm.cancel_reason && ` · ${pm.cancel_reason}`}
+                              </p>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })()}
+                {(() => {
                   const grades = gradeReviews.filter((g) => g.user_id === viewStudent.id);
                   if (grades.length === 0) return null;
                   return (
@@ -2441,15 +2716,15 @@ export default function AdminDashboardPage() {
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <span><span className="font-medium">{g.grade}</span> · {g.term} · {new Date(g.created_at).toLocaleDateString()}</span>
                               <span className="flex items-center gap-1.5">
-                                <Badge variant={g.status === "Verified" ? "default" : "secondary"} className={g.status === "Rejected" ? "text-destructive" : undefined}>{g.status}</Badge>
+                                <Badge variant={g.status === "Verified" ? "default" : "secondary"} className={g.status === "Disapproved" ? "text-destructive" : undefined}>{g.status}</Badge>
                                 <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openStoredFile(g.file_path, "No grade report on file")}>View report</Button>
                                 {g.status === "Pending" && (<>
                                   <Button size="sm" className="h-7 text-xs" disabled={payBusy} onClick={() => reviewGrade(g, "Verified")}>Verify</Button>
-                                  <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={payBusy} onClick={() => { setGradeNote(""); setRejectGrade(g); }}>Reject</Button>
+                                  <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={payBusy} onClick={() => { setGradeNote(""); setDisapproveGrade(g); }}>Disapprove</Button>
                                 </>)}
                               </span>
                             </div>
-                            {g.status === "Rejected" && g.review_note && <p className="mt-1 text-xs text-destructive">Reason: {g.review_note}</p>}
+                            {g.status === "Disapproved" && g.review_note && <p className="mt-1 text-xs text-destructive">Reason: {g.review_note}</p>}
                           </li>
                         ))}
                       </ul>
@@ -2499,18 +2774,18 @@ export default function AdminDashboardPage() {
           })()}
         </DialogContent>
       </Dialog>
-      <Dialog open={!!rejectGrade} onOpenChange={(o) => { if (!o) setRejectGrade(null); }}>
+      <Dialog open={!!disapproveGrade} onOpenChange={(o) => { if (!o) setDisapproveGrade(null); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Reject the grade submission</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Disapprove the grade submission</DialogTitle></DialogHeader>
           <div>
             <Label className="text-xs">Reason (shown to the student, who will be asked to resubmit)</Label>
             <Textarea value={gradeNote} onChange={(e) => setGradeNote(e.target.value)} placeholder="e.g. The grade report is unreadable or doesn't show the average." />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRejectGrade(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setDisapproveGrade(null)}>Cancel</Button>
             <Button variant="destructive" disabled={payBusy || !gradeNote.trim()} onClick={async () => {
-              if (rejectGrade && await reviewGrade(rejectGrade, "Rejected", gradeNote)) setRejectGrade(null);
-            }}>Reject grade</Button>
+              if (disapproveGrade && await reviewGrade(disapproveGrade, "Disapproved", gradeNote)) setDisapproveGrade(null);
+            }}>Disapprove grade</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2531,18 +2806,18 @@ export default function AdminDashboardPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!rejectReceipt} onOpenChange={(o) => { if (!o) setRejectReceipt(null); }}>
+      <Dialog open={!!disapproveReceipt} onOpenChange={(o) => { if (!o) setDisapproveReceipt(null); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Reject the student&apos;s receipt</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Disapprove the student&apos;s receipt</DialogTitle></DialogHeader>
           <div>
             <Label className="text-xs">Reason (shown to the student, who will be asked to resubmit)</Label>
             <Textarea value={receiptNote} onChange={(e) => setReceiptNote(e.target.value)} placeholder="e.g. The signature is missing — please upload the signed voucher." />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRejectReceipt(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setDisapproveReceipt(null)}>Cancel</Button>
             <Button variant="destructive" disabled={payBusy || !receiptNote.trim()} onClick={async () => {
-              if (rejectReceipt && await reviewReceipt(rejectReceipt, "Rejected", receiptNote)) setRejectReceipt(null);
-            }}>Reject receipt</Button>
+              if (disapproveReceipt && await reviewReceipt(disapproveReceipt, "Disapproved", receiptNote)) setDisapproveReceipt(null);
+            }}>Disapprove receipt</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2573,18 +2848,77 @@ export default function AdminDashboardPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!rejectDoc} onOpenChange={(o) => { if (!o) setRejectDoc(null); }}>
+      <Dialog open={!!disapproveApp} onOpenChange={(o) => { if (!o) setDisapproveApp(null); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Reject {rejectDoc?.type}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Disapprove application</DialogTitle></DialogHeader>
           <div>
             <Label className="text-xs">Reason (shown to the student)</Label>
-            <Textarea value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} placeholder="e.g. The photo is blurry — please upload a clear copy." />
+            <Textarea rows={3} value={disapproveAppNote} onChange={(e) => setDisapproveAppNote(e.target.value)} placeholder="e.g. Your average grade is below the program's minimum." />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRejectDoc(null)}>Cancel</Button>
-            <Button variant="destructive" disabled={reviewingDoc || !rejectNote.trim()} onClick={async () => {
-              if (rejectDoc && await reviewDocument(rejectDoc, "Rejected", rejectNote)) setRejectDoc(null);
-            }}>Reject document</Button>
+            <Button variant="outline" onClick={() => setDisapproveApp(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={disapprovingApp || !disapproveAppNote.trim()} onClick={async () => {
+              if (!disapproveApp) return;
+              setDisapprovingApp(true);
+              const ok = await decideApplication(disapproveApp, "Disapproved", disapproveAppNote);
+              setDisapprovingApp(false);
+              if (ok) { toast.error("Application disapproved"); setDisapproveApp(null); loadData(true); }
+            }}>Disapprove application</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!revokeApp} onOpenChange={(o) => { if (!o) setRevokeApp(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Revoke approval</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {personName(revokeApp?.profiles)}&apos;s application for {revokeApp?.scholarships?.name || "this program"} goes back to Pending, and its slot and award are released.
+          </p>
+          <div>
+            <Label className="text-xs">Reason (shown to the student)</Label>
+            <Textarea rows={3} value={revokeNote} onChange={(e) => setRevokeNote(e.target.value)} placeholder="e.g. Approved by mistake: your residency could not be confirmed." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRevokeApp(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={revokingApp || !revokeNote.trim()} onClick={async () => {
+              if (!revokeApp) return;
+              setRevokingApp(true);
+              const ok = await decideApplication(revokeApp, "Pending", revokeNote);
+              setRevokingApp(false);
+              if (ok) { toast.success("Approval revoked — the student was notified"); setRevokeApp(null); loadData(true); }
+            }}>Revoke approval</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkDisapprove} onOpenChange={(o) => { if (!o) setBulkDisapprove(false); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Disapprove {selectedApps.size} application{selectedApps.size === 1 ? "" : "s"}</DialogTitle></DialogHeader>
+          <div>
+            <Label className="text-xs">Reason (sent to every selected student)</Label>
+            <Textarea rows={3} value={bulkNote} onChange={(e) => setBulkNote(e.target.value)} placeholder="e.g. All slots for this program have been filled." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkDisapprove(false)}>Cancel</Button>
+            <Button variant="destructive" disabled={bulkBusy || !bulkNote.trim()} onClick={async () => {
+              if (await bulkDecide("Disapproved", bulkNote)) setBulkDisapprove(false);
+            }}>Disapprove</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!disapproveDoc} onOpenChange={(o) => { if (!o) setDisapproveDoc(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Disapprove {disapproveDoc?.type}</DialogTitle></DialogHeader>
+          <div>
+            <Label className="text-xs">Reason (shown to the student)</Label>
+            <Textarea value={disapproveNote} onChange={(e) => setDisapproveNote(e.target.value)} placeholder="e.g. The photo is blurry — please upload a clear copy." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDisapproveDoc(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={reviewingDoc || !disapproveNote.trim()} onClick={async () => {
+              if (disapproveDoc && await reviewDocument(disapproveDoc, "Disapproved", disapproveNote)) setDisapproveDoc(null);
+            }}>Disapprove document</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

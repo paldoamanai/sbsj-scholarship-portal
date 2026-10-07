@@ -194,7 +194,7 @@ export default function HomePage() {
     },
     {
       q: "How many scholarships can I apply for?",
-      a: `Up to ${settings.max_scholarships_per_student} ${settings.max_scholarships_per_student === 1 ? "application" : "applications"} per academic year.`,
+      a: "You can apply to every open program. Each program reviews you against its own requirements, so you can be approved for more than one.",
     },
     {
       q: "How do I track my application?",
@@ -251,7 +251,7 @@ export default function HomePage() {
                 onClick={() => router.push("/register")}
                 className="h-12 px-7 text-base bg-primary hover:bg-primary/90 text-white font-semibold shadow-primary cursor-pointer"
               >
-                Apply Now <ArrowRight className="ml-2 h-4 w-4" />
+                Register Now <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
               <Button
                 size="lg"
@@ -454,7 +454,7 @@ export default function HomePage() {
                   </div>
                   <ul className="space-y-2.5 text-sm text-muted-foreground">
                     <li className="flex gap-2.5"><CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-primary" />General average of at least {settings.min_grade_requirement}</li>
-                    <li className="flex gap-2.5"><CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-primary" />Up to {settings.max_scholarships_per_student} {settings.max_scholarships_per_student === 1 ? "application" : "applications"} per academic year</li>
+                    <li className="flex gap-2.5"><CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-primary" />Apply to any open program; each one approves you on its own requirements</li>
                     {settings.renewal_enabled && (
                       <li className="flex gap-2.5"><CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-primary" />Renewable while you keep an average of {settings.renewal_min_grade}+ (up to {settings.max_renewals} {settings.max_renewals === 1 ? "time" : "times"})</li>
                     )}

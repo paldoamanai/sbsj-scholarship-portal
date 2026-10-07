@@ -13,6 +13,7 @@ import { LogIn, ShieldCheck, Loader2, Eye, EyeOff, GraduationCap } from "lucide-
 import { createClient } from "@/lib/supabase/client";
 import { rememberCredential } from "@/lib/credentials";
 import { isAdminRole } from "@/lib/settings";
+import Captcha, { captchaEnabled } from "@/components/Captcha";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -24,6 +25,11 @@ export default function LoginPage() {
   // Second step for accounts with two-factor authentication on.
   const [factorId, setFactorId] = useState<string | null>(null);
   const [code, setCode] = useState("");
+  // Set when sign-in failed because the email hasn't been confirmed yet.
+  const [unconfirmed, setUnconfirmed] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaKey, setCaptchaKey] = useState(0);
 
   const goToDashboard = async () => {
     const supabase = createClient();
@@ -67,6 +73,9 @@ export default function LoginPage() {
 
   // Sent back here by the middleware with a password-only session: go straight to the code step.
   useEffect(() => {
+    // /auth/callback sends people here when an email link was invalid, expired or opened on another device.
+    if (new URLSearchParams(window.location.search).get("error") === "auth")
+      toast.error("That link is invalid or has expired", { description: "Request a new one, or log in if your account is already verified." });
     needsSecondStep().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -85,6 +94,20 @@ export default function LoginPage() {
     await goToDashboard();
   };
 
+  const resendConfirmation = async () => {
+    if (captchaEnabled && !captchaToken) { toast.error("Please complete the bot check"); return; }
+    setResending(true);
+    const { error } = await createClient().auth.resend({
+      type: "signup",
+      email,
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback`, captchaToken: captchaToken ?? undefined },
+    });
+    if (captchaEnabled) setCaptchaKey((k) => k + 1);
+    setResending(false);
+    if (error) toast.error("Could not resend the email", { description: error.message });
+    else toast.success("Verification email sent", { description: `Check ${email}, including the Spam folder.` });
+  };
+
   const cancelSecondStep = async () => {
     await createClient().auth.signOut();
     setFactorId(null); setCode(""); setPassword("");
@@ -94,11 +117,25 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
 
+    if (captchaEnabled && !captchaToken) {
+      toast.error("Please complete the bot check");
+      setLoading(false);
+      return;
+    }
+
     const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({
+      email, password, options: { captchaToken: captchaToken ?? undefined },
+    });
+    // Captcha tokens are single-use.
+    if (captchaEnabled) setCaptchaKey((k) => k + 1);
 
     if (error) {
-      toast.error("Login failed", { description: error.message });
+      const notConfirmed = error.code === "email_not_confirmed" || /not confirmed/i.test(error.message);
+      setUnconfirmed(notConfirmed);
+      toast.error("Login failed", {
+        description: notConfirmed ? "Your email isn't verified yet. Open the link we emailed you, or resend it below." : error.message,
+      });
       setLoading(false);
       return;
     }
@@ -157,11 +194,14 @@ export default function LoginPage() {
                   required
                   placeholder="Enter your email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => { setEmail(e.target.value); setUnconfirmed(false); }}
                 />
               </div>
               <div>
-                <Label>Password</Label>
+                <div className="flex items-baseline justify-between">
+                  <Label>Password</Label>
+                  <Link href="/forgot-password" className="text-xs text-primary hover:underline">Forgot password?</Link>
+                </div>
                 <div className="relative">
                   <Input
                     type={showPassword ? "text" : "password"}
@@ -182,6 +222,15 @@ export default function LoginPage() {
                   </button>
                 </div>
               </div>
+              {unconfirmed && (
+                <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
+                  Your email isn&apos;t verified yet.{" "}
+                  <button type="button" onClick={resendConfirmation} disabled={resending} className="font-medium text-primary hover:underline disabled:opacity-50">
+                    {resending ? "Sending…" : "Resend verification email"}
+                  </button>
+                </div>
+              )}
+              <Captcha key={captchaKey} onToken={setCaptchaToken} />
               <Button type="submit" className="w-full bg-gradient-primary shadow-primary" disabled={loading}>
                 {loading ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

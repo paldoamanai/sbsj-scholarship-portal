@@ -29,6 +29,8 @@ export type Database = {
           course: string | null
           year_level: string | null
           average_grade: number | null
+          approved_at: string | null
+          decided_at: string | null
           created_at: string
           updated_at: string
         }
@@ -51,6 +53,8 @@ export type Database = {
           course?: string | null
           year_level?: string | null
           average_grade?: number | null
+          approved_at?: string | null
+          decided_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -73,6 +77,8 @@ export type Database = {
           course?: string | null
           year_level?: string | null
           average_grade?: number | null
+          approved_at?: string | null
+          decided_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -229,6 +235,7 @@ export type Database = {
           receipt_path: string | null
           notes: string | null
           student_receipt_path: string | null
+          student_receipt_ref: string | null
           student_receipt_at: string | null
           preferred_method: string | null
           receipt_review_status: string
@@ -236,6 +243,9 @@ export type Database = {
           receipt_reviewed_by: string | null
           receipt_reviewed_at: string | null
           cancel_reason: string | null
+          disbursed_by: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
         }
         Insert: {
           id?: string
@@ -251,6 +261,7 @@ export type Database = {
           receipt_path?: string | null
           notes?: string | null
           student_receipt_path?: string | null
+          student_receipt_ref?: string | null
           student_receipt_at?: string | null
           preferred_method?: string | null
           receipt_review_status?: string
@@ -258,6 +269,9 @@ export type Database = {
           receipt_reviewed_by?: string | null
           receipt_reviewed_at?: string | null
           cancel_reason?: string | null
+          disbursed_by?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
         }
         Update: {
           id?: string
@@ -273,6 +287,7 @@ export type Database = {
           receipt_path?: string | null
           notes?: string | null
           student_receipt_path?: string | null
+          student_receipt_ref?: string | null
           student_receipt_at?: string | null
           preferred_method?: string | null
           receipt_review_status?: string
@@ -280,6 +295,9 @@ export type Database = {
           receipt_reviewed_by?: string | null
           receipt_reviewed_at?: string | null
           cancel_reason?: string | null
+          disbursed_by?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
         }
         Relationships: [
           {
@@ -290,6 +308,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      application_notes: {
+        Row: {
+          id: string
+          application_id: string
+          author_id: string | null
+          author_email: string | null
+          body: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          application_id: string
+          author_id?: string | null
+          author_email?: string | null
+          body: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          application_id?: string
+          author_id?: string | null
+          author_email?: string | null
+          body?: string
+          created_at?: string
+        }
+        Relationships: []
       }
       payment_issues: {
         Row: {
@@ -485,6 +530,7 @@ export type Database = {
           guardian_relationship: string | null
           guardian_phone: string | null
           grade_verified_at: string | null
+          terms_accepted_at: string | null
           grade_term: string | null
           student_id_number: string | null
           government_id: string | null
@@ -517,6 +563,7 @@ export type Database = {
           guardian_relationship?: string | null
           guardian_phone?: string | null
           grade_verified_at?: string | null
+          terms_accepted_at?: string | null
           grade_term?: string | null
           student_id_number?: string | null
           government_id?: string | null
@@ -549,6 +596,7 @@ export type Database = {
           guardian_relationship?: string | null
           guardian_phone?: string | null
           grade_verified_at?: string | null
+          terms_accepted_at?: string | null
           grade_term?: string | null
           student_id_number?: string | null
           government_id?: string | null
@@ -757,6 +805,10 @@ export type Database = {
           total_disbursed: number
         }[]
       }
+      student_id_available: {
+        Args: { _student_id: string }
+        Returns: boolean
+      }
       scholarships_public: {
         Args: Record<string, never>
         Returns: {
@@ -875,7 +927,7 @@ export type Database = {
       submit_student_receipt: {
         Args: {
           _payment_id: string
-          _path?: string | null
+          _reference: string
         }
         Returns: undefined
       }
@@ -891,6 +943,19 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      can_manage_settings: {
+        Args: {
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      set_user_role: {
+        Args: {
+          _user_id: string
+          _role: string
+        }
+        Returns: undefined
       }
     }
     Enums: {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Plus, RotateCcw, X } from "lucide-react";
+import { Loader2, Lock, Plus, RotateCcw, X } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +24,8 @@ interface Props {
   auditLogs: Tables<"audit_logs">[];
   /** Persists the given settings. Resolves true on success. */
   onSave: (changes: Partial<AppSettings>, action?: "update_setting" | "reset_settings") => Promise<boolean>;
+  /** Shows the settings without letting them be changed (an admin, once a super admin exists). */
+  readOnly?: boolean;
 }
 
 const LABELS: Record<SettingKey, string> = {
@@ -38,12 +40,14 @@ const LABELS: Record<SettingKey, string> = {
   default_payment_lead_days: "Default payment lead time", renewal_enabled: "Renewals open",
   renewal_min_grade: "Renewal minimum grade", max_renewals: "Max renewals",
   payment_pickup_location: "Payment pickup place", payment_pickup_instructions: "Payment claim instructions",
+  report_prepared_by: "Report prepared by", report_prepared_title: "Preparer's position",
+  report_approved_by: "Report approved by", report_approved_title: "Approver's position",
 };
 
 const fmt = (v: unknown) => (Array.isArray(v) ? v.join(", ") : typeof v === "boolean" ? (v ? "On" : "Off") : v === "" || v == null ? "—" : String(v));
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
-export default function SettingsPanel({ rows, auditLogs, onSave }: Props) {
+export default function SettingsPanel({ rows, auditLogs, onSave, readOnly = false }: Props) {
   const saved = useMemo(() => parseSettings(rows), [rows]);
   const [draft, setDraft] = useState<AppSettings>(saved);
   const [errors, setErrors] = useState<Partial<Record<SettingKey, string>>>({});
@@ -87,6 +91,7 @@ export default function SettingsPanel({ rows, auditLogs, onSave }: Props) {
 
   const SaveBar = ({ id, keys }: { id: string; keys: SettingKey[] }) => {
     const dirty = dirtyKeys(keys).length > 0;
+    if (readOnly) return null;
     return (
       <div className="flex items-center gap-3 pt-1">
         <Button disabled={!dirty || busy !== null} onClick={() => saveSection(id, keys)}>
@@ -119,7 +124,7 @@ export default function SettingsPanel({ rows, auditLogs, onSave }: Props) {
     <div className="space-y-4 animate-fade-in max-w-2xl">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-xl font-display font-bold">System Settings</h2>
-        <AlertDialog>
+        {!readOnly && <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button variant="outline" size="sm" disabled={busy !== null}><RotateCcw className="mr-2 h-4 w-4" />Reset to defaults</Button>
           </AlertDialogTrigger>
@@ -133,8 +138,17 @@ export default function SettingsPanel({ rows, auditLogs, onSave }: Props) {
               <AlertDialogAction onClick={resetAll}>Reset</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
-        </AlertDialog>
+        </AlertDialog>}
       </div>
+
+      {readOnly && (
+        <div className="flex items-start gap-3 rounded-lg border bg-muted/50 p-3 text-sm">
+          <Lock className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+          <p>Only a super admin can change these settings. You can view them, and every change is listed under Recent Changes.</p>
+        </div>
+      )}
+
+      <fieldset disabled={readOnly} className="space-y-4 min-w-0">
 
       <Card>
         <CardHeader><CardTitle className="text-base">Academic Year & Semester</CardTitle><CardDescription>New applications are stamped with these.</CardDescription></CardHeader>
@@ -172,8 +186,8 @@ export default function SettingsPanel({ rows, auditLogs, onSave }: Props) {
         <CardHeader><CardTitle className="text-base">Scholarship Criteria</CardTitle><CardDescription>Enforced when a student submits an application.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           <div><Label>Minimum Grade Average (0 = no minimum)</Label><Input type="number" min={0} max={100} step="0.01" value={draft.min_grade_requirement} onChange={(e) => set("min_grade_requirement", e.target.value as unknown as number)} /><Err k="min_grade_requirement" /></div>
-          <div><Label>Max Applications Per Student, Per Year</Label><Input type="number" min={1} max={20} step={1} value={draft.max_scholarships_per_student} onChange={(e) => set("max_scholarships_per_student", e.target.value as unknown as number)} /><Err k="max_scholarships_per_student" /></div>
-          <SaveBar id="criteria" keys={["min_grade_requirement", "max_scholarships_per_student"]} />
+          <p className="text-xs text-muted-foreground">Students may apply to every open program. Each program is approved on its own, once the student meets that program&apos;s requirements and their documents are verified.</p>
+          <SaveBar id="criteria" keys={["min_grade_requirement"]} />
         </CardContent>
       </Card>
 
@@ -294,6 +308,23 @@ export default function SettingsPanel({ rows, auditLogs, onSave }: Props) {
           <SaveBar id="contact" keys={["program_name", "contact_email", "contact_phone", "contact_address", "office_hours", "facebook_url"]} />
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Report Signatories</CardTitle><CardDescription>Printed at the end of every PDF report. Leave blank to print empty signature lines.</CardDescription></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label>Prepared by</Label><Input maxLength={120} placeholder="Full name" value={draft.report_prepared_by} onChange={(e) => set("report_prepared_by", e.target.value)} /><Err k="report_prepared_by" /></div>
+            <div><Label>Position</Label><Input maxLength={120} placeholder="e.g. Scholarship Coordinator" value={draft.report_prepared_title} onChange={(e) => set("report_prepared_title", e.target.value)} /><Err k="report_prepared_title" /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label>Approved by</Label><Input maxLength={120} placeholder="Full name" value={draft.report_approved_by} onChange={(e) => set("report_approved_by", e.target.value)} /><Err k="report_approved_by" /></div>
+            <div><Label>Position</Label><Input maxLength={120} placeholder="e.g. SB Secretary" value={draft.report_approved_title} onChange={(e) => set("report_approved_title", e.target.value)} /><Err k="report_approved_title" /></div>
+          </div>
+          <SaveBar id="signatories" keys={["report_prepared_by", "report_prepared_title", "report_approved_by", "report_approved_title"]} />
+        </CardContent>
+      </Card>
+
+      </fieldset>
 
       <Card>
         <CardHeader><CardTitle className="text-base">Recent Changes</CardTitle></CardHeader>
