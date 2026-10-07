@@ -963,6 +963,22 @@ export type Database = {
         Args: Record<string, never>
         Returns: undefined
       }
+      get_my_receipt_slip: {
+        Args: {
+          _payment_id: string
+        }
+        Returns: {
+          receipt_no: string
+          student_name: string
+          student_id: string | null
+          program: string
+          amount: number
+          method: string | null
+          reference: string | null
+          disbursed_at: string | null
+          confirmed_at: string | null
+        }[]
+      }
       submit_student_receipt: {
         Args: {
           _payment_id: string

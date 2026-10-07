@@ -70,9 +70,74 @@ export function printReceiptSlip(s: ReceiptSlip) {
 </style></head><body>
 ${copy(s, "Office copy", "Keep with the disbursement voucher, then upload a scan of this signed copy in the portal.")}
 <hr class="cut">
-${copy(s, "Student copy", `Keep this copy. To confirm you received this payment, sign in to the scholarship portal, open <strong>Payments</strong> and enter receipt number <strong>${esc(s.receiptNo)}</strong>.`)}
+${copy(s, "Student copy", `Keep this copy. To confirm you received this payment, sign in to the scholarship portal, open <strong>Payments</strong> and enter receipt number <strong>${esc(s.receiptNo)}</strong>. Once it is confirmed, you can download a soft copy of this slip there.`)}
 <script>window.onload = () => window.print();</script>
 </body></html>`);
   win.document.close();
   return true;
+}
+
+// The student's soft copy, saved as a PDF. Only offered once their receipt number is confirmed
+// (get_my_receipt_slip, migration 053), so it never gives the number away before the check.
+export type StudentReceiptSlip = ReceiptSlip & { disbursedAt?: string | null; confirmedAt?: string | null };
+
+// jsPDF's built-in fonts can't draw "₱", so the PDF spells the currency out.
+const pdfPeso = (n: number) => `PHP ${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const longDate = (d: string) => new Date(d).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" });
+
+export async function downloadReceiptSlipPDF(s: StudentReceiptSlip) {
+  const { default: jsPDF } = await import("jspdf");
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const pageW = doc.internal.pageSize.getWidth();
+  const left = 18, right = pageW - 18;
+  let y = 22;
+
+  doc.setFont("helvetica", "normal").setFontSize(9);
+  doc.text("SAN JOSE SCHOLARSHIP & FINANCIAL ASSISTANCE", left, y);
+  doc.text("Receipt No.", right, y, { align: "right" });
+  y += 7;
+  doc.setFont("helvetica", "bold").setFontSize(16);
+  doc.text("Acknowledgment Receipt", left, y);
+  doc.setFont("courier", "bold").setFontSize(15);
+  doc.text(s.receiptNo, right, y, { align: "right" });
+  y += 5;
+  doc.setFont("helvetica", "bold").setFontSize(8);
+  doc.text("STUDENT COPY (SOFT COPY)", right, y, { align: "right" });
+  y += 3;
+  doc.setLineWidth(0.4).line(left, y, right, y);
+  y += 9;
+
+  const rows: [string, string | null | undefined][] = [
+    ["Date released", s.disbursedAt ? longDate(s.disbursedAt) : null],
+    ["Received by", s.studentName],
+    ["Student ID", s.studentId],
+    ["Program", s.program],
+    ["Amount", pdfPeso(s.amount)],
+    ["Method", s.method || "—"],
+    [s.method === "Cheque" ? "Cheque No." : "Reference", s.reference],
+  ];
+  doc.setFontSize(11);
+  for (const [k, v] of rows) {
+    if (!v) continue;
+    doc.setFont("helvetica", "bold").text(k, left, y);
+    doc.setFont("helvetica", "normal").text(doc.splitTextToSize(v, right - left - 50), left + 50, y);
+    y += 7;
+  }
+
+  y += 4;
+  doc.text("I acknowledge that I received the amount stated above.", left, y);
+  y += 10;
+  doc.setFont("helvetica", "bold").setTextColor(4, 120, 87);
+  doc.text(`Confirmed in the scholarship portal${s.confirmedAt ? ` on ${longDate(s.confirmedAt)}` : ""}.`, left, y);
+  doc.setTextColor(0);
+  y += 12;
+  doc.setFont("helvetica", "normal").setFontSize(8.5).setTextColor(90);
+  doc.text(doc.splitTextToSize(
+    `This is a soft copy downloaded from the scholarship portal on ${longDate(new Date().toISOString())}. ` +
+    "The paper slip you signed when the money was released is the official record and is kept by the scholarship office. " +
+    `To verify this receipt, contact the office and give receipt number ${s.receiptNo}.`,
+    right - left,
+  ), left, y);
+
+  doc.save(`Acknowledgment-Receipt-${s.receiptNo}.pdf`);
 }
