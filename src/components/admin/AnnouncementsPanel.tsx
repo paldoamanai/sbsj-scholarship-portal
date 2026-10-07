@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -50,6 +51,17 @@ export default function AnnouncementsPanel() {
     setRecent(data ?? []);
   }, [supabase]);
   useEffect(() => { load(); }, [load]);
+
+  const setPublic = async (id: string, isPublic: boolean) => {
+    setRecent((rows) => rows.map((r) => (r.id === id ? { ...r, is_public: isPublic } : r)));
+    const { error } = await supabase.rpc("set_announcement_public", { _id: id, _public: isPublic });
+    if (error) {
+      toast.error("Could not update the website", { description: error.message });
+      load();
+      return;
+    }
+    toast.success(isPublic ? "Posted on the website" : "Removed from the website");
+  };
 
   const valid = title.trim().length >= 3 && message.trim().length >= 3;
 
@@ -103,7 +115,8 @@ export default function AnnouncementsPanel() {
 
         {recent.length > 0 && (
           <div className="border-t pt-4">
-            <p className="text-xs font-semibold text-muted-foreground mb-2">Recently sent</p>
+            <p className="text-xs font-semibold text-muted-foreground mb-1">Recently sent</p>
+            <p className="text-xs text-muted-foreground mb-2">Switch on &quot;Website&quot; to show an announcement on the public home page (the 3 newest are shown).</p>
             <ul className="space-y-2">
               {recent.map((a) => (
                 <li key={a.id} className="rounded-md border px-3 py-2 text-sm">
@@ -112,6 +125,10 @@ export default function AnnouncementsPanel() {
                     <span className="text-xs text-muted-foreground">{AUDIENCES[a.audience]?.label ?? a.audience} · {a.recipient_count} student{a.recipient_count === 1 ? "" : "s"} · {new Date(a.created_at).toLocaleString()}</span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{a.message}</p>
+                  <label className="mt-2 flex w-fit items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                    <Switch checked={a.is_public} onCheckedChange={(v) => setPublic(a.id, v)} aria-label={`Show "${a.title}" on the website`} />
+                    Website
+                  </label>
                 </li>
               ))}
             </ul>

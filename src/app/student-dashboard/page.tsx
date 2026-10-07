@@ -47,6 +47,7 @@ import ApplicationTimeline from "@/components/student/ApplicationTimeline";
 import ApplicationHistory, { DisapprovalReason } from "@/components/student/ApplicationHistory";
 import HelpSection from "@/components/student/HelpSection";
 import { printAwardNotice } from "@/lib/award-notice";
+import { downloadReceiptSlipPDF } from "@/lib/receipt-slip";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Payment = Tables<"payments">;
@@ -110,7 +111,27 @@ function useReceiptSubmit(onSubmitted: () => void) {
     if (win) win.location.href = data.signedUrl; else window.location.href = data.signedUrl;
   };
 
-  return { refs, setRefs, submittingFor, confirmed, setConfirmed, submit, view };
+  // Soft copy of the acknowledgment slip, once the receipt number is confirmed (migration 053).
+  const [downloadingFor, setDownloadingFor] = useState<string | null>(null);
+  const downloadSlip = async (paymentId: string) => {
+    setDownloadingFor(paymentId);
+    try {
+      const { data, error } = await supabase.rpc("get_my_receipt_slip", { _payment_id: paymentId });
+      const slip = data?.[0];
+      if (error || !slip) { toast.error("Could not download your slip", { description: error?.message }); return; }
+      await downloadReceiptSlipPDF({
+        receiptNo: slip.receipt_no, studentName: slip.student_name, studentId: slip.student_id, program: slip.program,
+        amount: Number(slip.amount), method: slip.method, reference: slip.reference,
+        disbursedAt: slip.disbursed_at, confirmedAt: slip.confirmed_at,
+      });
+    } catch {
+      toast.error("Could not download your slip");
+    } finally {
+      setDownloadingFor(null);
+    }
+  };
+
+  return { refs, setRefs, submittingFor, confirmed, setConfirmed, submit, view, downloadingFor, downloadSlip };
 }
 
 // Lets the student say whether they'd like Cash or Cheque for a payment that isn't disbursed yet.
@@ -156,7 +177,7 @@ const ISSUE_KINDS: Record<string, string> = {
 // Everything a student sees to acknowledge a disbursed payment: the reference number on the receipt they
 // signed, plus a confirmation of the amount. Final unless the office disapproved it.
 function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl }) {
-  const { refs, setRefs, submittingFor, confirmed, setConfirmed, submit, view } = ctl;
+  const { refs, setRefs, submittingFor, confirmed, setConfirmed, submit, view, downloadingFor, downloadSlip } = ctl;
   const disapproved = p.receipt_review_status === "Disapproved";
 
   if (p.student_receipt_at && !disapproved) {
@@ -177,6 +198,11 @@ function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl 
           </span>
         )}
         <p className={`text-[11px] font-semibold ${accepted ? "text-emerald-700" : "text-amber-700"}`}>{accepted ? (p.receipt_reviewed_by ? "Accepted by the office" : "Confirmed") : "Waiting for the office to review"}</p>
+        {accepted && p.student_receipt_ref && (
+          <Button size="sm" variant="outline" className="h-7 px-2 text-xs rounded-lg" disabled={downloadingFor === p.id} onClick={() => downloadSlip(p.id)}>
+            {downloadingFor === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />} Download slip (PDF)
+          </Button>
+        )}
       </div>
     );
   }
@@ -525,8 +551,10 @@ export default function StudentDashboardPage() {
   const loadData = async () => {
     try {
       await loadDataInner();
-    } catch {
-      setLoadError("We couldn't reach the server.");
+    } catch (err) {
+      console.error("Student dashboard failed to load", err);
+      const detail = err instanceof Error ? err.message : String(err);
+      setLoadError(`We couldn't reach the server. (${detail})`);
       setLoading(false);
     }
   };
@@ -626,6 +654,30 @@ export default function StudentDashboardPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) silentRefresh(user.id);
   };
+
+  // All tabs on this site share one login cookie. If another tab signs out or signs in as a different
+  // account, this tab would keep showing the old student's data while its requests go out as the new
+  // account (e.g. "Payment not found" on receipt submit). Reload so the page matches the session.
+  useEffect(() => {
+    if (!userId) return;
+    const checkSession = (sessionUserId: string | undefined) => {
+      if (sessionUserId !== userId) window.location.reload();
+    };
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => checkSession(session?.user?.id));
+    // Covers changes the cross-tab broadcast can miss: re-read the cookie when the tab comes back into view.
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      supabase.auth.getSession().then(({ data: { session } }) => checkSession(session?.user?.id));
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      subscription.unsubscribe();
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   // ── Live updates: notifications, application status, disbursement ──────────
   useEffect(() => {

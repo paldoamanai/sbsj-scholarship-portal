@@ -508,6 +508,7 @@ export type Database = {
           recipient_count: number
           created_by: string | null
           created_at: string
+          is_public: boolean
         }
         Insert: {
           id?: string
@@ -518,6 +519,7 @@ export type Database = {
           recipient_count?: number
           created_by?: string | null
           created_at?: string
+          is_public?: boolean
         }
         Update: {
           id?: string
@@ -528,6 +530,7 @@ export type Database = {
           recipient_count?: number
           created_by?: string | null
           created_at?: string
+          is_public?: boolean
         }
         Relationships: []
       }
@@ -832,7 +835,7 @@ export type Database = {
         Returns: {
           scholars: number
           active_programs: number
-          total_disbursed: number
+          applications_received: number
         }[]
       }
       student_id_available: {
@@ -934,6 +937,29 @@ export type Database = {
         }
         Returns: undefined
       }
+      set_announcement_public: {
+        Args: {
+          _id: string
+          _public: boolean
+        }
+        Returns: undefined
+      }
+      public_announcements: {
+        Args: Record<string, never>
+        Returns: {
+          id: string
+          title: string
+          message: string
+          created_at: string
+        }[]
+      }
+      public_scholars_by_year: {
+        Args: Record<string, never>
+        Returns: {
+          academic_year: string
+          scholars: number
+        }[]
+      }
       send_announcement: {
         Args: {
           _title: string
@@ -962,6 +988,22 @@ export type Database = {
       send_test_notification: {
         Args: Record<string, never>
         Returns: undefined
+      }
+      get_my_receipt_slip: {
+        Args: {
+          _payment_id: string
+        }
+        Returns: {
+          receipt_no: string
+          student_name: string
+          student_id: string | null
+          program: string
+          amount: number
+          method: string | null
+          reference: string | null
+          disbursed_at: string | null
+          confirmed_at: string | null
+        }[]
       }
       submit_student_receipt: {
         Args: {

@@ -696,8 +696,7 @@ export default function AdminDashboardPage() {
     const receiptNo = receiptNos[p.id];
     if (!receiptNo) { toast.error("This payment has no receipt number"); return; }
     const prof = profiles.find((x) => x.id === p.user_id);
-    if (!printReceiptSlip({ receiptNo, studentName: payStudent(p), studentId: prof?.student_id_number, program: payProgram(p), amount: p.amount, method, reference }))
-      toast.error("Allow pop-ups for this site to print the slip");
+    printReceiptSlip({ receiptNo, studentName: payStudent(p), studentId: prof?.student_id_number, program: payProgram(p), amount: p.amount, method, reference });
   };
 
   // Verify or disapprove a grade a student submitted. Verifying replaces their average grade; the student is notified.
