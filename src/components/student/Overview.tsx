@@ -101,6 +101,10 @@ export default function Overview(p: OverviewProps) {
     const out: Action[] = [];
     const lastGrade = p.gradeUpdates[0];
 
+    yearApps.filter((a) => a.changes_requested).forEach((a) =>
+      out.push({ id: `changes-${a.id}`, tone: "red", title: `The office needs changes on ${a.scholarships?.name ?? "your application"}`,
+        detail: a.changes_requested ?? undefined, tab: "application", cta: "Open" }));
+
     p.docStatus.disapproved.forEach((d) =>
       out.push({ id: `doc-${d.type}`, tone: "red", title: `Upload a new ${d.type}`, detail: d.note ? `The office said: ${d.note}` : "The office didn't accept your copy.", tab: "documents", cta: "Replace" }));
 
@@ -130,7 +134,7 @@ export default function Overview(p: OverviewProps) {
 
     const order = { red: 0, amber: 1, blue: 2, green: 3 } as const;
     return out.sort((a, b) => order[a.tone] - order[b.tone]);
-  }, [p.docStatus, p.gradeUpdates, p.issues, live, completeness, approvedApps.length, profile]);
+  }, [p.docStatus, p.gradeUpdates, p.issues, live, completeness, approvedApps.length, profile, yearApps]);
 
   // ── programs ──
   // Open programs first, so students see what they can apply for right now.
@@ -185,7 +189,7 @@ export default function Overview(p: OverviewProps) {
         {shownPrograms.map((s) => {
           const av = availabilityInfo(s);
           return (
-            <div key={s.id} className={`p-5 hover:bg-muted/40 transition-colors ${av.canApply ? "border-l-4 border-l-primary" : "opacity-75"}`}>
+            <div key={s.id} className={`p-5 hover:bg-muted/40 transition-colors ${av.canApply ? "border-l-4 border-l-primary" : "bg-muted/30"}`}>
               <div className="flex items-start justify-between gap-3 flex-wrap sm:flex-nowrap">
                 <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -241,7 +245,7 @@ export default function Overview(p: OverviewProps) {
         <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-xl sm:text-3xl font-display font-bold text-white">Dashboard</h1>
-            <p className="text-sm text-white/80 mt-1">Welcome back, {firstName}! {actions.some((a) => a.tone !== "green" && a.tone !== "blue") ? "There are a few things that need your attention." : "Here's where things stand."}</p>
+            <p className="text-sm text-white mt-1">Welcome back, {firstName}! {actions.some((a) => a.tone !== "green" && a.tone !== "blue") ? "There are a few things that need your attention." : "Here's where things stand."}</p>
           </div>
           <div className="flex items-center gap-3 sm:shrink-0">
             <button onClick={() => p.onNavigate("application")}
@@ -279,7 +283,7 @@ export default function Overview(p: OverviewProps) {
               <li key={a.id} className={`flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 rounded-xl border px-4 py-3 ${toneCls[a.tone]}`}>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold">{a.title}</p>
-                  {a.detail && <p className="text-xs mt-0.5 opacity-90">{a.detail}</p>}
+                  {a.detail && <p className="text-xs mt-0.5">{a.detail}</p>}
                 </div>
                 <Button size="sm" variant="outline" className="rounded-lg sm:shrink-0 bg-white/70 w-full sm:w-auto" onClick={() => p.onNavigate(a.tab)}>{a.cta}<ArrowRight className="ml-1 h-3 w-3" /></Button>
               </li>
@@ -338,7 +342,7 @@ export default function Overview(p: OverviewProps) {
                 </button>
               )}
             </div>
-            <ApplicationHistory applications={applications} onView={p.onViewApplication} limit={5} />
+            <ApplicationHistory applications={applications} onView={p.onViewApplication} onContact={() => p.onNavigate("help")} limit={5} />
           </Panel>
 
           {!promotePrograms && programsPanel}
@@ -365,7 +369,7 @@ export default function Overview(p: OverviewProps) {
                 <button key={n.id} type="button" onClick={() => p.onOpenNotification(n)}
                   className={`w-full text-left flex items-start gap-3 px-5 py-4 hover:bg-muted/50 transition-colors cursor-pointer ${!n.read ? "bg-accent/50" : ""}`}>
                   <div className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${n.type === "success" ? "bg-emerald-100" : n.type === "warning" ? "bg-amber-100" : n.type === "error" ? "bg-red-100" : "bg-accent"}`}>
-                    {n.type === "error" ? <XCircle className="h-4 w-4 text-red-600" /> : <Bell className={`h-4 w-4 ${n.type === "success" ? "text-emerald-600" : n.type === "warning" ? "text-amber-600" : "text-accent-foreground"}`} />}
+                    {n.type === "error" ? <XCircle className="h-4 w-4 text-red-600" /> : <Bell className={`h-4 w-4 ${n.type === "success" ? "text-emerald-700" : n.type === "warning" ? "text-amber-700" : "text-accent-foreground"}`} />}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -373,7 +377,7 @@ export default function Overview(p: OverviewProps) {
                       {!n.read && <span className="h-2 w-2 rounded-full bg-primary shrink-0" aria-label="Unread" />}
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed line-clamp-2">{n.message}</p>
-                    <p className="text-[11px] text-muted-foreground/70 mt-1">{new Date(n.created_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}</p>
+                    <p className="text-[11px] text-muted-foreground mt-1">{new Date(n.created_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}</p>
                   </div>
                 </button>
               ))}
@@ -384,7 +388,7 @@ export default function Overview(p: OverviewProps) {
 
       {/* Program details */}
       <Dialog open={!!program} onOpenChange={(o) => { if (!o) setProgram(null); }}>
-        <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="rounded-2xl">
           {program && (
             <>
               <DialogHeader><DialogTitle className="font-display">{program.name}</DialogTitle></DialogHeader>

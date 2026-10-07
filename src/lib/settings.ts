@@ -1,4 +1,5 @@
 import type { Json } from "@/integrations/supabase/types";
+import { isStaffRole } from "@/lib/permissions";
 
 export type PaymentMethod = "Cash" | "Cheque";
 export const PAYMENT_METHODS: PaymentMethod[] = ["Cash", "Cheque"];
@@ -194,5 +195,5 @@ export function validateSetting(key: SettingKey, value: unknown): string | null 
   }
 }
 
-/** Roles that can open the admin area. */
-export const isAdminRole = (role: string | null | undefined) => role === "admin" || role === "super_admin";
+/** Roles that can open the admin area (any staff role; see lib/permissions for what each may do). */
+export const isAdminRole = (role: string | null | undefined) => isStaffRole(role);

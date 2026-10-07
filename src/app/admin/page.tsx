@@ -1,7 +1,7 @@
 "use client";
 
 import { useHistorySync } from "@/hooks/use-history-sync";
-import { useState, useEffect, useMemo, useRef } from "react";
+import { Fragment, useState, useEffect, useMemo, useRef } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -22,7 +22,7 @@ import {
   Menu, X, Search, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock,
   FileDown, Receipt, Loader2, User, Upload, ArrowRight,
-   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2,
+   ChevronRight, ChevronLeft, ExternalLink, Printer, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -48,22 +48,32 @@ import {
   type DocSummary, type ReportData, type ReportDef, type StaffMember,
 } from "@/lib/reports";
 import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
+import { permissionsFor, ROLE_LABEL } from "@/lib/permissions";
+import { printReceiptSlip } from "@/lib/receipt-slip";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
+// Ordered by the scholarship process: set up a program, review applicants, manage scholars,
+// pay them out, then track and report. Each group gets a heading in the sidebar.
 const sidebarItems = [
-  { icon: LayoutDashboard, label: "Dashboard", key: "overview" },
-  { icon: FileText, label: "Applicants", key: "applications" },
-  { icon: Users, label: "Students", key: "students" },
-  { icon: GraduationCap, label: "Scholarships", key: "scholarships" },
-  { icon: Wallet, label: "Funds", key: "funds" },
-  { icon: Banknote, label: "Disbursement", key: "disbursement" },
-  { icon: BarChart3, label: "Reports", key: "reports" },
-  { icon: ScrollText, label: "Audit Logs", key: "audit-logs" },
-  { icon: Bell, label: "Notifications", key: "notifications" },
-  { icon: ShieldCheck, label: "Staff", key: "staff" }, // super admins only (see canManageSettings)
-  { icon: SettingsIcon, label: "Settings", key: "settings" },
-  { icon: User, label: "Profile", key: "profile" },
+  { icon: LayoutDashboard, label: "Dashboard", key: "overview", group: "" },
+  { icon: GraduationCap, label: "Scholarships", key: "scholarships", group: "Process" },
+  { icon: FileText, label: "Applicants", key: "applications", group: "Process" },
+  { icon: Users, label: "Students", key: "students", group: "Process" },
+  { icon: Banknote, label: "Disbursement", key: "disbursement", group: "Process" },
+  { icon: Wallet, label: "Funds", key: "funds", group: "Monitoring" },
+  { icon: BarChart3, label: "Reports", key: "reports", group: "Monitoring" },
+  { icon: ScrollText, label: "Audit Logs", key: "audit-logs", group: "Monitoring" },
+  { icon: Bell, label: "Notifications", key: "notifications", group: "Monitoring" },
+  { icon: ShieldCheck, label: "Staff", key: "staff", group: "Administration" },
+  { icon: SettingsIcon, label: "Settings", key: "settings", group: "Administration" },
+  { icon: User, label: "Profile", key: "profile", group: "Administration" },
 ];
+
+// Sections each role doesn't need. Everything is still enforced by the database (migration 050).
+const hiddenSections: Record<string, string[]> = {
+  reviewer: ["disbursement", "funds", "audit-logs"],
+  finance_admin: ["applications", "audit-logs"],
+};
 
 const formatPHP = (n: number) => `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -120,13 +130,17 @@ export default function AdminDashboardPage() {
   const [schActive, setSchActive] = useState(true);
   const [schYearLevels, setSchYearLevels] = useState<string[]>([]);
   const [schBarangays, setSchBarangays] = useState<string[]>([]);
+  const [schBarangaySearch, setSchBarangaySearch] = useState("");
   const [deleteSch, setDeleteSch] = useState<Tables<"scholarships"> | null>(null);
+  // Deleting a program is permanent, so the super admin types its name to confirm.
+  const [deleteSchText, setDeleteSchText] = useState("");
   const [fundPeriod, setFundPeriod] = useState("all"); // shared by Fund Management and Reports
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [auditSearch, setAuditSearch] = useState("");
   const [auditAction, setAuditAction] = useState("all");
   const [auditEntity, setAuditEntity] = useState("all");
+  const [auditUser, setAuditUser] = useState("all");
   const [auditFrom, setAuditFrom] = useState("");
   const [auditTo, setAuditTo] = useState("");
   const [auditPage, setAuditPage] = useState(1);
@@ -218,6 +232,9 @@ export default function AdminDashboardPage() {
   const [adminRole, setAdminRole] = useState("admin");
   // A super admin, or any admin while no super admin exists (migration 020). Gates Settings edits and Staff.
   const [canManageSettings, setCanManageSettings] = useState(false);
+  // What the signed-in staff member may do; buttons they can't use are hidden (the database refuses them anyway).
+  const can = permissionsFor(adminRole, canManageSettings);
+  const canSee = (key: string) => (key === "staff" ? can.super : !(hiddenSections[adminRole] ?? []).includes(key));
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -239,14 +256,17 @@ export default function AdminDashboardPage() {
   const [disbMethod, setDisbMethod] = useState<"Cheque" | "Cash">("Cash");
   const [disbRef, setDisbRef] = useState("");
   const [disbReceipt, setDisbReceipt] = useState<File | null>(null);
+  // Portal-issued receipt numbers (staff-only): printed on the acknowledgment slip, typed back by the student.
+  const [receiptNos, setReceiptNos] = useState<Record<string, string>>({});
   const [disbLoading, setDisbLoading] = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
   // Profiles of students only — staff accounts (anyone with a non-student role) are excluded.
   // Staff are kept aside (with their role) so reports can name who disbursed, reviewed or changed something.
-  const withoutStaff = async (rows: Tables<"profiles">[]) => {
-    const { data } = await supabase.from("user_roles").select("user_id, role").neq("role", "student");
+  const staffRoles = () => supabase.from("user_roles").select("user_id, role").neq("role", "student");
+  const withoutStaff = async (rows: Tables<"profiles">[], roleRows?: { user_id: string; role: string }[] | null) => {
+    const data = roleRows ?? (await staffRoles()).data;
     const roles = new Map((data ?? []).map((r: { user_id: string; role: string }) => [r.user_id, r.role]));
     setStaff(rows.filter((p) => roles.has(p.id)).map((p) => ({ id: p.id, name: personName(p), email: p.email, role: roles.get(p.id)! })));
     return rows.filter((p) => !roles.has(p.id));
@@ -259,19 +279,21 @@ export default function AdminDashboardPage() {
 
   const loadData = async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
-    const { data: { user } } = await supabase.auth.getUser();
+    // The middleware has already verified the session for /admin, so read it locally instead of
+    // another round trip; row-level security still guards every query below.
+    const { data: { session } } = await supabase.auth.getSession();
+    const user = session?.user;
     if (!user) { router.push("/login"); return; }
 
     setAdminEmail(user.email || "");
     setAdminUserId(user.id);
-    const { data: roleData } = await supabase.from("user_roles").select("role").eq("user_id", user.id).single();
-    const role = (roleData as { role?: string } | null)?.role;
-    if (!isAdminRole(role)) { router.push("/student-dashboard"); return; }
-    setAdminRole(role as string);
-    const { data: canManage } = await supabase.rpc("can_manage_settings", { _user_id: user.id });
-    setCanManageSettings(canManage === true);
 
-    const [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes] = await Promise.all([
+    // Everything is fetched in one parallel batch: each query is a full round trip to Supabase,
+    // so running them one after another made the dashboard several seconds slower to open.
+    const [roleRes, canManageRes, staffRolesRes, appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes, receiptNosRes] = await Promise.all([
+      supabase.from("user_roles").select("role").eq("user_id", user.id).single(),
+      supabase.rpc("can_manage_settings", { _user_id: user.id }),
+      staffRoles(),
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("scholarships").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
@@ -285,13 +307,19 @@ export default function AdminDashboardPage() {
       supabase.from("payment_issues").select("*").order("created_at", { ascending: false }),
       supabase.from("grade_updates").select("*").order("created_at", { ascending: false }),
       supabase.from("data_requests").select("*").order("created_at", { ascending: false }),
+      supabase.from("payment_receipt_numbers").select("payment_id, receipt_no"),
     ]);
+
+    const role = (roleRes.data as { role?: string } | null)?.role;
+    if (!isAdminRole(role)) { router.push("/student-dashboard"); return; }
+    setAdminRole(role as string);
+    setCanManageSettings(canManageRes.data === true);
 
     const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes].find((r) => r.error);
     setLoadError(failed?.error ? failed.error.message : null);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (scholsRes.data) setScholarships(scholsRes.data);
-    if (profilesRes.data) setProfiles(await withoutStaff(profilesRes.data));
+    if (profilesRes.data) setProfiles(await withoutStaff(profilesRes.data, staffRolesRes.data));
     if (paymentsRes.data) setPayments(paymentsRes.data);
     if (logsRes.data) setAuditLogs(logsRes.data);
     if (settingsRes.data) setSystemSettings(settingsRes.data);
@@ -302,6 +330,7 @@ export default function AdminDashboardPage() {
     if (issuesRes.data) setPayIssues(issuesRes.data);
     if (gradesRes.data) setGradeReviews(gradesRes.data);
     if (reqsRes.data) setDataReqs(reqsRes.data);
+    if (receiptNosRes.data) setReceiptNos(Object.fromEntries(receiptNosRes.data.map((r) => [r.payment_id, r.receipt_no])));
     setLastUpdated(new Date());
     setLoading(false);
     setRefreshing(false);
@@ -310,12 +339,14 @@ export default function AdminDashboardPage() {
   // Re-fetch applications/payments in the background (no loading flicker) —
   // used when a live change comes in over realtime.
   const silentRefreshAdmin = async () => {
-    const [appsRes, paymentsRes, profilesRes, docsRes] = await Promise.all([
+    const [appsRes, paymentsRes, profilesRes, docsRes, receiptNosRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("payments").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
       supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at"),
+      supabase.from("payment_receipt_numbers").select("payment_id, receipt_no"),
     ]);
+    if (receiptNosRes.data) setReceiptNos(Object.fromEntries(receiptNosRes.data.map((r) => [r.payment_id, r.receipt_no])));
     if (docsRes.data) setAllDocs(docsRes.data);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (paymentsRes.data) setPayments(paymentsRes.data);
@@ -403,10 +434,9 @@ export default function AdminDashboardPage() {
   // Verify or disapprove a document. The database records who reviewed it, audits it and notifies the student.
   const reviewDocument = async (doc: AdminDoc, status: "Verified" | "Disapproved" | "Pending", note?: string) => {
     setReviewingDoc(true);
-    const { data, error } = await supabase.from("documents")
-      .update({ status, review_note: status === "Disapproved" ? note?.trim() || null : null })
-      .eq("id", doc.id).select("status, review_note").single();
+    const { data: rows, error } = await supabase.rpc("review_document", { _id: doc.id, _status: status, _note: note ?? null });
     setReviewingDoc(false);
+    const data = rows?.[0];
     if (error || !data) { toast.error(error?.message ?? "Could not update the document"); return false; }
     const patch = (list: AdminDoc[]) => list.map((x) => (x.id === doc.id ? { ...x, status: data.status, note: data.review_note } : x));
     setViewDocs(patch); setStudentDocs(patch);
@@ -435,11 +465,11 @@ export default function AdminDashboardPage() {
                 {d.size != null && `${d.size < 1048576 ? `${Math.max(1, Math.round(d.size / 1024))} KB` : `${(d.size / 1048576).toFixed(1)} MB`} · `}
                 {new Date(d.uploadedAt).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}
               </span>
-              <span className="flex gap-1.5">
+              {can.review && <span className="flex gap-1.5">
                 {d.status !== "Verified" && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={reviewingDoc} onClick={() => reviewDocument(d, "Verified")}>Verify</Button>}
                 {d.status !== "Disapproved" && <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={reviewingDoc} onClick={() => { setDisapproveNote(""); setDisapproveDoc(d); }}>Disapprove</Button>}
                 {d.status !== "Pending" && <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={reviewingDoc} onClick={() => reviewDocument(d, "Pending")}>Reset</Button>}
-              </span>
+              </span>}
             </div>
             {d.status === "Disapproved" && d.note && <p className="mt-1 text-xs text-destructive">Reason: {d.note}</p>}
           </li>
@@ -522,7 +552,7 @@ export default function AdminDashboardPage() {
       amount: num("amount"), total_budget: num("total_budget"), slots: num("slots"),
       open_date: text("open_date") || null, deadline: text("deadline") || null,
       min_grade: text("min_grade").trim() === "" ? null : Number(text("min_grade")),
-      year_levels: schYearLevels, municipality: text("municipality"), barangays: schBarangays, is_active: schActive,
+      year_levels: schYearLevels, municipality: HOME_MUNICIPALITY, barangays: schBarangays, is_active: schActive,
     });
     if (!parsed.success) { toast.error(parsed.error.issues[0]?.message ?? "Check the form"); return; }
     const payload = parsed.data;
@@ -587,7 +617,7 @@ export default function AdminDashboardPage() {
     }
     await logAudit("delete_scholarship", "scholarships", deleteSch.id, { name: deleteSch.name }, null);
     toast.success("Scholarship deleted");
-    setDeleteSch(null); loadData();
+    setDeleteSch(null); setDeleteSchText(""); loadData();
   };
 
   // ── Disbursement management ──
@@ -661,6 +691,14 @@ export default function AdminDashboardPage() {
   // Compare reference numbers the way people type them: case, spaces and dashes don't matter.
   const refKey = (r: string) => r.toUpperCase().replace(/[\s\-_./#]/g, "");
   const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The student hasn't submitted a receipt");
+  // Office + student copy of the acknowledgment slip, for the student to sign when the money is released.
+  const printSlip = (p: Tables<"payments">, method = p.method, reference = p.reference) => {
+    const receiptNo = receiptNos[p.id];
+    if (!receiptNo) { toast.error("This payment has no receipt number"); return; }
+    const prof = profiles.find((x) => x.id === p.user_id);
+    if (!printReceiptSlip({ receiptNo, studentName: payStudent(p), studentId: prof?.student_id_number, program: payProgram(p), amount: p.amount, method, reference }))
+      toast.error("Allow pop-ups for this site to print the slip");
+  };
 
   // Verify or disapprove a grade a student submitted. Verifying replaces their average grade; the student is notified.
   const reviewGrade = async (g: Tables<"grade_updates">, status: "Verified" | "Disapproved", note?: string) => {
@@ -753,17 +791,18 @@ export default function AdminDashboardPage() {
     return auditLogs.filter((l) => {
       if (auditAction !== "all" && l.action !== auditAction) return false;
       if (auditEntity !== "all" && l.entity_type !== auditEntity) return false;
+      if (auditUser !== "all" && l.user_id !== auditUser) return false;
       const t = new Date(l.created_at);
       if ((from && t < from) || (to && t > to)) return false;
       return !q || `${l.user_email || ""} ${l.action} ${l.entity_type} ${l.entity_id || ""}`.toLowerCase().includes(q);
     });
-  }, [auditLogs, auditSearch, auditAction, auditEntity, auditFrom, auditTo]);
+  }, [auditLogs, auditSearch, auditAction, auditEntity, auditUser, auditFrom, auditTo]);
   const auditPages = Math.max(1, Math.ceil(filteredLogs.length / AUDIT_PAGE_SIZE));
   const currentAuditPage = Math.min(auditPage, auditPages);
   const pagedLogs = filteredLogs.slice((currentAuditPage - 1) * AUDIT_PAGE_SIZE, currentAuditPage * AUDIT_PAGE_SIZE);
   const auditDef = (): ReportDef => ({
     title: "Audit Log", count: filteredLogs.length, countLabel: "entries",
-    filters: [`${filteredLogs.length} of ${auditLogs.length} loaded entries`, ...(auditAction !== "all" ? [`Action: ${auditAction}`] : []), ...(auditEntity !== "all" ? [`Entity: ${auditEntity}`] : []), ...(auditFrom || auditTo ? [`Dates: ${auditFrom || "…"} to ${auditTo || "…"}`] : [])],
+    filters: [`${filteredLogs.length} of ${auditLogs.length} loaded entries`, ...(auditAction !== "all" ? [`Action: ${auditAction}`] : []), ...(auditEntity !== "all" ? [`Entity: ${auditEntity}`] : []), ...(auditUser !== "all" ? [`Staff: ${staff.find((m) => m.id === auditUser)?.name ?? auditUser}`] : []), ...(auditFrom || auditTo ? [`Dates: ${auditFrom || "…"} to ${auditTo || "…"}`] : [])],
     sections: [logsToSection(filteredLogs, reportData())],
   });
 
@@ -1037,7 +1076,8 @@ export default function AdminDashboardPage() {
     return (d: AdminDoc) => d.applicationId === null || ids.has(d.applicationId);
   };
   const logAudit = async (action: string, entityType: string, entityId?: string, prev?: Json | null, next?: Json | null) => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { session } } = await supabase.auth.getSession();
+    const user = session?.user;
     const { error } = await supabase.from("audit_logs").insert({
       user_id: user?.id, user_email: user?.email || adminEmail,
       action, entity_type: entityType, entity_id: entityId,
@@ -1142,6 +1182,11 @@ export default function AdminDashboardPage() {
     if (sec && sidebarItems.some((i) => i.key === sec)) setActiveSection(sec);
   }, []);
 
+  // A deep link or notification may point at a section this role doesn't use.
+  useEffect(() => {
+    if (!loading && !canSee(activeSection)) setActiveSection("overview");
+  }, [loading, activeSection, adminRole, canManageSettings]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const APP_PAGE_SIZE = 10;
   // Registered students who haven't submitted an application yet. They count as applicants so
   // admins can see who is stuck (usually on the required documents) and follow up.
@@ -1215,7 +1260,7 @@ export default function AdminDashboardPage() {
     ...applications
       .filter((a) => statusMatches(a.status))
       .filter((a) => appProgram === "all" || a.scholarship_id === appProgram)
-      .filter((a) => !q || personText(a.profiles).includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q))
+      .filter((a) => !q || personText(a.profiles).includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q) || a.id.startsWith(q))
       .map((a): ApplicantRow => ({ kind: "app", app: a, at: a.created_at })),
   ].sort((x, y) => y.at.localeCompare(x.at));
   const appPages = Math.max(1, Math.ceil(filteredApps.length / APP_PAGE_SIZE));
@@ -1409,10 +1454,13 @@ export default function AdminDashboardPage() {
           <button className="lg:hidden" onClick={() => setSidebarOpen(false)}><X className="h-5 w-5" /></button>
         </div>
         <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
-          {sidebarItems.filter((item) => item.key !== "staff" || canManageSettings).map((item) => {
+          {sidebarItems.filter((item) => canSee(item.key)).map((item, i, items) => {
             const unread = item.key === "notifications" ? unreadTotal : 0;
+            const startsGroup = item.group && item.group !== items[i - 1]?.group;
             return (
-              <button key={item.key} onClick={() => { setActiveSection(item.key); setSidebarOpen(false); }}
+              <Fragment key={item.key}>
+              {startsGroup && <p className="px-3 pt-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{item.group}</p>}
+              <button onClick={() => { setActiveSection(item.key); setSidebarOpen(false); }}
                 className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeSection === item.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
                 <item.icon className="h-4 w-4 shrink-0" /><span className="truncate">{item.label}</span>
                 {unread > 0 && (
@@ -1421,6 +1469,7 @@ export default function AdminDashboardPage() {
                   </span>
                 )}
               </button>
+              </Fragment>
             );
           })}
         </nav>
@@ -1633,7 +1682,7 @@ export default function AdminDashboardPage() {
                                 if (await decideApplication(a, "Pending", null)) { toast.success(`${name} reopened`); loadData(true); }
                               }}><RotateCcw className="h-4 w-4" /></Button>
                             )}
-                            {a.status === "Approved" && (hasLivePayment(a.id) ? (
+                            {a.status === "Approved" && can.finance && (hasLivePayment(a.id) ? (
                               <Button size="icon" variant="ghost" title="View payments" onClick={() => paymentsFor(a)}><Wallet className="h-4 w-4 text-primary" /></Button>
                             ) : (
                               <Button size="icon" variant="ghost" title="Schedule payment" onClick={() => scheduleFor(a)}><Banknote className="h-4 w-4 text-success" /></Button>
@@ -1660,7 +1709,7 @@ export default function AdminDashboardPage() {
               </div>
 
               <Dialog open={!!viewApp} onOpenChange={(open) => !open && setViewApp(null)}>
-                <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                <DialogContent className="max-w-lg">
                   <DialogHeader><DialogTitle>Application Details</DialogTitle></DialogHeader>
                   {viewApp && (() => {
                     const open = isOpenApp(viewApp);
@@ -1743,11 +1792,11 @@ export default function AdminDashboardPage() {
                         <div>
                           <Label className="text-xs">Award amount (₱)</Label>
                           <div className="mt-1 flex gap-2">
-                            <Input type="number" min={1} step="0.01" value={awardInput} onChange={(e) => setAwardInput(e.target.value)} disabled={hasDisbursed(viewApp.id)} />
-                            <Button variant="outline" disabled={hasDisbursed(viewApp.id)} onClick={() => saveAward(viewApp)}>Save award</Button>
+                            <Input type="number" min={1} step="0.01" value={awardInput} onChange={(e) => setAwardInput(e.target.value)} disabled={!can.manage || hasDisbursed(viewApp.id)} />
+                            {can.manage && <Button variant="outline" disabled={hasDisbursed(viewApp.id)} onClick={() => saveAward(viewApp)}>Save award</Button>}
                           </div>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            {hasDisbursed(viewApp.id) ? "Locked: a payment for this award has been disbursed." : "The student is notified. Payments already scheduled keep their amount."}
+                            {!can.manage ? "Only an admin can change an award after approval." : hasDisbursed(viewApp.id) ? "Locked: a payment for this award has been disbursed." : "The student is notified. Payments already scheduled keep their amount."}
                           </p>
                         </div>
                       )}
@@ -1823,12 +1872,18 @@ export default function AdminDashboardPage() {
                           <Button variant="destructive" className="flex-1" disabled={!remarks.trim()} title={remarks.trim() ? undefined : "Write the reason in the message first — it is shown to the student"} onClick={async () => {
                             if (await decideApplication(viewApp, "Disapproved", remarks)) { toast.error("Disapproved"); setViewApp(null); loadData(true); }
                           }}><XCircle className="mr-1 h-4 w-4" /> Disapprove</Button>
+                          {viewApp.changes_requested && (
+                            <p className="w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 whitespace-pre-wrap">
+                              <span className="font-semibold">Waiting on the student{viewApp.changes_requested_at ? ` since ${new Date(viewApp.changes_requested_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}` : ""}: </span>
+                              {viewApp.changes_requested}
+                            </p>
+                          )}
                           <Button variant="ghost" className="w-full" onClick={() => { setChangesText(""); setChangesFor(viewApp); }}>
                             <Pencil className="mr-1 h-4 w-4" /> Request changes from the student
                           </Button>
                         </div>
                       )}
-                      {viewApp.status === "Approved" && !livePay && (
+                      {viewApp.status === "Approved" && !livePay && can.finance && (
                         <Button className="w-full" onClick={() => scheduleFor(viewApp)}><Banknote className="mr-1 h-4 w-4" /> Schedule payment</Button>
                       )}
                       {viewApp.status === "Disapproved" && (
@@ -1874,14 +1929,16 @@ export default function AdminDashboardPage() {
                       <SelectItem value="inactive">Disabled</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Button className="bg-gradient-primary shadow-primary" onClick={() => { setSchActive(true); setSchYearLevels([]); setSchBarangays([]); setSchDialog("new"); }}>
-                    <Plus className="mr-1 h-4 w-4" /> Add Scholarship
-                  </Button>
+                  {can.manage && (
+                    <Button className="bg-gradient-primary shadow-primary" onClick={() => { setSchActive(true); setSchYearLevels([]); setSchBarangays([]); setSchBarangaySearch(""); setSchDialog("new"); }}>
+                      <Plus className="mr-1 h-4 w-4" /> Add Scholarship
+                    </Button>
+                  )}
                 </div>
               </div>
 
               <Dialog open={schDialog !== null} onOpenChange={(o) => !o && setSchDialog(null)}>
-                <DialogContent className="max-h-[90vh] overflow-y-auto">
+                <DialogContent>
                   <DialogHeader><DialogTitle className="font-display">{schDialog && schDialog !== "new" ? "Edit Scholarship" : "Add New Scholarship"}</DialogTitle></DialogHeader>
                   {schDialog && (() => {
                     const cur = schDialog === "new" ? null : schDialog;
@@ -1907,7 +1964,8 @@ export default function AdminDashboardPage() {
                           <p className="text-sm font-medium">Eligibility rules <span className="font-normal text-muted-foreground">(enforced when a student applies)</span></p>
                           <div className="grid grid-cols-2 gap-3">
                             <div><Label>Minimum average grade</Label><Input name="min_grade" type="number" min={0} max={100} step="0.01" defaultValue={cur?.min_grade ?? ""} placeholder="Global minimum" /></div>
-                            <div><Label>Residents of municipality</Label><Input name="municipality" defaultValue={cur?.municipality ?? ""} placeholder="Any municipality" /></div>
+                            {/* Every program is for residents of San Jose; only the barangays below vary. */}
+                            <div><Label>Municipality</Label><Input value={HOME_MUNICIPALITY} readOnly disabled /></div>
                           </div>
                           <div>
                             <Label>Year levels <span className="font-normal text-muted-foreground">(none ticked = any)</span></Label>
@@ -1923,13 +1981,14 @@ export default function AdminDashboardPage() {
                           </div>
                           <div>
                             <div className="flex items-center justify-between gap-2">
-                              <Label>Barangays of {HOME_MUNICIPALITY} <span className="font-normal text-muted-foreground">(none ticked = any)</span></Label>
+                              <Label>Barangays of {HOME_MUNICIPALITY} <span className="font-normal text-muted-foreground">(none ticked = open to all {HOME_MUNICIPALITY} residents)</span></Label>
                               {schBarangays.length > 0 && (
                                 <button type="button" className="text-xs text-primary hover:underline" onClick={() => setSchBarangays([])}>Clear ({schBarangays.length})</button>
                               )}
                             </div>
+                            <Input className="mt-1" value={schBarangaySearch} onChange={(e) => setSchBarangaySearch(e.target.value)} placeholder="Search barangay" />
                             <div className="mt-1 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 max-h-48 overflow-y-auto rounded-md border p-2">
-                              {BARANGAYS.map((b) => (
+                              {BARANGAYS.filter((b) => b.toLowerCase().includes(schBarangaySearch.trim().toLowerCase())).map((b) => (
                                 <label key={b} className="flex items-center gap-1.5 text-sm">
                                   <input type="checkbox" checked={schBarangays.includes(b)}
                                     onChange={(e) => setSchBarangays((prev) => e.target.checked ? [...prev, b] : prev.filter((x) => x !== b))} />
@@ -1950,16 +2009,22 @@ export default function AdminDashboardPage() {
                 </DialogContent>
               </Dialog>
 
-              <Dialog open={!!deleteSch} onOpenChange={(o) => !o && setDeleteSch(null)}>
+              <Dialog open={!!deleteSch} onOpenChange={(o) => { if (!o) { setDeleteSch(null); setDeleteSchText(""); } }}>
                 <DialogContent>
                   <DialogHeader><DialogTitle>Delete {deleteSch?.name}?</DialogTitle></DialogHeader>
                   <p className="text-sm text-muted-foreground">
-                    This permanently removes the program.
+                    This permanently removes the program and can&apos;t be undone.
                     {deleteSch && applicantCount(deleteSch.id) > 0 && ` It has ${applicantCount(deleteSch.id)} application(s), so deletion will be blocked — disable it instead.`}
                   </p>
+                  {deleteSch && applicantCount(deleteSch.id) === 0 && (
+                    <div className="space-y-1">
+                      <Label htmlFor="delete-sch-name">Type <strong>{deleteSch.name}</strong> to confirm</Label>
+                      <Input id="delete-sch-name" value={deleteSchText} onChange={(e) => setDeleteSchText(e.target.value)} autoComplete="off" />
+                    </div>
+                  )}
                   <DialogFooter>
-                    <Button variant="outline" onClick={() => setDeleteSch(null)}>Cancel</Button>
-                    <Button variant="destructive" disabled={!!deleteSch && applicantCount(deleteSch.id) > 0} onClick={confirmDeleteScholarship}>Delete</Button>
+                    <Button variant="outline" onClick={() => { setDeleteSch(null); setDeleteSchText(""); }}>Cancel</Button>
+                    <Button variant="destructive" disabled={!deleteSch || applicantCount(deleteSch.id) > 0 || deleteSchText.trim() !== deleteSch.name.trim()} onClick={confirmDeleteScholarship}>Delete</Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -2003,12 +2068,14 @@ export default function AdminDashboardPage() {
                           </TableCell>
                           <TableCell><Badge variant={sch.is_active ? "default" : "secondary"}>{sch.is_active ? "Active" : "Disabled"}</Badge></TableCell>
                           <TableCell className="text-right space-x-1">
-                            <Button size="icon" variant="ghost" title="Edit" onClick={() => { setSchActive(sch.is_active); setSchYearLevels(sch.year_levels ?? []); setSchBarangays(sch.barangays ?? []); setSchDialog(sch); }}><Pencil className="h-4 w-4" /></Button>
+                            {can.manage && <>
+                            <Button size="icon" variant="ghost" title="Edit" onClick={() => { setSchActive(sch.is_active); setSchYearLevels(sch.year_levels ?? []); setSchBarangays(sch.barangays ?? []); setSchBarangaySearch(""); setSchDialog(sch); }}><Pencil className="h-4 w-4" /></Button>
                             <Button size="icon" variant="ghost" title="Duplicate for next year" onClick={() => duplicateScholarship(sch)}><Copy className="h-4 w-4" /></Button>
                             <Button size="icon" variant="ghost" title={sch.is_active ? "Disable" : "Enable"} onClick={() => toggleScholarship(sch)}>
                               {sch.is_active ? <XCircle className="h-4 w-4" /> : <CheckCircle className="h-4 w-4 text-success" />}
                             </Button>
-                            <Button size="icon" variant="ghost" title="Delete" onClick={() => setDeleteSch(sch)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                            </>}
+                            {can.super && <Button size="icon" variant="ghost" title="Delete" onClick={() => { setDeleteSchText(""); setDeleteSch(sch); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
                           </TableCell>
                         </TableRow>
                       );
@@ -2097,10 +2164,10 @@ export default function AdminDashboardPage() {
                         <TableCell><Badge variant={p.is_active ? "default" : "secondary"}>{p.is_active ? "Active" : "Inactive"}</Badge></TableCell>
                         <TableCell className="text-right space-x-1">
                           <Button size="icon" variant="ghost" title="View" onClick={() => setViewStudent(p)}><Eye className="h-4 w-4" /></Button>
-                          <Button size="icon" variant="ghost" title="Edit reference number / disbursement status" onClick={() => openEditDisb(p)}><Pencil className="h-4 w-4" /></Button>
-                          <Button size="icon" variant="ghost" title={p.is_active ? "Deactivate" : "Activate"} onClick={() => toggleStudentActive(p)}>
+                          {can.finance && <Button size="icon" variant="ghost" title="Edit reference number / disbursement status" onClick={() => openEditDisb(p)}><Pencil className="h-4 w-4" /></Button>}
+                          {can.manage && <Button size="icon" variant="ghost" title={p.is_active ? "Deactivate" : "Activate"} onClick={() => toggleStudentActive(p)}>
                             <Power className={`h-4 w-4 ${p.is_active ? "text-destructive" : "text-success"}`} />
-                          </Button>
+                          </Button>}
                         </TableCell>
                       </TableRow>
                     ); })}
@@ -2310,7 +2377,11 @@ export default function AdminDashboardPage() {
                                       <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
                                         <CheckCircle className="h-3.5 w-3.5" /> Ref. <span className="font-mono">{p.student_receipt_ref}</span> · {new Date(p.student_receipt_at).toLocaleDateString()}
                                       </span>
-                                      {p.reference && (
+                                      {receiptNos[p.id] ? (
+                                        refKey(receiptNos[p.id]) === refKey(p.student_receipt_ref)
+                                          ? <p className="text-[11px] text-success">Matches the receipt number{p.receipt_review_status === "Accepted" && !p.receipt_reviewed_by ? " · accepted automatically" : ""}</p>
+                                          : <p className="text-[11px] text-destructive">Doesn&apos;t match receipt no. <span className="font-mono">{receiptNos[p.id]}</span></p>
+                                      ) : p.reference && (
                                         refKey(p.reference) === refKey(p.student_receipt_ref)
                                           ? <p className="text-[11px] text-success">Matches the payment reference</p>
                                           : <p className="text-[11px] text-muted-foreground">Payment reference: <span className="font-mono">{p.reference}</span></p>
@@ -2338,13 +2409,21 @@ export default function AdminDashboardPage() {
                                   </div>
                                   {p.receipt_review_status === "Disapproved" && p.receipt_review_note && <p className="text-xs text-destructive">{p.receipt_review_note}</p>}
                                 </div>
-                              ) : <Badge variant="secondary">Awaiting</Badge>}
+                              ) : (
+                                <div className="space-y-0.5">
+                                  <Badge variant="secondary">Awaiting</Badge>
+                                  {receiptNos[p.id] && <p className="text-[11px] text-muted-foreground">Receipt no. <span className="font-mono">{receiptNos[p.id]}</span></p>}
+                                </div>
+                              )}
                           </TableCell>
                           <TableCell className="text-right space-x-1 whitespace-nowrap">
                             {payIssues.some((i) => i.payment_id === p.id) && (
                               <Button size="icon" variant="ghost" title={openIssueFor(p.id) ? "Open problem reported by the student" : "Problem reports"} onClick={() => { setIssueResponse(""); setIssueDialog(p); }}>
                                 <AlertTriangle className={`h-4 w-4 ${openIssueFor(p.id) ? "text-warning" : "text-muted-foreground"}`} />
                               </Button>
+                            )}
+                            {p.status !== "Cancelled" && receiptNos[p.id] && (
+                              <Button size="icon" variant="ghost" title={`Print acknowledgment slip (${receiptNos[p.id]})`} onClick={() => printSlip(p)}><Printer className="h-4 w-4" /></Button>
                             )}
                             {p.status === "Disbursed" && (
                               <Button size="icon" variant="ghost" title="View receipt" onClick={() => viewReceipt(p)}><Receipt className="h-4 w-4" /></Button>
@@ -2465,7 +2544,7 @@ export default function AdminDashboardPage() {
               <h2 className="text-xl font-display font-bold">Notifications</h2>
               <NotificationInbox notifications={notifications} setNotifications={setNotifications} onNavigate={goToLink}
                 userId={adminUserId} unreadTotal={unreadTotal} onUnreadChange={refreshAdminUnread} />
-              <AnnouncementsPanel />
+              {can.manage && <AnnouncementsPanel />}
               <Card>
                 <CardHeader><CardTitle className="text-base">Notification Preferences</CardTitle><CardDescription>Choose what reaches you in the dashboard and by email.</CardDescription></CardHeader>
                 <CardContent>
@@ -2508,10 +2587,17 @@ export default function AdminDashboardPage() {
                     {auditEntities.map((e) => <SelectItem key={e} value={e}>{e}</SelectItem>)}
                   </SelectContent>
                 </Select>
+                <Select value={auditUser} onValueChange={(v) => { setAuditUser(v); setAuditPage(1); }}>
+                  <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All staff</SelectItem>
+                    {staff.map((m) => <SelectItem key={m.id} value={m.id}>{m.name} · {ROLE_LABEL[m.role] ?? m.role}</SelectItem>)}
+                  </SelectContent>
+                </Select>
                 <Input type="date" value={auditFrom} onChange={(e) => { setAuditFrom(e.target.value); setAuditPage(1); }} className="w-40" aria-label="From date" />
                 <Input type="date" value={auditTo} onChange={(e) => { setAuditTo(e.target.value); setAuditPage(1); }} className="w-40" aria-label="To date" />
-                {(auditSearch || auditAction !== "all" || auditEntity !== "all" || auditFrom || auditTo) && (
-                  <Button variant="ghost" size="sm" onClick={() => { setAuditSearch(""); setAuditAction("all"); setAuditEntity("all"); setAuditFrom(""); setAuditTo(""); setAuditPage(1); }}>Clear</Button>
+                {(auditSearch || auditAction !== "all" || auditEntity !== "all" || auditUser !== "all" || auditFrom || auditTo) && (
+                  <Button variant="ghost" size="sm" onClick={() => { setAuditSearch(""); setAuditAction("all"); setAuditEntity("all"); setAuditUser("all"); setAuditFrom(""); setAuditTo(""); setAuditPage(1); }}>Clear</Button>
                 )}
               </div>
               <Card>
@@ -2544,7 +2630,7 @@ export default function AdminDashboardPage() {
               </div>
 
               <Dialog open={!!viewLog} onOpenChange={(o) => !o && setViewLog(null)}>
-                <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+                <DialogContent className="max-w-2xl">
                   <DialogHeader><DialogTitle>Audit Entry</DialogTitle></DialogHeader>
                   {viewLog && (() => {
                     const prev = asObj(viewLog.previous_value);
@@ -2600,14 +2686,15 @@ export default function AdminDashboardPage() {
 
           {/* STAFF (super admins only) */}
           {activeSection === "staff" && canManageSettings && (
-            <StaffPanel userId={adminUserId} onChanged={() => loadData(true)} />
+            <StaffPanel userId={adminUserId} onChanged={() => loadData(true)}
+              onShowActivity={(id) => { setAuditUser(id); setAuditPage(1); setActiveSection("audit-logs"); }} />
           )}
 
           {/* SETTINGS */}
           {activeSection === "settings" && (
             <div className="space-y-4">
               <SettingsPanel rows={systemSettings} auditLogs={auditLogs} onSave={saveSettings} readOnly={!canManageSettings} />
-              <ReminderJobsCard />
+              {can.manage && <ReminderJobsCard />}
             </div>
           )}
         </main>
@@ -2726,9 +2813,23 @@ export default function AdminDashboardPage() {
                 onChange={(e) => setDisbRef(e.target.value)}
               />
             </div>
+            {disbPay && receiptNos[disbPay.id] && (
+              <div className="rounded-lg border bg-muted/40 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Receipt No.</p>
+                    <p className="font-mono text-sm font-semibold">{receiptNos[disbPay.id]}</p>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" onClick={() => printSlip(disbPay, disbMethod, disbRef.trim() || null)}>
+                    <Printer className="mr-1 h-3.5 w-3.5" /> Print slip
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">Print the acknowledgment slip, have the student sign both copies and give them the student copy. They enter this number in the portal to confirm they received the money.</p>
+              </div>
+            )}
             <div>
               <Label>Receipt / Voucher *</Label>
-              <p className="text-xs text-muted-foreground mb-2">Upload the signed receipt or disbursement voucher.</p>
+              <p className="text-xs text-muted-foreground mb-2">Upload the signed acknowledgment slip (office copy) or disbursement voucher.</p>
               <label className="flex items-center gap-2 cursor-pointer rounded-lg border border-dashed p-3 hover:bg-muted/30 transition-colors">
                 <Upload className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm text-muted-foreground">
@@ -2758,7 +2859,7 @@ export default function AdminDashboardPage() {
       </Dialog>
 
       <Dialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>Student Details</DialogTitle></DialogHeader>
           {viewStudent && (() => {
             const stuApps = applications.filter((a) => a.user_id === viewStudent.id);
@@ -2806,9 +2907,9 @@ export default function AdminDashboardPage() {
                     <div>
                       <div className="flex items-center justify-between">
                         <Label className="text-xs">Payments ({pays.length}){pays.length > 0 && <span className="font-normal text-muted-foreground"> · {formatPHP(disbursedTotal(viewStudent.id))} disbursed</span>}</Label>
-                        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { const v = viewStudent; setViewStudent(null); openEditDisb(v); }}>
+                        {can.finance && <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { const v = viewStudent; setViewStudent(null); openEditDisb(v); }}>
                           <Pencil className="mr-1 h-3.5 w-3.5" /> Edit disbursement
-                        </Button>
+                        </Button>}
                       </div>
                       {pays.length === 0 ? <p className="text-sm text-muted-foreground">No payments yet</p> : (
                         <ul className="mt-1 space-y-1">
@@ -2852,7 +2953,7 @@ export default function AdminDashboardPage() {
                               <span className="flex items-center gap-1.5">
                                 <Badge variant={g.status === "Verified" ? "default" : "secondary"} className={g.status === "Disapproved" ? "text-destructive" : undefined}>{g.status}</Badge>
                                 <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openStoredFile(g.file_path, "No grade report on file")}>View report</Button>
-                                {g.status === "Pending" && (<>
+                                {g.status === "Pending" && can.review && (<>
                                   <Button size="sm" className="h-7 text-xs" disabled={payBusy} onClick={() => reviewGrade(g, "Verified")}>Verify</Button>
                                   <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={payBusy} onClick={() => { setGradeNote(""); setDisapproveGrade(g); }}>Disapprove</Button>
                                 </>)}
@@ -2876,7 +2977,8 @@ export default function AdminDashboardPage() {
                           <li key={r.id} className={`rounded-md border px-3 py-2 text-sm ${r.status === "Pending" ? "border-warning/40 bg-warning/5" : ""}`}>
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <span className="font-medium">Account deletion · {r.status} <span className="font-normal text-muted-foreground">· {new Date(r.created_at).toLocaleDateString()}</span></span>
-                              {r.status === "Pending" && (
+                              {r.status === "Pending" && !can.super && <span className="text-xs text-muted-foreground">A super admin handles this</span>}
+                              {r.status === "Pending" && can.super && (
                                 <span className="flex gap-1.5">
                                   <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setReqResponse(""); setHandleReq({ req: r, status: "Declined" }); }}>Decline</Button>
                                   <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => { setReqResponse("Your account and data have been deleted."); setHandleReq({ req: r, status: "Completed" }); }}>Mark completed</Button>
@@ -2898,11 +3000,11 @@ export default function AdminDashboardPage() {
                   <Label className="text-xs">Documents</Label>
                   {docList(studentDocs, studentDocsLoading)}
                 </div>
-                <DialogFooter>
+                {can.manage && <DialogFooter>
                   <Button variant={viewStudent.is_active ? "destructive" : "default"} onClick={() => toggleStudentActive(viewStudent)}>
                     <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
                   </Button>
-                </DialogFooter>
+                </DialogFooter>}
               </div>
             );
           })()}
@@ -2957,7 +3059,7 @@ export default function AdminDashboardPage() {
       </Dialog>
 
       <Dialog open={!!issueDialog} onOpenChange={(o) => { if (!o) setIssueDialog(null); }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Payment problem reports</DialogTitle></DialogHeader>
           {issueDialog && (
             <div className="space-y-3">

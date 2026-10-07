@@ -7,8 +7,18 @@ import type { Tables } from "@/integrations/supabase/types";
 
 type AppRow = Tables<"applications"> & { scholarships: { name: string } | null };
 
+/** "Contact the office" as a link to the Help tab when the caller can open it, plain text otherwise. */
+export function ContactOffice({ onContact }: { onContact?: () => void }) {
+  if (!onContact) return <>Contact the office</>;
+  return (
+    <button type="button" onClick={onContact} className="font-semibold underline underline-offset-2 hover:opacity-80 cursor-pointer">
+      Contact the office
+    </button>
+  );
+}
+
 /** Why an application was disapproved, and when. Renders nothing for any other status. */
-export function DisapprovalReason({ app, compact = false }: { app: Tables<"applications">; compact?: boolean }) {
+export function DisapprovalReason({ app, compact = false, onContact }: { app: Tables<"applications">; compact?: boolean; onContact?: () => void }) {
   if (app.status !== "Disapproved") return null;
   return (
     <div className={`rounded-xl border border-red-200 bg-red-50 text-red-800 ${compact ? "px-3 py-2 text-xs" : "px-4 py-3 text-sm"}`}>
@@ -17,16 +27,19 @@ export function DisapprovalReason({ app, compact = false }: { app: Tables<"appli
       </p>
       <p className="mt-1 whitespace-pre-wrap">
         <span className="font-semibold">Reason: </span>
-        {app.notes?.trim() || "The scholarship office did not give a reason. Contact the office if you have questions."}
+        {app.notes?.trim() || "The scholarship office did not give a reason."}
       </p>
+      <p className="mt-1"><ContactOffice onContact={onContact} /> if you have questions.</p>
     </div>
   );
 }
 
 /** Every application the student has made, newest first, with disapproval reasons shown inline. */
-export default function ApplicationHistory({ applications, onView, limit }: {
+export default function ApplicationHistory({ applications, onView, onContact, limit }: {
   applications: AppRow[];
   onView: (id: string) => void;
+  /** Opens the Help tab from "Contact the office". */
+  onContact?: () => void;
   /** Show only the newest N (the caller links to the full list). */
   limit?: number;
 }) {
@@ -62,7 +75,7 @@ export default function ApplicationHistory({ applications, onView, limit }: {
               </button>
             </div>
           </div>
-          <DisapprovalReason app={a} compact />
+          <DisapprovalReason app={a} compact onContact={onContact} />
         </li>
       ))}
     </ul>

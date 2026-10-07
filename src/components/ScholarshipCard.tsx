@@ -78,7 +78,7 @@ const ScholarshipCard = ({ program, globalMinGrade = 0, onApply, hideAmount = fa
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg">
           <div className="h-1 bg-gradient-primary rounded-t-lg -mx-6 -mt-6 mb-2" />
           <DialogHeader>
             <DialogTitle className="text-xl font-display pr-6">{name}</DialogTitle>

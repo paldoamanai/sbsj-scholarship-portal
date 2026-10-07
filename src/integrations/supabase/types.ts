@@ -31,6 +31,8 @@ export type Database = {
           average_grade: number | null
           approved_at: string | null
           decided_at: string | null
+          changes_requested: string | null
+          changes_requested_at: string | null
           created_at: string
           updated_at: string
         }
@@ -55,6 +57,8 @@ export type Database = {
           average_grade?: number | null
           approved_at?: string | null
           decided_at?: string | null
+          changes_requested?: string | null
+          changes_requested_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -79,6 +83,8 @@ export type Database = {
           average_grade?: number | null
           approved_at?: string | null
           decided_at?: string | null
+          changes_requested?: string | null
+          changes_requested_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -332,6 +338,27 @@ export type Database = {
           author_id?: string | null
           author_email?: string | null
           body?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
+      payment_receipt_numbers: {
+        Row: {
+          payment_id: string
+          receipt_no: string
+          failed_attempts: number
+          created_at: string
+        }
+        Insert: {
+          payment_id: string
+          receipt_no: string
+          failed_attempts?: number
+          created_at?: string
+        }
+        Update: {
+          payment_id?: string
+          receipt_no?: string
+          failed_attempts?: number
           created_at?: string
         }
         Relationships: []
@@ -877,6 +904,14 @@ export type Database = {
         }
         Returns: string
       }
+      review_document: {
+        Args: {
+          _id: string
+          _status: string
+          _note?: string | null
+        }
+        Returns: { status: string; review_note: string | null }[]
+      }
       review_grade_update: {
         Args: {
           _id: string
@@ -933,7 +968,7 @@ export type Database = {
           _payment_id: string
           _reference: string
         }
-        Returns: undefined
+        Returns: "accepted" | "mismatch" | "review" | "pending"
       }
       set_student_active: {
         Args: {
@@ -969,6 +1004,10 @@ export type Database = {
           _application_id?: string | null
         }
         Returns: boolean
+      }
+      mark_changes_done: {
+        Args: { _application_id: string }
+        Returns: undefined
       }
     }
     Enums: {

@@ -67,7 +67,7 @@ const LandingFooter = () => {
                   href={settings.facebook_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 text-xs text-white/50 hover:text-orange-300 transition-colors"
+                  className="inline-flex items-center gap-2 text-xs text-white/75 hover:text-orange-300 transition-colors"
                 >
                   <Facebook className="h-4 w-4" />
                   Follow us on Facebook
@@ -136,10 +136,10 @@ const LandingFooter = () => {
         {/* Bottom bar */}
         <div className="border-t border-white/10 bg-[#0A1C42]">
           <div className="container py-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-            <p className="text-xs text-white/40">
+            <p className="text-xs text-white/75">
               &copy; {new Date().getFullYear()} Sangguniang Bayan ng San Jose Scholarship Portal. All rights reserved.
             </p>
-            <div className="flex items-center gap-4 text-xs text-white/50">
+            <div className="flex items-center gap-4 text-xs text-white/75">
               <Link href="/privacy" className="hover:text-orange-300 transition-colors">Privacy Policy</Link>
               <Link href="/terms" className="hover:text-orange-300 transition-colors">Terms of Use</Link>
               <span className="hidden sm:flex items-center gap-1.5 text-orange-300 font-medium">
