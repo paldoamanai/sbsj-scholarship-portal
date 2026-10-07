@@ -957,6 +957,15 @@ export type Database = {
         }
         Returns: undefined
       }
+      message_student: {
+        Args: {
+          _user_id: string
+          _kind: string
+          _message: string
+          _application_id?: string | null
+        }
+        Returns: boolean
+      }
     }
     Enums: {
       app_role: "admin" | "student"
