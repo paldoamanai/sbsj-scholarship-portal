@@ -62,9 +62,10 @@ function DocStatusBadge({ status }: { status: string }) {
 
 // ── Section heading ────────────────────────────────────────────────────────────
 // ── Disbursement section ───────────────────────────────────────────────────────
-// Shared receipt-submission logic. The student types the reference number printed on the voucher /
-// acknowledgment receipt they signed; the database checks it and refuses a second submission
-// (unless staff disapproved the first).
+// Shared receipt-submission logic. The student types the receipt number printed on the acknowledgment
+// slip they signed. The database checks it against the number the portal issued: a match is accepted on
+// the spot, a wrong number is refused (after 5 wrong tries it goes to staff). Older payments without a
+// portal number are reviewed by staff as before.
 const RECEIPT_REF = /^[A-Za-z0-9][A-Za-z0-9 /#._-]{2,39}$/;
 
 function useReceiptSubmit(onSubmitted: () => void) {
@@ -75,13 +76,19 @@ function useReceiptSubmit(onSubmitted: () => void) {
 
   const submit = async (paymentId: string) => {
     const ref = (refs[paymentId] ?? "").trim();
-    if (!RECEIPT_REF.test(ref)) { toast.error("Enter the reference number exactly as printed on your receipt (3–40 letters or numbers)."); return; }
+    if (!RECEIPT_REF.test(ref)) { toast.error("Enter the receipt number exactly as printed on your slip (3–40 letters or numbers)."); return; }
     if (!confirmed[paymentId]) return;
     setSubmittingFor(paymentId);
     try {
-      const { error } = await supabase.rpc("submit_student_receipt", { _payment_id: paymentId, _reference: ref });
+      const { data: result, error } = await supabase.rpc("submit_student_receipt", { _payment_id: paymentId, _reference: ref });
       if (error) { toast.error("Could not submit", { description: error.message }); return; }
-      toast.success("Receipt reference submitted.");
+      if (result === "mismatch") {
+        toast.error("That number doesn't match this payment", { description: "Check the receipt number on your slip (e.g. AR-26-7K3QX9) and try again." });
+        return;
+      }
+      if (result === "accepted") toast.success("Receipt confirmed. Thank you!");
+      else if (result === "review") toast.warning("We couldn't match the number, so the office will check it.");
+      else toast.success("Receipt number submitted.");
       setRefs((prev) => ({ ...prev, [paymentId]: "" }));
       setConfirmed((prev) => ({ ...prev, [paymentId]: false }));
       onSubmitted();
@@ -156,7 +163,7 @@ function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl 
       <div className="space-y-1">
         {p.student_receipt_ref ? (
           <span className="inline-flex items-center gap-1 text-xs text-emerald-700 font-medium">
-            <CheckCircle className="h-3.5 w-3.5" /> Receipt ref. <span className="font-mono">{p.student_receipt_ref}</span> · {formatDate(p.student_receipt_at)}
+            <CheckCircle className="h-3.5 w-3.5" /> Receipt no. <span className="font-mono">{p.student_receipt_ref}</span> · {formatDate(p.student_receipt_at)}
           </span>
         ) : p.student_receipt_path ? (
           <button type="button" onClick={() => view(p.student_receipt_path)} className="inline-flex items-center gap-1 text-xs text-emerald-700 font-medium hover:underline cursor-pointer">
@@ -167,7 +174,7 @@ function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl 
             <CheckCircle className="h-3.5 w-3.5" /> Receipt confirmed {formatDate(p.student_receipt_at)}
           </span>
         )}
-        <p className={`text-[11px] font-semibold ${accepted ? "text-emerald-700" : "text-amber-700"}`}>{accepted ? "Accepted by the office" : "Waiting for the office to review"}</p>
+        <p className={`text-[11px] font-semibold ${accepted ? "text-emerald-700" : "text-amber-700"}`}>{accepted ? (p.receipt_reviewed_by ? "Accepted by the office" : "Confirmed") : "Waiting for the office to review"}</p>
       </div>
     );
   }
@@ -183,12 +190,10 @@ function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl 
         </p>
       )}
       <p className="text-xs text-muted-foreground">
-        {p.method === "Cash"
-          ? "Enter the reference number printed on the cash voucher you signed when you received the money."
-          : "Enter the reference number printed on the cheque voucher or acknowledgment receipt you signed."}
+        Enter the <strong>receipt number</strong> printed on the acknowledgment slip you signed when you received the {p.method === "Cheque" ? "cheque" : "money"} (it looks like AR-26-7K3QX9).
       </p>
       <div className="flex items-center gap-1.5">
-        <Input value={ref} maxLength={40} placeholder="Receipt reference no." aria-label="Receipt reference number"
+        <Input value={ref} maxLength={40} placeholder="Receipt no." aria-label="Receipt number"
           onChange={(e) => setRefs((prev) => ({ ...prev, [p.id]: e.target.value }))}
           onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) submit(p.id); }}
           className="h-7 text-xs rounded-lg font-mono uppercase placeholder:normal-case placeholder:font-sans" />
@@ -302,7 +307,7 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
         <div className="flex items-start gap-3 bg-accent border border-primary/20 rounded-xl px-4 py-3">
           <Receipt className="h-4 w-4 text-primary mt-0.5 shrink-0" />
           <p className="text-sm text-primary">
-            For each disbursed payment, <strong>enter the reference number</strong> printed on the receipt you signed and <strong>confirm you received it</strong>.
+            For each disbursed payment, <strong>enter the receipt number</strong> printed on the acknowledgment slip you signed and <strong>confirm you received it</strong>.
           </p>
         </div>
       )}

@@ -22,7 +22,7 @@ import {
   Menu, X, Search, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock,
   FileDown, Receipt, Loader2, User, Upload, ArrowRight,
-   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2,
+   ChevronRight, ChevronLeft, ExternalLink, Printer, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -48,6 +48,7 @@ import {
   type DocSummary, type ReportData, type ReportDef, type StaffMember,
 } from "@/lib/reports";
 import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
+import { printReceiptSlip } from "@/lib/receipt-slip";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
 const sidebarItems = [
@@ -240,6 +241,8 @@ export default function AdminDashboardPage() {
   const [disbMethod, setDisbMethod] = useState<"Cheque" | "Cash">("Cash");
   const [disbRef, setDisbRef] = useState("");
   const [disbReceipt, setDisbReceipt] = useState<File | null>(null);
+  // Portal-issued receipt numbers (staff-only): printed on the acknowledgment slip, typed back by the student.
+  const [receiptNos, setReceiptNos] = useState<Record<string, string>>({});
   const [disbLoading, setDisbLoading] = useState(false);
 
   useEffect(() => { loadData(); }, []);
@@ -272,7 +275,7 @@ export default function AdminDashboardPage() {
 
     // Everything is fetched in one parallel batch: each query is a full round trip to Supabase,
     // so running them one after another made the dashboard several seconds slower to open.
-    const [roleRes, canManageRes, staffRolesRes, appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes] = await Promise.all([
+    const [roleRes, canManageRes, staffRolesRes, appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes, receiptNosRes] = await Promise.all([
       supabase.from("user_roles").select("role").eq("user_id", user.id).single(),
       supabase.rpc("can_manage_settings", { _user_id: user.id }),
       staffRoles(),
@@ -289,6 +292,7 @@ export default function AdminDashboardPage() {
       supabase.from("payment_issues").select("*").order("created_at", { ascending: false }),
       supabase.from("grade_updates").select("*").order("created_at", { ascending: false }),
       supabase.from("data_requests").select("*").order("created_at", { ascending: false }),
+      supabase.from("payment_receipt_numbers").select("payment_id, receipt_no"),
     ]);
 
     const role = (roleRes.data as { role?: string } | null)?.role;
@@ -311,6 +315,7 @@ export default function AdminDashboardPage() {
     if (issuesRes.data) setPayIssues(issuesRes.data);
     if (gradesRes.data) setGradeReviews(gradesRes.data);
     if (reqsRes.data) setDataReqs(reqsRes.data);
+    if (receiptNosRes.data) setReceiptNos(Object.fromEntries(receiptNosRes.data.map((r) => [r.payment_id, r.receipt_no])));
     setLastUpdated(new Date());
     setLoading(false);
     setRefreshing(false);
@@ -319,12 +324,14 @@ export default function AdminDashboardPage() {
   // Re-fetch applications/payments in the background (no loading flicker) —
   // used when a live change comes in over realtime.
   const silentRefreshAdmin = async () => {
-    const [appsRes, paymentsRes, profilesRes, docsRes] = await Promise.all([
+    const [appsRes, paymentsRes, profilesRes, docsRes, receiptNosRes] = await Promise.all([
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
       supabase.from("payments").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("*"),
       supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at"),
+      supabase.from("payment_receipt_numbers").select("payment_id, receipt_no"),
     ]);
+    if (receiptNosRes.data) setReceiptNos(Object.fromEntries(receiptNosRes.data.map((r) => [r.payment_id, r.receipt_no])));
     if (docsRes.data) setAllDocs(docsRes.data);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (paymentsRes.data) setPayments(paymentsRes.data);
@@ -412,10 +419,9 @@ export default function AdminDashboardPage() {
   // Verify or disapprove a document. The database records who reviewed it, audits it and notifies the student.
   const reviewDocument = async (doc: AdminDoc, status: "Verified" | "Disapproved" | "Pending", note?: string) => {
     setReviewingDoc(true);
-    const { data, error } = await supabase.from("documents")
-      .update({ status, review_note: status === "Disapproved" ? note?.trim() || null : null })
-      .eq("id", doc.id).select("status, review_note").single();
+    const { data: rows, error } = await supabase.rpc("review_document", { _id: doc.id, _status: status, _note: note ?? null });
     setReviewingDoc(false);
+    const data = rows?.[0];
     if (error || !data) { toast.error(error?.message ?? "Could not update the document"); return false; }
     const patch = (list: AdminDoc[]) => list.map((x) => (x.id === doc.id ? { ...x, status: data.status, note: data.review_note } : x));
     setViewDocs(patch); setStudentDocs(patch);
@@ -670,6 +676,14 @@ export default function AdminDashboardPage() {
   // Compare reference numbers the way people type them: case, spaces and dashes don't matter.
   const refKey = (r: string) => r.toUpperCase().replace(/[\s\-_./#]/g, "");
   const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The student hasn't submitted a receipt");
+  // Office + student copy of the acknowledgment slip, for the student to sign when the money is released.
+  const printSlip = (p: Tables<"payments">, method = p.method, reference = p.reference) => {
+    const receiptNo = receiptNos[p.id];
+    if (!receiptNo) { toast.error("This payment has no receipt number"); return; }
+    const prof = profiles.find((x) => x.id === p.user_id);
+    if (!printReceiptSlip({ receiptNo, studentName: payStudent(p), studentId: prof?.student_id_number, program: payProgram(p), amount: p.amount, method, reference }))
+      toast.error("Allow pop-ups for this site to print the slip");
+  };
 
   // Verify or disapprove a grade a student submitted. Verifying replaces their average grade; the student is notified.
   const reviewGrade = async (g: Tables<"grade_updates">, status: "Verified" | "Disapproved", note?: string) => {
@@ -2322,7 +2336,11 @@ export default function AdminDashboardPage() {
                                       <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
                                         <CheckCircle className="h-3.5 w-3.5" /> Ref. <span className="font-mono">{p.student_receipt_ref}</span> · {new Date(p.student_receipt_at).toLocaleDateString()}
                                       </span>
-                                      {p.reference && (
+                                      {receiptNos[p.id] ? (
+                                        refKey(receiptNos[p.id]) === refKey(p.student_receipt_ref)
+                                          ? <p className="text-[11px] text-success">Matches the receipt number{p.receipt_review_status === "Accepted" && !p.receipt_reviewed_by ? " · accepted automatically" : ""}</p>
+                                          : <p className="text-[11px] text-destructive">Doesn&apos;t match receipt no. <span className="font-mono">{receiptNos[p.id]}</span></p>
+                                      ) : p.reference && (
                                         refKey(p.reference) === refKey(p.student_receipt_ref)
                                           ? <p className="text-[11px] text-success">Matches the payment reference</p>
                                           : <p className="text-[11px] text-muted-foreground">Payment reference: <span className="font-mono">{p.reference}</span></p>
@@ -2350,13 +2368,21 @@ export default function AdminDashboardPage() {
                                   </div>
                                   {p.receipt_review_status === "Disapproved" && p.receipt_review_note && <p className="text-xs text-destructive">{p.receipt_review_note}</p>}
                                 </div>
-                              ) : <Badge variant="secondary">Awaiting</Badge>}
+                              ) : (
+                                <div className="space-y-0.5">
+                                  <Badge variant="secondary">Awaiting</Badge>
+                                  {receiptNos[p.id] && <p className="text-[11px] text-muted-foreground">Receipt no. <span className="font-mono">{receiptNos[p.id]}</span></p>}
+                                </div>
+                              )}
                           </TableCell>
                           <TableCell className="text-right space-x-1 whitespace-nowrap">
                             {payIssues.some((i) => i.payment_id === p.id) && (
                               <Button size="icon" variant="ghost" title={openIssueFor(p.id) ? "Open problem reported by the student" : "Problem reports"} onClick={() => { setIssueResponse(""); setIssueDialog(p); }}>
                                 <AlertTriangle className={`h-4 w-4 ${openIssueFor(p.id) ? "text-warning" : "text-muted-foreground"}`} />
                               </Button>
+                            )}
+                            {p.status !== "Cancelled" && receiptNos[p.id] && (
+                              <Button size="icon" variant="ghost" title={`Print acknowledgment slip (${receiptNos[p.id]})`} onClick={() => printSlip(p)}><Printer className="h-4 w-4" /></Button>
                             )}
                             {p.status === "Disbursed" && (
                               <Button size="icon" variant="ghost" title="View receipt" onClick={() => viewReceipt(p)}><Receipt className="h-4 w-4" /></Button>
@@ -2738,9 +2764,23 @@ export default function AdminDashboardPage() {
                 onChange={(e) => setDisbRef(e.target.value)}
               />
             </div>
+            {disbPay && receiptNos[disbPay.id] && (
+              <div className="rounded-lg border bg-muted/40 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Receipt No.</p>
+                    <p className="font-mono text-sm font-semibold">{receiptNos[disbPay.id]}</p>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" onClick={() => printSlip(disbPay, disbMethod, disbRef.trim() || null)}>
+                    <Printer className="mr-1 h-3.5 w-3.5" /> Print slip
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">Print the acknowledgment slip, have the student sign both copies and give them the student copy. They enter this number in the portal to confirm they received the money.</p>
+              </div>
+            )}
             <div>
               <Label>Receipt / Voucher *</Label>
-              <p className="text-xs text-muted-foreground mb-2">Upload the signed receipt or disbursement voucher.</p>
+              <p className="text-xs text-muted-foreground mb-2">Upload the signed acknowledgment slip (office copy) or disbursement voucher.</p>
               <label className="flex items-center gap-2 cursor-pointer rounded-lg border border-dashed p-3 hover:bg-muted/30 transition-colors">
                 <Upload className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm text-muted-foreground">

@@ -336,6 +336,27 @@ export type Database = {
         }
         Relationships: []
       }
+      payment_receipt_numbers: {
+        Row: {
+          payment_id: string
+          receipt_no: string
+          failed_attempts: number
+          created_at: string
+        }
+        Insert: {
+          payment_id: string
+          receipt_no: string
+          failed_attempts?: number
+          created_at?: string
+        }
+        Update: {
+          payment_id?: string
+          receipt_no?: string
+          failed_attempts?: number
+          created_at?: string
+        }
+        Relationships: []
+      }
       payment_issues: {
         Row: {
           id: string
@@ -877,6 +898,14 @@ export type Database = {
         }
         Returns: string
       }
+      review_document: {
+        Args: {
+          _id: string
+          _status: string
+          _note?: string | null
+        }
+        Returns: { status: string; review_note: string | null }[]
+      }
       review_grade_update: {
         Args: {
           _id: string
@@ -933,7 +962,7 @@ export type Database = {
           _payment_id: string
           _reference: string
         }
-        Returns: undefined
+        Returns: "accepted" | "mismatch" | "review" | "pending"
       }
       set_student_active: {
         Args: {
