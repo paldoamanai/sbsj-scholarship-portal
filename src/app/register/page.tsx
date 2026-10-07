@@ -30,6 +30,8 @@ import type { RegistrationProfileFields } from "@/lib/registration-profile";
 import { savePendingDocuments } from "@/lib/pending-documents";
 import { PASSWORD_HINT, passwordProblem, passwordScore } from "@/validations/auth";
 import Captcha, { captchaEnabled } from "@/components/Captcha";
+import BarangayField from "@/components/BarangayField";
+import { HOME_MUNICIPALITY } from "@/lib/barangays";
 
 const stepLabels = ["Account", "Personal Info", "School Info", "Documents"];
 const LAST_STEP = stepLabels.length - 1;
@@ -92,7 +94,7 @@ export default function RegisterPage() {
   // Step 1 — Personal
   const [form, setForm] = useState({
     lastName: "", firstName: "", middleName: "", sex: "", civilStatus: "",
-    nationality: "Filipino", phone: "", barangay: "", municipality: "",
+    nationality: "Filipino", phone: "", barangay: "", municipality: HOME_MUNICIPALITY,
     studentIdNumber: "",
   });
   const [dob, setDob] = useState<Date | undefined>(undefined);
@@ -584,9 +586,9 @@ export default function RegisterPage() {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div><Label>Phone Number *</Label><Input type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={(e) => update("phone", e.target.value)} placeholder="09XXXXXXXXX" /><FieldError field="phone" /></div>
-                  <div><Label>Barangay *</Label><Input autoComplete="address-level3" value={form.barangay} onChange={(e) => update("barangay", e.target.value)} /><FieldError field="barangay" /></div>
+                  <div><Label>Municipality *</Label><Input autoComplete="address-level2" value={form.municipality} onChange={(e) => update("municipality", e.target.value)} /><FieldError field="municipality" /></div>
                 </div>
-                <div><Label>Municipality *</Label><Input autoComplete="address-level2" value={form.municipality} onChange={(e) => update("municipality", e.target.value)} /><FieldError field="municipality" /></div>
+                <div><Label>Barangay *</Label><BarangayField value={form.barangay} onChange={(v) => update("barangay", v)} municipality={form.municipality} /><FieldError field="barangay" /></div>
               </>
             )}
 

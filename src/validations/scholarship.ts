@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { YEAR_LEVELS } from "@/lib/scholarships";
+import { BARANGAYS } from "@/lib/barangays";
 
 const optionalText = (max: number) =>
   z.string().trim().max(max).transform((v) => v || null).nullable().optional().transform((v) => v ?? null);
@@ -17,6 +18,7 @@ export const scholarshipSchema = z
     min_grade: z.number().min(0, "Minimum grade must be 0–100").max(100, "Minimum grade must be 0–100").nullable(),
     year_levels: z.array(z.enum(YEAR_LEVELS)),
     municipality: optionalText(80),
+    barangays: z.array(z.enum(BARANGAYS)),
     is_active: z.boolean(),
   })
   .refine((d) => !d.open_date || !d.deadline || d.open_date <= d.deadline, {

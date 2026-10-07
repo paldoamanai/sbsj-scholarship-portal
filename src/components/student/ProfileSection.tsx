@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import ProfileImage from "@/components/ProfileImage";
+import BarangayField from "@/components/BarangayField";
 import { Panel, SectionTitle } from "@/components/student/ui";
 import { createClient } from "@/lib/supabase/client";
 import { uploadAvatar } from "@/lib/avatar";
@@ -237,8 +238,8 @@ export default function ProfileSection({ profile, userId, userEmail, application
               <Field label="Mobile number" error={errors.phone} hint="09XXXXXXXXX or +639XXXXXXXXX"><Input className={inputCls} type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={(e) => set("phone", e.target.value)} /></Field>
               <Field label="Email"><Input className={`${inputCls} bg-muted`} value={userEmail} disabled /></Field>
               <Field label="Street / house no." error={errors.street_address} className="sm:col-span-2"><Input className={inputCls} autoComplete="street-address" value={form.street_address} onChange={(e) => set("street_address", e.target.value)} /></Field>
-              <Field label="Barangay" error={errors.barangay}><Input className={inputCls} value={form.barangay} onChange={(e) => set("barangay", e.target.value)} /></Field>
               <Field label="Municipality" error={errors.municipality}><Input className={inputCls} value={form.municipality} onChange={(e) => set("municipality", e.target.value)} /></Field>
+              <Field label="Barangay" error={errors.barangay}><BarangayField className={inputCls} value={form.barangay} onChange={(v) => set("barangay", v)} municipality={form.municipality} /></Field>
               <Field label="Province" error={errors.province}><Input className={inputCls} value={form.province} onChange={(e) => set("province", e.target.value)} /></Field>
               <Field label="ZIP code" error={errors.zip_code}><Input className={inputCls} inputMode="numeric" autoComplete="postal-code" maxLength={4} value={form.zip_code} onChange={(e) => set("zip_code", e.target.value)} /></Field>
             </div>

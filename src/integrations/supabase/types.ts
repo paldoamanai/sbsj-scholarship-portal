@@ -622,6 +622,7 @@ export type Database = {
           min_grade: number | null
           year_levels: string[] | null
           municipality: string | null
+          barangays: string[] | null
         }
         Insert: {
           id?: string
@@ -638,6 +639,7 @@ export type Database = {
           min_grade?: number | null
           year_levels?: string[] | null
           municipality?: string | null
+          barangays?: string[] | null
         }
         Update: {
           id?: string
@@ -654,6 +656,7 @@ export type Database = {
           min_grade?: number | null
           year_levels?: string[] | null
           municipality?: string | null
+          barangays?: string[] | null
         }
         Relationships: []
       }
@@ -824,6 +827,7 @@ export type Database = {
           min_grade: number | null
           year_levels: string[] | null
           municipality: string | null
+          barangays: string[] | null
           created_at: string
           availability: "open" | "upcoming" | "closed" | "full"
         }[]
