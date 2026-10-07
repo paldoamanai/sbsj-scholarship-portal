@@ -9,10 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { AppDialog } from "@/components/AppDialog";
 import { createClient } from "@/lib/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 
@@ -335,19 +332,14 @@ export default function NotificationInbox({
         </div>
       )}
 
-      <AlertDialog open={confirmRead} onOpenChange={setConfirmRead}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete all read notifications?</AlertDialogTitle>
-            <AlertDialogDescription>{readCount} read notification{readCount === 1 ? "" : "s"} will be deleted. You&apos;ll have a few seconds to undo.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep them</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => removeMany(notifications.filter((n) => n.read))}>Delete</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <AppDialog open={confirmRead} onOpenChange={setConfirmRead} size="sm"
+        title="Delete all read notifications?"
+        footer={<>
+          <Button variant="outline" onClick={() => setConfirmRead(false)}>Keep them</Button>
+          <Button variant="destructive" onClick={() => { setConfirmRead(false); removeMany(notifications.filter((n) => n.read)); }}>Delete</Button>
+        </>}>
+        <p className="text-sm text-muted-foreground">{readCount} read notification{readCount === 1 ? "" : "s"} will be deleted. You&apos;ll have a few seconds to undo.</p>
+      </AppDialog>
     </div>
   );
 }

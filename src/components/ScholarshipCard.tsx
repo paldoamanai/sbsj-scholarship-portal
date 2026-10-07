@@ -4,15 +4,7 @@ import { Calendar, GraduationCap, ChevronRight, Info, Clock, CheckCircle2, Bankn
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-  DialogClose,
-} from "@/components/ui/dialog";
+import { AppDialog, DialogSection } from "@/components/AppDialog";
 import { useState } from "react";
 import { availabilityInfo, deadlineLabel, peso, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
 
@@ -77,81 +69,55 @@ const ScholarshipCard = ({ program, globalMinGrade = 0, onApply, hideAmount = fa
         </CardContent>
       </Card>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-lg">
-          <div className="h-1 bg-gradient-primary rounded-t-lg -mx-6 -mt-6 mb-2" />
-          <DialogHeader>
-            <DialogTitle className="text-xl font-display pr-6">{name}</DialogTitle>
-            <DialogDescription asChild>
-              <div className="pt-1 flex flex-wrap gap-2">
-                <Badge variant="secondary" className="inline-flex">
-                  <Calendar className="mr-1 h-3 w-3" />
-                  Deadline: {deadline}
-                </Badge>
-                {hasAmount && <Badge variant="secondary" className="inline-flex"><Banknote className="mr-1 h-3 w-3" />{peso(program.amount)} per scholar</Badge>}
-                <Badge variant="secondary" className="inline-flex"><Users className="mr-1 h-3 w-3" />{slotsLabel(program)}</Badge>
-              </div>
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-5 py-2">
-            {description && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  <Info className="h-4 w-4 text-primary" />
-                  About this Scholarship
-                </div>
-                <p className="text-sm text-muted-foreground leading-relaxed pl-6">{description}</p>
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <CheckCircle2 className="h-4 w-4 text-primary" />
-                Eligibility Requirements
-              </div>
-              {requirements.length > 0 && (
-                <ul className="list-disc pl-11 pr-2 text-sm text-muted-foreground space-y-0.5">
-                  {requirements.map((r) => <li key={r}>{r}</li>)}
-                </ul>
-              )}
-              <p className="text-sm text-muted-foreground leading-relaxed pl-6">{eligibility ?? (requirements.length ? "" : "Open to all qualified applicants")}</p>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <Clock className="h-4 w-4 text-primary" />
-                Application Period
-              </div>
-              <p className="text-sm text-muted-foreground pl-6">
-                {program.open_date ? `Opens ${new Date(`${program.open_date}T00:00:00`).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" })}. ` : ""}
-                {program.deadline ? `Closes ${new Date(`${program.deadline}T00:00:00`).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" })}.` : "No closing date."}
-              </p>
-            </div>
-
-            <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm text-muted-foreground">
-              <GraduationCap className="mb-2 h-5 w-5 text-primary" />
-              {canApply
-                ? <>Ready to apply? Click <span className="font-semibold text-foreground">Apply Now</span> below to start your application. Make sure you meet all eligibility requirements before proceeding.</>
-                : <span className="font-semibold text-foreground">{label}.</span>}
-            </div>
+      <AppDialog open={open} onOpenChange={setOpen} size="lg" className="border-t-4 border-t-primary"
+        title={<span className="text-xl">{name}</span>}
+        description={
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Badge variant="secondary" className="inline-flex"><Calendar className="mr-1 h-3 w-3" />Deadline: {deadline}</Badge>
+            {hasAmount && <Badge variant="secondary" className="inline-flex"><Banknote className="mr-1 h-3 w-3" />{peso(program.amount)} per scholar</Badge>}
+            <Badge variant="secondary" className="inline-flex"><Users className="mr-1 h-3 w-3" />{slotsLabel(program)}</Badge>
           </div>
+        }
+        footer={<>
+          <Button variant="outline" onClick={() => setOpen(false)}>Close</Button>
+          <Button disabled={!canApply} onClick={() => { setOpen(false); onApply(); }} className="bg-gradient-primary shadow-primary">
+            {label}
+            {canApply && <ChevronRight className="ml-1 h-4 w-4" />}
+          </Button>
+        </>}>
+        {description && (
+          <DialogSection title={<span className="flex items-center gap-2"><Info className="h-4 w-4 text-primary" />About this Scholarship</span>}>
+            <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
+          </DialogSection>
+        )}
 
-          <DialogFooter className="flex-col sm:flex-row gap-2">
-            <DialogClose asChild>
-              <Button variant="outline" className="sm:flex-1">Close</Button>
-            </DialogClose>
-            <Button
-              disabled={!canApply}
-              onClick={() => { setOpen(false); onApply(); }}
-              className="sm:flex-1 bg-gradient-primary shadow-primary"
-            >
-              {label}
-              {canApply && <ChevronRight className="ml-1 h-4 w-4" />}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <DialogSection title={<span className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-primary" />Eligibility Requirements</span>}>
+          {requirements.length > 0 && (
+            <ul className="list-disc pl-5 text-sm text-muted-foreground space-y-0.5">
+              {requirements.map((r) => <li key={r}>{r}</li>)}
+            </ul>
+          )}
+          {(eligibility || !requirements.length) && (
+            <p className="text-sm text-muted-foreground leading-relaxed">{eligibility ?? "Open to all qualified applicants"}</p>
+          )}
+        </DialogSection>
+
+        <DialogSection title={<span className="flex items-center gap-2"><Clock className="h-4 w-4 text-primary" />Application Period</span>}>
+          <p className="text-sm text-muted-foreground">
+            {program.open_date ? `Opens ${new Date(`${program.open_date}T00:00:00`).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" })}. ` : ""}
+            {program.deadline ? `Closes ${new Date(`${program.deadline}T00:00:00`).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" })}.` : "No closing date."}
+          </p>
+        </DialogSection>
+
+        <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm text-muted-foreground">
+          <GraduationCap className="h-5 w-5 shrink-0 text-primary" />
+          <p>
+            {canApply
+              ? <>Ready to apply? Click <span className="font-semibold text-foreground">{label}</span> below to start your application. Make sure you meet all eligibility requirements before proceeding.</>
+              : <span className="font-semibold text-foreground">{label}.</span>}
+          </p>
+        </div>
+      </AppDialog>
     </>
   );
 };

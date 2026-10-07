@@ -130,7 +130,7 @@ export default function SettingsPanel({ rows, auditLogs, onSave, readOnly = fals
           </AlertDialogTrigger>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Reset all settings?</AlertDialogTitle>
+              <AlertDialogTitle className="font-display">Reset all settings?</AlertDialogTitle>
               <AlertDialogDescription>Every setting on this page returns to its factory default, including contact info and the application period. This is recorded in the audit log.</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

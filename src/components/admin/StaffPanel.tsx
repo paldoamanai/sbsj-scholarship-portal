@@ -348,7 +348,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
       <AlertDialog open={!!pending} onOpenChange={(o) => !o && !busy && setPending(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>
+            <AlertDialogTitle className="font-display">
               {pending?.to === "student" ? `Remove ${pending.person.name}'s staff access?` : `Make ${pending?.person.id === userId ? "yourself" : pending?.person.name} ${ROLE_LABEL[pending?.to ?? ""]}?`}
             </AlertDialogTitle>
             <AlertDialogDescription>{pending && describe(pending)}</AlertDialogDescription>
@@ -365,7 +365,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
       <AlertDialog open={!!secAction} onOpenChange={(o) => !o && !busy && setSecAction(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{secAction && SEC_COPY[secAction.action].title(secAction.person.name)}</AlertDialogTitle>
+            <AlertDialogTitle className="font-display">{secAction && SEC_COPY[secAction.action].title(secAction.person.name)}</AlertDialogTitle>
             <AlertDialogDescription>{secAction && SEC_COPY[secAction.action].body(secAction.person.name)}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -380,7 +380,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
       <AlertDialog open={!!shareLink} onOpenChange={(o) => !o && setShareLink(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{shareLink?.title}</AlertDialogTitle>
+            <AlertDialogTitle className="font-display">{shareLink?.title}</AlertDialogTitle>
             <AlertDialogDescription>
               Email isn&apos;t set up on this portal, so give them this one-time link yourself, in person or through a private message. Anyone with the link can sign in to this account.
             </AlertDialogDescription>
