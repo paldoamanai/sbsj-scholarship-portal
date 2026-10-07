@@ -40,7 +40,8 @@ import { useSystemSettings } from "@/hooks/use-system-settings";
 import { applicationsBlockedReason } from "@/lib/settings";
 import { DOC_MIME, documentPath, uploadUserDocument } from "@/lib/documents";
 import { uploadPendingDocuments } from "@/lib/pending-documents";
-import { availabilityInfo, programChecks, requirementLines, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
+import { availabilityInfo, programChecks, requirementLines, sameTown, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
+import { inBarangays } from "@/lib/barangays";
 import { formatDate, peso, pesoFixed } from "@/lib/format";
 import ApplicationTimeline from "@/components/student/ApplicationTimeline";
 import ApplicationHistory, { DisapprovalReason } from "@/components/student/ApplicationHistory";
@@ -736,7 +737,19 @@ export default function StudentDashboardPage() {
     if (pg > 0 && myGrade == null && minGrade < pg) applyIssues.push(`Add your average grade to your profile (${applyProgram.name} requires ${pg}).`);
     else if (pg > 0 && myGrade != null && myGrade < pg) applyIssues.push(`${applyProgram.name} requires an average grade of ${pg}; yours is ${myGrade}.`);
     if (applyProgram.year_levels?.length && !applyProgram.year_levels.includes(profile?.year_level ?? "")) applyIssues.push(`${applyProgram.name} is open to ${applyProgram.year_levels.join(", ")} students only.`);
-    if (applyProgram.municipality?.trim() && (profile?.municipality ?? "").trim().toLowerCase() !== applyProgram.municipality.trim().toLowerCase()) applyIssues.push(`${applyProgram.name} is for residents of ${applyProgram.municipality.trim()} only.`);
+    const town = applyProgram.municipality?.trim();
+    if (town && !sameTown(profile?.municipality, town)) {
+      const mine = profile?.municipality?.trim();
+      // A common mix-up: the town typed into Barangay instead of Municipality.
+      const hint = sameTown(profile?.barangay, town)
+        ? `You entered "${profile?.barangay?.trim()}" as your barangay; residency is checked against the Municipality field.`
+        : mine ? `Your profile's municipality is "${mine}".` : "Your profile has no municipality.";
+      applyIssues.push(`${applyProgram.name} is for residents of ${town} only. ${hint} If you live in ${town}, set Municipality to "${town}" in the Profile tab.`);
+    }
+    if (!inBarangays(profile?.barangay, applyProgram.barangays)) {
+      const mine = profile?.barangay?.trim();
+      applyIssues.push(`${applyProgram.name} is for residents of barangay ${applyProgram.barangays!.join(", ")} only. ${mine ? `Your profile's barangay is "${mine}".` : "Your profile has no barangay."} If that's wrong, pick your barangay in the Profile tab.`);
+    }
   }
 
   // The program behind the current application (shown on the Application tab).

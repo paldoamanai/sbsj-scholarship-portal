@@ -1,5 +1,6 @@
 import type { Database } from "@/integrations/supabase/types";
 import { daysUntil, formatDate } from "@/lib/format";
+import { inBarangays } from "@/lib/barangays";
 export { peso } from "@/lib/format";
 
 export type PublicScholarship = Database["public"]["Functions"]["scholarships_public"]["Returns"][number];
@@ -33,7 +34,7 @@ export function slotsLabel(s: Pick<PublicScholarship, "slots" | "slots_left">): 
 
 /** The program's structured requirements, as readable lines (the free-text eligibility is separate). */
 export function requirementLines(
-  s: Pick<PublicScholarship, "min_grade" | "year_levels" | "municipality">,
+  s: Pick<PublicScholarship, "min_grade" | "year_levels" | "municipality" | "barangays">,
   globalMinGrade = 0
 ): string[] {
   const lines: string[] = [];
@@ -41,8 +42,22 @@ export function requirementLines(
   if (grade > 0) lines.push(`Average grade of at least ${grade}`);
   if (s.year_levels && s.year_levels.length > 0) lines.push(`Year level: ${s.year_levels.join(", ")}`);
   if (s.municipality?.trim()) lines.push(`Resident of ${s.municipality.trim()}`);
+  if (s.barangays && s.barangays.length > 0) lines.push(`Barangay: ${s.barangays.join(", ")}`);
   return lines;
 }
+
+/**
+ * A town name reduced for comparison, so "Labangan", "LABANGAN", "Labangan, Zamboanga del Sur",
+ * "Municipality of Labangan" and "Pagadian City" / "Pagadian" match. Same as public.normalize_town().
+ */
+export function normalizeTown(v: string | null | undefined): string {
+  return (v ?? "").split(",")[0].toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ").trim()
+    .replace(/^(municipality|city|town) of /, "")
+    .replace(/ (municipality|city)$/, "");
+}
+
+export const sameTown = (a: string | null | undefined, b: string | null | undefined) => normalizeTown(a) === normalizeTown(b);
 
 /** Where "Apply" should send someone. */
 export const applyHref = (programId: string, signedIn: boolean) =>
@@ -56,8 +71,8 @@ export type RequirementCheck = { key: string; label: string; ok: boolean; detail
  * same program is held to the renewal minimum instead. The database runs the same checks on approval.
  */
 export function programChecks(
-  s: Pick<PublicScholarship, "min_grade" | "year_levels" | "municipality">,
-  profile: { average_grade: number | null; year_level: string | null; municipality: string | null } | null | undefined,
+  s: Pick<PublicScholarship, "min_grade" | "year_levels" | "municipality" | "barangays">,
+  profile: { average_grade: number | null; year_level: string | null; municipality: string | null; barangay: string | null } | null | undefined,
   rules: { globalMinGrade: number; renewalMinGrade: number; renewalEnabled: boolean; isRenewal: boolean }
 ): RequirementCheck[] {
   const checks: RequirementCheck[] = [];
@@ -85,8 +100,16 @@ export function programChecks(
     const mine = profile?.municipality?.trim() ?? "";
     checks.push({
       key: "residency", label: `Resident of ${town}`,
-      ok: mine.toLowerCase() === town.toLowerCase(),
+      ok: sameTown(mine, town),
       detail: mine ? `Municipality on file: ${mine}` : "No municipality on the profile",
+    });
+  }
+  if (s.barangays && s.barangays.length > 0) {
+    const mine = profile?.barangay?.trim() ?? "";
+    checks.push({
+      key: "barangay", label: `Barangay: ${s.barangays.join(", ")}`,
+      ok: inBarangays(mine, s.barangays),
+      detail: mine ? `Barangay on file: ${mine}` : "No barangay on the profile",
     });
   }
   return checks;

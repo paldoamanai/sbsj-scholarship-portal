@@ -11,7 +11,7 @@ import ProfileImage from "@/components/ProfileImage";
 import { Panel, SectionTitle, StatCard, StatusBadge } from "@/components/student/ui";
 import ApplicationHistory from "@/components/student/ApplicationHistory";
 import { profileCompleteness } from "@/lib/profile";
-import { availabilityInfo, deadlineLabel, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
+import { availabilityInfo, deadlineLabel, programChecks, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
 import { daysUntil, formatDate, peso } from "@/lib/format";
 import type { AppSettings } from "@/lib/settings";
 import type { Tables } from "@/integrations/supabase/types";
@@ -140,14 +140,22 @@ export default function Overview(p: OverviewProps) {
   const toApplyCount = scholarships.filter((s) => availabilityInfo(s).canApply && !appliedTo(s.id)).length;
   // While the student can still apply somewhere, the program list moves to the top of the dashboard.
   const promotePrograms = canApplyMore && toApplyCount > 0;
+  // A renewal means this program approved the student in an earlier year.
+  const programRenewal = !!program && applications.some((a) => a.status === "Approved" && a.scholarship_id === program.id && new Date(a.created_at).getUTCFullYear() < p.currentYear);
   const programGrade = program
-    // A renewal means this program approved the student in an earlier year.
-    ? requirementLines(program, applications.some((a) => a.status === "Approved" && a.scholarship_id === program.id && new Date(a.created_at).getFullYear() < p.currentYear) ? settings.renewal_min_grade : settings.min_grade_requirement)
+    ? requirementLines(program, programRenewal ? settings.renewal_min_grade : settings.min_grade_requirement)
     : [];
+  const programFailed = program
+    ? programChecks(program, profile, {
+        globalMinGrade: settings.min_grade_requirement, renewalMinGrade: settings.renewal_min_grade,
+        renewalEnabled: settings.renewal_enabled, isRenewal: programRenewal,
+      }).find((c) => !c.ok)
+    : undefined;
   const programBlock = !program ? null
     : appliedTo(program.id) ? `You already applied to this program (${appliedTo(program.id)?.status.toLowerCase()}).`
     : applyBlocked ? applyBlocked
     : !availabilityInfo(program).canApply ? availabilityInfo(program).label
+    : programFailed ? `Requirement not met: ${programFailed.label} (${programFailed.detail}). Update your profile first.`
     : null;
 
   const programsPanel = (

@@ -31,6 +31,7 @@ import { createClient } from "@/lib/supabase/client";
 import { scholarshipSchema } from "@/validations/scholarship";
 import ProfileImage from "@/components/ProfileImage";
 import { YEAR_LEVELS, programChecks, type RequirementCheck } from "@/lib/scholarships";
+import { BARANGAYS, HOME_MUNICIPALITY } from "@/lib/barangays";
 import NotificationInbox, { NOTIFICATION_PAGE } from "@/components/notifications/NotificationInbox";
 import AnnouncementsPanel from "@/components/admin/AnnouncementsPanel";
 import ReminderJobsCard from "@/components/admin/ReminderJobsCard";
@@ -118,6 +119,7 @@ export default function AdminDashboardPage() {
   const [schDialog, setSchDialog] = useState<"new" | Tables<"scholarships"> | null>(null);
   const [schActive, setSchActive] = useState(true);
   const [schYearLevels, setSchYearLevels] = useState<string[]>([]);
+  const [schBarangays, setSchBarangays] = useState<string[]>([]);
   const [deleteSch, setDeleteSch] = useState<Tables<"scholarships"> | null>(null);
   const [fundPeriod, setFundPeriod] = useState("all"); // shared by Fund Management and Reports
   const [fromDate, setFromDate] = useState("");
@@ -520,7 +522,7 @@ export default function AdminDashboardPage() {
       amount: num("amount"), total_budget: num("total_budget"), slots: num("slots"),
       open_date: text("open_date") || null, deadline: text("deadline") || null,
       min_grade: text("min_grade").trim() === "" ? null : Number(text("min_grade")),
-      year_levels: schYearLevels, municipality: text("municipality"), is_active: schActive,
+      year_levels: schYearLevels, municipality: text("municipality"), barangays: schBarangays, is_active: schActive,
     });
     if (!parsed.success) { toast.error(parsed.error.issues[0]?.message ?? "Check the form"); return; }
     const payload = parsed.data;
@@ -558,7 +560,7 @@ export default function AdminDashboardPage() {
     const copy = {
       name: `${sch.name} (copy)`, description: sch.description, eligibility: sch.eligibility,
       amount: sch.amount, total_budget: sch.total_budget, slots: sch.slots, min_grade: sch.min_grade,
-      year_levels: sch.year_levels, municipality: sch.municipality, open_date: null, deadline: null, is_active: false,
+      year_levels: sch.year_levels, municipality: sch.municipality, barangays: sch.barangays, open_date: null, deadline: null, is_active: false,
     };
     const { data, error } = await supabase.from("scholarships").insert(copy).select().single();
     if (error) { toast.error(error.message); return; }
@@ -1872,7 +1874,7 @@ export default function AdminDashboardPage() {
                       <SelectItem value="inactive">Disabled</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Button className="bg-gradient-primary shadow-primary" onClick={() => { setSchActive(true); setSchYearLevels([]); setSchDialog("new"); }}>
+                  <Button className="bg-gradient-primary shadow-primary" onClick={() => { setSchActive(true); setSchYearLevels([]); setSchBarangays([]); setSchDialog("new"); }}>
                     <Plus className="mr-1 h-4 w-4" /> Add Scholarship
                   </Button>
                 </div>
@@ -1905,7 +1907,7 @@ export default function AdminDashboardPage() {
                           <p className="text-sm font-medium">Eligibility rules <span className="font-normal text-muted-foreground">(enforced when a student applies)</span></p>
                           <div className="grid grid-cols-2 gap-3">
                             <div><Label>Minimum average grade</Label><Input name="min_grade" type="number" min={0} max={100} step="0.01" defaultValue={cur?.min_grade ?? ""} placeholder="Global minimum" /></div>
-                            <div><Label>Residents of</Label><Input name="municipality" defaultValue={cur?.municipality ?? ""} placeholder="Any municipality" /></div>
+                            <div><Label>Residents of municipality</Label><Input name="municipality" defaultValue={cur?.municipality ?? ""} placeholder="Any municipality" /></div>
                           </div>
                           <div>
                             <Label>Year levels <span className="font-normal text-muted-foreground">(none ticked = any)</span></Label>
@@ -1915,6 +1917,23 @@ export default function AdminDashboardPage() {
                                   <input type="checkbox" checked={schYearLevels.includes(y)}
                                     onChange={(e) => setSchYearLevels((prev) => e.target.checked ? [...prev, y] : prev.filter((x) => x !== y))} />
                                   {y}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between gap-2">
+                              <Label>Barangays of {HOME_MUNICIPALITY} <span className="font-normal text-muted-foreground">(none ticked = any)</span></Label>
+                              {schBarangays.length > 0 && (
+                                <button type="button" className="text-xs text-primary hover:underline" onClick={() => setSchBarangays([])}>Clear ({schBarangays.length})</button>
+                              )}
+                            </div>
+                            <div className="mt-1 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 max-h-48 overflow-y-auto rounded-md border p-2">
+                              {BARANGAYS.map((b) => (
+                                <label key={b} className="flex items-center gap-1.5 text-sm">
+                                  <input type="checkbox" checked={schBarangays.includes(b)}
+                                    onChange={(e) => setSchBarangays((prev) => e.target.checked ? [...prev, b] : prev.filter((x) => x !== b))} />
+                                  {b}
                                 </label>
                               ))}
                             </div>
@@ -1984,7 +2003,7 @@ export default function AdminDashboardPage() {
                           </TableCell>
                           <TableCell><Badge variant={sch.is_active ? "default" : "secondary"}>{sch.is_active ? "Active" : "Disabled"}</Badge></TableCell>
                           <TableCell className="text-right space-x-1">
-                            <Button size="icon" variant="ghost" title="Edit" onClick={() => { setSchActive(sch.is_active); setSchYearLevels(sch.year_levels ?? []); setSchDialog(sch); }}><Pencil className="h-4 w-4" /></Button>
+                            <Button size="icon" variant="ghost" title="Edit" onClick={() => { setSchActive(sch.is_active); setSchYearLevels(sch.year_levels ?? []); setSchBarangays(sch.barangays ?? []); setSchDialog(sch); }}><Pencil className="h-4 w-4" /></Button>
                             <Button size="icon" variant="ghost" title="Duplicate for next year" onClick={() => duplicateScholarship(sch)}><Copy className="h-4 w-4" /></Button>
                             <Button size="icon" variant="ghost" title={sch.is_active ? "Disable" : "Enable"} onClick={() => toggleScholarship(sch)}>
                               {sch.is_active ? <XCircle className="h-4 w-4" /> : <CheckCircle className="h-4 w-4 text-success" />}
