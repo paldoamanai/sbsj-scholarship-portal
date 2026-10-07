@@ -130,7 +130,8 @@ export function parseSettings(rows: { key: string; value: Json }[] | null | unde
 export function applicationsBlockedReason(s: AppSettings, today = new Date()): string | null {
   if (s.maintenance_mode) return s.maintenance_message;
   if (!s.applications_open) return "Applications are currently closed.";
-  const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  // UTC date: the database compares against CURRENT_DATE, which is UTC on Supabase.
+  const iso = today.toISOString().slice(0, 10);
   if (s.application_open_date && iso < s.application_open_date) return `Applications open on ${s.application_open_date}.`;
   if (s.application_close_date && iso > s.application_close_date) return `The application period ended on ${s.application_close_date}.`;
   return null;
