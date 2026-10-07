@@ -309,6 +309,33 @@ export type Database = {
           },
         ]
       }
+      application_notes: {
+        Row: {
+          id: string
+          application_id: string
+          author_id: string | null
+          author_email: string | null
+          body: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          application_id: string
+          author_id?: string | null
+          author_email?: string | null
+          body: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          application_id?: string
+          author_id?: string | null
+          author_email?: string | null
+          body?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
       payment_issues: {
         Row: {
           id: string

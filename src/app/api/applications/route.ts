@@ -96,9 +96,6 @@ export async function POST(request: Request) {
     .insert({
       user_id: user.id,
       scholarship_id: input.scholarship_id,
-      statement: input.statement,
-      household_income: input.household_income ?? null,
-      household_size: input.household_size ?? null,
       certified_at: new Date().toISOString(),
     })
     .select()

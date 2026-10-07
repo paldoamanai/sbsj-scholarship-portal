@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { isAdminRole } from "@/lib/settings";
-import { applicationDetailsSchema } from "@/validations/application";
 
 const ADMIN_FIELDS = ["status", "notes", "amount_approved", "disbursement_status"] as const;
 
@@ -25,8 +24,8 @@ async function loadContext(id: string) {
   } as const;
 }
 
-// Students may edit their statement and household details while the application is pending.
-// Admins may change the review fields only. The database trigger enforces the same rules.
+// Admins may change the review fields only. Students can't edit a submitted application
+// (they can withdraw it instead, see DELETE).
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -34,12 +33,12 @@ export async function PUT(
   const { id } = await params;
   const ctx = await loadContext(id);
   if ("error" in ctx) return ctx.error;
-  const { supabase, app, isAdmin, isOwner } = ctx;
+  const { supabase, app, isAdmin } = ctx;
 
   if (app.disbursement_status === "Disbursed") {
     return NextResponse.json({ error: "Application is locked after disbursement" }, { status: 403 });
   }
-  if (!isAdmin && !isOwner) {
+  if (!isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -48,25 +47,9 @@ export async function PUT(
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  let update: Record<string, unknown>;
-  if (isAdmin) {
-    update = Object.fromEntries(ADMIN_FIELDS.filter((k) => k in body).map((k) => [k, body[k]]));
-    if (Object.keys(update).length === 0) {
-      return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
-    }
-  } else {
-    if (app.status !== "Pending") {
-      return NextResponse.json({ error: "Only a pending application can be edited" }, { status: 409 });
-    }
-    const parsed = applicationDetailsSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid details" }, { status: 400 });
-    }
-    // household_income/size are optional in the schema, so a caller may omit them entirely (the
-    // current UI always sends all three together, but a partial body must not wipe a saved value).
-    update = { statement: parsed.data.statement };
-    if ("household_income" in body) update.household_income = parsed.data.household_income ?? null;
-    if ("household_size" in body) update.household_size = parsed.data.household_size ?? null;
+  const update = Object.fromEntries(ADMIN_FIELDS.filter((k) => k in body).map((k) => [k, body[k]]));
+  if (Object.keys(update).length === 0) {
+    return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
 
   const { data, error } = await supabase

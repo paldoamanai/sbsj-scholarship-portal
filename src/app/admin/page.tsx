@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import {
   LayoutDashboard, GraduationCap, FileText, Users,
@@ -21,7 +22,7 @@ import {
   Menu, X, Search, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock,
   FileDown, Receipt, Loader2, User, Upload, ArrowRight,
-   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck,
+   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -89,7 +90,7 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
 }
 
 // ── Reports / audit helpers ──
-type AdminDoc = { id: string; name: string; type: string; url: string; status: string; note: string | null; size: number | null; uploadedAt: string };
+type AdminDoc = { id: string; applicationId: string | null; name: string; type: string; url: string; status: string; note: string | null; size: number | null; uploadedAt: string };
 
 // Older audit rows stored their values as JSON-encoded strings; newer ones are real JSON.
 function parseJson(v: Json | null | undefined): unknown {
@@ -175,6 +176,26 @@ export default function AdminDashboardPage() {
   const [allDocs, setAllDocs] = useState<DocSummary[]>([]);
   const [disapproveDoc, setDisapproveDoc] = useState<AdminDoc | null>(null);
   const [disapproveNote, setDisapproveNote] = useState("");
+  const [disapproveApp, setDisapproveApp] = useState<(typeof applications)[number] | null>(null);
+  const [disapproveAppNote, setDisapproveAppNote] = useState("");
+  const [disapprovingApp, setDisapprovingApp] = useState(false);
+  // Revoke an approval (back to Pending); the reason is sent to the student.
+  const [revokeApp, setRevokeApp] = useState<(typeof applications)[number] | null>(null);
+  const [revokeNote, setRevokeNote] = useState("");
+  const [revokingApp, setRevokingApp] = useState(false);
+  // Award amount in the application dialog: set when approving, editable once approved.
+  const [awardInput, setAwardInput] = useState("");
+  // Internal notes on the open application (staff only; never shown to the student).
+  const [appNotes, setAppNotes] = useState<Tables<"application_notes">[]>([]);
+  const [newAppNote, setNewAppNote] = useState("");
+  const [savingAppNote, setSavingAppNote] = useState(false);
+  // Bulk actions on Pending / Waitlisted applications.
+  const [selectedApps, setSelectedApps] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDisapprove, setBulkDisapprove] = useState(false);
+  const [bulkNote, setBulkNote] = useState("");
+  // Bumped when a document changes over realtime, so open dialogs re-read their document list.
+  const [docsVersion, setDocsVersion] = useState(0);
   const [reviewingDoc, setReviewingDoc] = useState(false);
   const [docsLoading, setDocsLoading] = useState(false);
   const [auditLogs, setAuditLogs] = useState<Tables<"audit_logs">[]>([]);
@@ -316,6 +337,11 @@ export default function AdminDashboardPage() {
         }
       )
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles" }, () => silentRefreshAdmin())
+      // Uploads and reviews change the requirement checks (see migration 041 for the publication).
+      .on("postgres_changes", { event: "*", schema: "public", table: "documents" }, () => {
+        silentRefreshAdmin();
+        setDocsVersion((v) => v + 1);
+      })
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${adminUserId}` },
@@ -359,7 +385,7 @@ export default function AdminDashboardPage() {
         const { data: signed } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
         if (signed?.signedUrl) url = signed.signedUrl;
       }
-      return { id: d.id, name: d.file_name, type: d.document_type, url, status: d.status, note: d.review_note, size: d.file_size, uploadedAt: d.uploaded_at };
+      return { id: d.id, applicationId: d.application_id, name: d.file_name, type: d.document_type, url, status: d.status, note: d.review_note, size: d.file_size, uploadedAt: d.uploaded_at };
     }));
   };
 
@@ -411,24 +437,47 @@ export default function AdminDashboardPage() {
     );
   };
 
+  // The open application follows live data, so its status and buttons never act on a stale copy.
   useEffect(() => {
-    if (!viewApp) { setViewDocs([]); return; }
-    setRemarks(viewApp.notes || "");
-    let cancelled = false;
+    setViewApp((v) => (v ? applications.find((a) => a.id === v.id) ?? v : v));
+  }, [applications]);
+
+  // Opening an application: reset the form and load its internal notes.
+  useEffect(() => {
+    if (!viewApp) { setViewDocs([]); setAppNotes([]); return; }
+    // A new decision carries a new message; an earlier one (e.g. a disapproval reason) is never resent.
+    setRemarks(["Pending", "Waitlisted"].includes(viewApp.status) ? "" : viewApp.notes || "");
+    setAwardInput(viewApp.amount_approved != null ? String(viewApp.amount_approved) : "");
+    setNewAppNote("");
     setDocsLoading(true);
-    loadSignedDocs(viewApp.user_id).then((docs) => { if (!cancelled) { setViewDocs(docs); setDocsLoading(false); } });
+    let cancelled = false;
+    supabase.from("application_notes").select("*").eq("application_id", viewApp.id).order("created_at")
+      .then(({ data }) => { if (!cancelled) setAppNotes(data ?? []); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewApp?.id]);
 
+  // Documents: loaded on open and re-read (without a loading state) when a document changes.
+  useEffect(() => {
+    if (!viewApp) return;
+    let cancelled = false;
+    loadSignedDocs(viewApp.user_id).then((docs) => { if (!cancelled) { setViewDocs(docs); setDocsLoading(false); } });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewApp?.id, docsVersion]);
+
   useEffect(() => {
     if (!viewStudent) { setStudentDocs([]); return; }
-    let cancelled = false;
     setStudentDocsLoading(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewStudent?.id]);
+  useEffect(() => {
+    if (!viewStudent) return;
+    let cancelled = false;
     loadSignedDocs(viewStudent.id).then((docs) => { if (!cancelled) { setStudentDocs(docs); setStudentDocsLoading(false); } });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewStudent?.id]);
+  }, [viewStudent?.id, docsVersion]);
 
   const isClosed = (sch: Tables<"scholarships">) => !!sch.deadline && sch.deadline < new Date().toISOString().slice(0, 10);
   const approvedCount = (schId: string) => applications.filter((a) => a.scholarship_id === schId && a.status === "Approved").length;
@@ -851,27 +900,130 @@ export default function AdminDashboardPage() {
     return [...rules, ...docs];
   };
 
+  // Slots and budget left in the application's program. The database enforces the same limits.
+  const capacityFor = (a: AppRow, award?: number) => {
+    const sch = scholarships.find((x) => x.id === a.scholarship_id);
+    if (!sch) return null;
+    const approved = approvedCount(sch.id);
+    const committed = committedFor(sch);
+    const amount = award ?? Number(a.amount_approved ?? sch.amount ?? 0);
+    const slotsFull = sch.slots > 0 && approved >= sch.slots;
+    const overBudget = Number(sch.total_budget) > 0 && committed + amount > Number(sch.total_budget);
+    return { sch, approved, committed, amount, slotsFull, overBudget };
+  };
   // Why an application can't be approved yet (null = it can). The database enforces the same rules.
-  const approveBlocker = (a: Parameters<typeof requirementChecks>[0]): string | null => {
+  const approveBlocker = (a: AppRow, award?: number): string | null => {
     const failed = requirementChecks(a).filter((c) => !c.ok);
-    return failed.length ? `Requirements not met: ${failed.map((c) => `${c.label} (${c.detail.toLowerCase()})`).join(", ")}` : null;
+    if (failed.length) return `Requirements not met: ${failed.map((c) => `${c.label} (${c.detail.toLowerCase()})`).join(", ")}`;
+    const cap = capacityFor(a, award);
+    if (cap?.slotsFull) return `All ${cap.sch.slots} slots for ${cap.sch.name} are filled`;
+    if (cap?.overBudget) return `This would exceed the budget for ${cap.sch.name} (${formatPHP(cap.committed)} of ${formatPHP(Number(cap.sch.total_budget))} committed)`;
+    return null;
   };
   type AppRow = typeof applications[number];
   type AppDecision = "Approved" | "Disapproved" | "Waitlisted" | "Pending";
-  const decideApplication = async (a: AppRow, status: AppDecision, note?: string) => {
-    const blocker = status === "Approved" ? approveBlocker(a) : null;
-    if (blocker) {
-      toast.error("Can't approve yet", { description: blocker });
+  // The statuses each decision may be made from. The update only matches a row still in one of them,
+  // so a decision made on a stale screen (another admin decided, or the student withdrew) changes nothing.
+  const DECIDE_FROM: Record<AppDecision, string[]> = {
+    Approved: ["Pending", "Waitlisted"],
+    Disapproved: ["Pending", "Waitlisted"],
+    Waitlisted: ["Pending"],
+    Pending: ["Disapproved", "Waitlisted", "Approved"],
+  };
+  // A live (non-cancelled) payment ties an approval down: it can't be revoked until it's cancelled.
+  const hasLivePayment = (appId: string) => payments.some((p) => p.application_id === appId && p.status !== "Cancelled");
+  const hasDisbursed = (appId: string) => payments.some((p) => p.application_id === appId && p.status === "Disbursed");
+
+  // Makes the decision without any toasts, so bulk actions can summarise. `note` is the message sent to
+  // the student with this decision; each decision has its own, so an earlier one is never resent.
+  const runDecision = async (a: AppRow, status: AppDecision, note?: string | null, award?: number | null): Promise<string | null> => {
+    if (status === "Approved") {
+      const blocker = approveBlocker(a, award ?? undefined);
+      if (blocker) return blocker;
+    }
+    const update: { status: AppDecision; notes: string | null; amount_approved?: number } = { status, notes: note?.trim() || null };
+    if (status === "Approved" && award != null) update.amount_approved = award;
+    const { data, error } = await supabase.from("applications").update(update)
+      .eq("id", a.id).in("status", DECIDE_FROM[status]).select("id");
+    if (error) return error.message;
+    if (!data?.length) {
+      silentRefreshAdmin();
+      return "This application was changed elsewhere (another reviewer, or the student withdrew it). The list has been refreshed.";
+    }
+    const auditAction = status === "Pending"
+      ? (a.status === "Approved" ? "revoke_approval" : "reopen_application")
+      : { Approved: "approve_application", Disapproved: "disapprove_application", Waitlisted: "waitlist_application" }[status];
+    await logAudit(auditAction, "applications", a.id, { status: a.status, notes: a.notes }, update);
+    // The student is notified by a database trigger (see migrations 031 and 041).
+    return null;
+  };
+  const decideApplication = async (a: AppRow, status: AppDecision, note?: string | null, award?: number | null) => {
+    const problem = await runDecision(a, status, note, award);
+    if (problem) {
+      toast.error(status === "Approved" ? "Couldn't approve" : "Couldn't update the application", { description: problem });
       return false;
     }
-    const notes = note !== undefined ? note.trim() || null : a.notes ?? null;
-    const update = { status, notes };
-    const { error } = await supabase.from("applications").update(update).eq("id", a.id);
-    if (error) { toast.error(error.message); return false; }
-    const auditAction = { Approved: "approve_application", Disapproved: "disapprove_application", Waitlisted: "waitlist_application", Pending: "reopen_application" }[status];
-    await logAudit(auditAction, "applications", a.id, { status: a.status }, update);
-    // The student is notified by a database trigger (see migration 018).
     return true;
+  };
+
+  const bulkDecide = async (status: "Approved" | "Waitlisted" | "Disapproved", note?: string) => {
+    const targets = applications.filter((a) => selectedApps.has(a.id) && DECIDE_FROM[status].includes(a.status));
+    const skipped = selectedApps.size - targets.length;
+    if (!targets.length) { toast.error("None of the selected applications can be changed that way"); return false; }
+    setBulkBusy(true);
+    const failures: string[] = [];
+    // One at a time: each approval uses up a slot / budget that the next one is checked against.
+    for (const a of targets) {
+      const problem = await runDecision(a, status, note);
+      if (problem) failures.push(`${personName(a.profiles)}: ${problem}`);
+    }
+    setBulkBusy(false);
+    const done = targets.length - failures.length;
+    const verb = { Approved: "approved", Waitlisted: "waitlisted", Disapproved: "disapproved" }[status];
+    const summary = `${done} ${verb}${failures.length ? `, ${failures.length} failed` : ""}${skipped ? `, ${skipped} skipped (status didn't allow it)` : ""}`;
+    if (failures.length) toast.warning(summary, { description: failures.slice(0, 3).join("\n") + (failures.length > 3 ? `\n…and ${failures.length - 3} more` : "") });
+    else toast.success(summary);
+    setSelectedApps(new Set());
+    loadData(true);
+    return true;
+  };
+
+  const saveAward = async (a: AppRow) => {
+    const amount = Number(awardInput);
+    if (awardInput.trim() === "" || !Number.isFinite(amount) || amount <= 0) { toast.error("Enter an award greater than 0"); return; }
+    if (amount === Number(a.amount_approved)) { toast.info("No changes to save"); return; }
+    const { data, error } = await supabase.from("applications").update({ amount_approved: amount })
+      .eq("id", a.id).eq("status", "Approved").select("id");
+    if (error) { toast.error("Couldn't update the award", { description: error.message }); return; }
+    if (!data?.length) { toast.error("This application is no longer approved"); silentRefreshAdmin(); return; }
+    await logAudit("update_award", "applications", a.id, { amount_approved: a.amount_approved }, { amount_approved: amount });
+    toast.success("Award updated — the student was notified");
+    loadData(true);
+  };
+
+  const addAppNote = async (a: AppRow) => {
+    const body = newAppNote.trim();
+    if (!body) return;
+    setSavingAppNote(true);
+    const { data, error } = await supabase.from("application_notes")
+      .insert({ application_id: a.id, author_id: adminUserId, author_email: adminEmail, body }).select().single();
+    setSavingAppNote(false);
+    if (error || !data) { toast.error("Couldn't add the note", { description: error?.message }); return; }
+    setAppNotes((prev) => [...prev, data]);
+    setNewAppNote("");
+  };
+  const deleteAppNote = async (n: Tables<"application_notes">) => {
+    const { error } = await supabase.from("application_notes").delete().eq("id", n.id);
+    if (error) { toast.error("Couldn't delete the note", { description: error.message }); return; }
+    setAppNotes((prev) => prev.filter((x) => x.id !== n.id));
+  };
+
+  // Documents that count for an application: unattached ones, or those filed with one of the student's
+  // applications from the same year (the database's in_document_set()).
+  const countsForApp = (a: AppRow) => {
+    const year = new Date(a.created_at).getFullYear();
+    const ids = new Set(applications.filter((x) => x.user_id === a.user_id && new Date(x.created_at).getFullYear() === year).map((x) => x.id));
+    return (d: AdminDoc) => d.applicationId === null || ids.has(d.applicationId);
   };
   const logAudit = async (action: string, entityType: string, entityId?: string, prev?: Json | null, next?: Json | null) => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -1020,7 +1172,7 @@ export default function AdminDashboardPage() {
       {([
         { label: "Total applicants", value: pipeline.total, sub: "registered students", go: () => showApplicants("all") },
         { label: "Not yet applied", value: pipeline.notApplied, sub: "registered, no application", go: () => showApplicants("not_applied"), warn: pipeline.notApplied > 0 },
-        { label: "Pending", value: pipeline.pending, sub: pipeline.waitlisted ? `+ ${pipeline.waitlisted} waitlisted` : "awaiting review", go: () => showApplicants("pending") },
+        { label: "Pending", value: pipeline.pending, sub: pipeline.waitlisted ? `+ ${pipeline.waitlisted} waitlisted` : "awaiting review", go: () => showApplicants(pipeline.waitlisted ? "open" : "pending") },
         { label: "Approved", value: pipeline.approved, sub: "applications", go: () => showApplicants("approved") },
         { label: "Disapproved", value: pipeline.disapproved, sub: "applications", go: () => showApplicants("disapproved") },
         { label: "Students", value: pipeline.scholars, sub: "approved scholars", go: () => setActiveSection("students") },
@@ -1038,20 +1190,70 @@ export default function AdminDashboardPage() {
 
   type ApplicantRow = { kind: "app"; app: typeof applications[number]; at: string } | { kind: "none"; profile: Tables<"profiles">; at: string };
   const q = appSearch.trim().toLowerCase();
+  // Name, email, student ID and school for everyone; the program name for applications too.
+  const personText = (p?: Tables<"profiles"> | null) => `${personName(p)} ${p?.email || ""} ${p?.student_id_number || ""} ${p?.school_name || ""}`.toLowerCase();
+  const statusMatches = (st: string) =>
+    statusFilter === "all" || (statusFilter === "open" ? st === "Pending" || st === "Waitlisted" : st.toLowerCase() === statusFilter);
   const filteredApps: ApplicantRow[] = [
     ...(statusFilter === "all" || statusFilter === "not_applied"
       ? notApplied
-          .filter((p) => !q || `${personName(p)} ${p.email || ""}`.toLowerCase().includes(q))
+          .filter((p) => !q || personText(p).includes(q))
           .map((p): ApplicantRow => ({ kind: "none", profile: p, at: p.created_at }))
       : []),
     ...applications
-      .filter((a) => statusFilter === "all" || a.status.toLowerCase() === statusFilter)
-      .filter((a) => !q || personName(a.profiles).toLowerCase().includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q))
+      .filter((a) => statusMatches(a.status))
+      .filter((a) => !q || personText(a.profiles).includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q))
       .map((a): ApplicantRow => ({ kind: "app", app: a, at: a.created_at })),
   ].sort((x, y) => y.at.localeCompare(x.at));
   const appPages = Math.max(1, Math.ceil(filteredApps.length / APP_PAGE_SIZE));
   const currentAppPage = Math.min(appPage, appPages);
   const pagedApps = filteredApps.slice((currentAppPage - 1) * APP_PAGE_SIZE, currentAppPage * APP_PAGE_SIZE);
+  // Bulk selection covers applications that can still be decided (Pending / Waitlisted).
+  const isOpenApp = (a: AppRow) => a.status === "Pending" || a.status === "Waitlisted";
+  const selectablePaged = pagedApps.flatMap((r) => (r.kind === "app" && isOpenApp(r.app) ? [r.app.id] : []));
+  const allPagedSelected = selectablePaged.length > 0 && selectablePaged.every((id) => selectedApps.has(id));
+  const toggleSelected = (id: string, on: boolean) => setSelectedApps((prev) => {
+    const next = new Set(prev);
+    if (on) next.add(id); else next.delete(id);
+    return next;
+  });
+  // Drop selections that are no longer open (decided elsewhere, withdrawn) or no longer exist.
+  useEffect(() => {
+    setSelectedApps((prev) => {
+      const open = new Set(applications.filter(isOpenApp).map((a) => a.id));
+      const next = new Set([...prev].filter((id) => open.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applications]);
+
+  const exportApplicants = async () => {
+    const XLSX = await import("xlsx");
+    const date = (v?: string | null) => (v ? new Date(v).toLocaleDateString("en-PH") : "—");
+    const rows = filteredApps.map((r) => {
+      if (r.kind === "none") {
+        const p = r.profile;
+        return {
+          Name: personName(p), Email: p.email || "—", "Student ID": p.student_id_number || "—", School: p.school_name || "—",
+          Scholarship: "—", Type: "—", Term: "—", "Grade when applied": "—", "Current grade": p.average_grade ?? "—",
+          Status: "Not yet applied", "Applied / Registered": date(p.created_at), Decided: "—", "Award (PHP)": "—", "Message to student": "—",
+        };
+      }
+      const a = r.app;
+      return {
+        Name: personName(a.profiles), Email: a.profiles?.email || "—", "Student ID": a.profiles?.student_id_number || "—",
+        School: a.profiles?.school_name || "—", Scholarship: a.scholarships?.name || "—",
+        Type: a.is_renewal ? "Renewal" : "New", Term: [a.academic_year, a.semester].filter(Boolean).join(" · ") || "—",
+        "Grade when applied": a.average_grade ?? "—", "Current grade": a.profiles?.average_grade ?? "—",
+        Status: a.status, "Applied / Registered": date(a.created_at), Decided: date(a.decided_at),
+        "Award (PHP)": a.status === "Approved" ? appAward(a) : "—", "Message to student": a.notes || "—",
+      };
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Applicants");
+    XLSX.writeFile(wb, "applicants.xlsx");
+    toast.success("Excel downloaded");
+  };
 
   // ── Fund management (derived from payments + applications) ──
   const fundData = useMemo(() => {
@@ -1201,36 +1403,66 @@ export default function AdminDashboardPage() {
                 <div className="flex gap-2 flex-wrap">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Search name, scholarship..." value={appSearch} onChange={(e) => { setAppSearch(e.target.value); setAppPage(1); }} className="pl-9 w-60" />
+                    <Input placeholder="Search name, email, ID, school, program..." value={appSearch} onChange={(e) => { setAppSearch(e.target.value); setAppPage(1); }} className="pl-9 w-72" />
                   </div>
                   <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setAppPage(1); }}>
-                    <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Status</SelectItem>
                       <SelectItem value="not_applied">Not yet applied</SelectItem>
+                      <SelectItem value="open">Pending + waitlisted</SelectItem>
                       <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="approved">Approved</SelectItem>
                       <SelectItem value="waitlisted">Waitlisted</SelectItem>
+                      <SelectItem value="approved">Approved</SelectItem>
                       <SelectItem value="disapproved">Disapproved</SelectItem>
                       <SelectItem value="withdrawn">Withdrawn</SelectItem>
                     </SelectContent>
                   </Select>
+                  <Button variant="outline" onClick={exportApplicants} disabled={filteredApps.length === 0}>
+                    <FileDown className="mr-1 h-4 w-4" /> Export
+                  </Button>
                 </div>
               </div>
               {pipelineStrip}
+              {selectedApps.size > 0 && (
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-accent px-3 py-2 text-sm">
+                  <span className="font-medium">{selectedApps.size} selected</span>
+                  <Button size="sm" disabled={bulkBusy} onClick={() => bulkDecide("Approved")}>
+                    {bulkBusy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-1 h-4 w-4" />} Approve
+                  </Button>
+                  <Button size="sm" variant="outline" disabled={bulkBusy} onClick={() => bulkDecide("Waitlisted")}>
+                    <Hourglass className="mr-1 h-4 w-4" /> Waitlist
+                  </Button>
+                  <Button size="sm" variant="destructive" disabled={bulkBusy} onClick={() => { setBulkNote(""); setBulkDisapprove(true); }}>
+                    <XCircle className="mr-1 h-4 w-4" /> Disapprove
+                  </Button>
+                  <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={() => setSelectedApps(new Set())}>Clear</Button>
+                  <span className="text-xs text-muted-foreground">Each one is checked on its own; any that can&apos;t be changed are listed afterwards.</span>
+                </div>
+              )}
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
+                    <TableHead className="w-10">
+                      <Checkbox aria-label="Select all open applications on this page" disabled={selectablePaged.length === 0}
+                        checked={allPagedSelected}
+                        onCheckedChange={(on) => setSelectedApps((prev) => {
+                          const next = new Set(prev);
+                          selectablePaged.forEach((id) => (on ? next.add(id) : next.delete(id)));
+                          return next;
+                        })} />
+                    </TableHead>
                     <TableHead>Applicant</TableHead><TableHead>Scholarship</TableHead><TableHead>Grade</TableHead><TableHead>Date</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {filteredApps.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No applicants found</TableCell></TableRow>}
+                    {filteredApps.length === 0 && <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No applicants found</TableCell></TableRow>}
                     {pagedApps.map((row) => {
                       if (row.kind === "none") {
                         const p = row.profile;
                         const docs = docsReady(p.id);
                         return (
                           <TableRow key={`none-${p.id}`} className="bg-amber-50/40 dark:bg-amber-950/10">
+                            <TableCell />
                             <TableCell>
                               <p className="font-medium">{personName(p)}</p>
                               <p className="text-xs text-muted-foreground">{p.email}</p>
@@ -1253,39 +1485,57 @@ export default function AdminDashboardPage() {
                         );
                       }
                       const a = row.app;
-                      const name = a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "—";
+                      const name = personName(a.profiles);
+                      const blocker = isOpenApp(a) ? approveBlocker(a) : null;
+                      const currentGrade = a.profiles?.average_grade ?? null;
                       return (
-                        <TableRow key={a.id}>
+                        <TableRow key={a.id} data-state={selectedApps.has(a.id) ? "selected" : undefined}>
+                          <TableCell>
+                            {isOpenApp(a) && (
+                              <Checkbox aria-label={`Select ${name}`} checked={selectedApps.has(a.id)} onCheckedChange={(on) => toggleSelected(a.id, on === true)} />
+                            )}
+                          </TableCell>
                           <TableCell>
                             <p className="font-medium">{name}</p>
+                            {a.profiles?.email && <p className="text-xs text-muted-foreground">{a.profiles.email}</p>}
                             <div className="mt-1 flex gap-1 flex-wrap empty:hidden">
                               {gradeReviews.some((g) => g.user_id === a.user_id && g.status === "Pending") && <Badge variant="secondary" className="text-[10px]">Grade to review</Badge>}
                               {dataReqs.some((r) => r.user_id === a.user_id && r.status === "Pending") && <Badge variant="destructive" className="text-[10px]">Deletion requested</Badge>}
                             </div>
                           </TableCell>
                           <TableCell>{a.scholarships?.name || "—"}</TableCell>
-                          <TableCell>{a.profiles?.average_grade || "—"}</TableCell>
+                          <TableCell title="Grade when applied">
+                            {a.average_grade ?? currentGrade ?? "—"}
+                            {a.average_grade != null && currentGrade != null && Number(currentGrade) !== Number(a.average_grade) && (
+                              <span className="block text-xs text-muted-foreground" title="Current grade on the profile">now {currentGrade}</span>
+                            )}
+                          </TableCell>
                           <TableCell>{new Date(a.created_at).toLocaleDateString()}</TableCell>
                           <TableCell>{statusBadge(a.status)}</TableCell>
                           <TableCell className="text-right space-x-1">
                             <Button size="icon" variant="ghost" onClick={() => setViewApp(a)} title="View"><Eye className="h-4 w-4" /></Button>
-                            {(a.status === "Pending" || a.status === "Waitlisted") && (<>
-                              <Button size="icon" variant="ghost" disabled={!!approveBlocker(a)} title={approveBlocker(a) ?? "Approve"} onClick={async () => {
-                                if (await decideApplication(a, "Approved")) { toast.success(`${name} approved!`); loadData(); }
+                            {isOpenApp(a) && (<>
+                              <Button size="icon" variant="ghost" disabled={!!blocker} title={blocker ?? "Approve"} onClick={async () => {
+                                if (await decideApplication(a, "Approved", null)) { toast.success(`${name} approved!`); loadData(true); }
                               }}><CheckCircle className="h-4 w-4 text-success" /></Button>
                               {a.status === "Pending" && (
                                 <Button size="icon" variant="ghost" title="Waitlist" onClick={async () => {
-                                  if (await decideApplication(a, "Waitlisted")) { toast.info(`${name} waitlisted`); loadData(); }
+                                  if (await decideApplication(a, "Waitlisted", null)) { toast.info(`${name} waitlisted`); loadData(true); }
                                 }}><Hourglass className="h-4 w-4 text-warning" /></Button>
                               )}
-                              <Button size="icon" variant="ghost" title="Disapprove" onClick={async () => {
-                                if (await decideApplication(a, "Disapproved")) { toast.error(`${name} disapproved`); loadData(); }
-                              }}><XCircle className="h-4 w-4 text-destructive" /></Button>
+                              <Button size="icon" variant="ghost" title="Disapprove" onClick={() => { setDisapproveAppNote(""); setDisapproveApp(a); }}>
+                                <XCircle className="h-4 w-4 text-destructive" />
+                              </Button>
                             </>)}
                             {a.status === "Disapproved" && (
                               <Button size="icon" variant="ghost" title="Reopen" onClick={async () => {
-                                if (await decideApplication(a, "Pending")) { toast.success(`${name} reopened`); loadData(); }
+                                if (await decideApplication(a, "Pending", null)) { toast.success(`${name} reopened`); loadData(true); }
                               }}><RotateCcw className="h-4 w-4" /></Button>
+                            )}
+                            {a.status === "Approved" && (
+                              <Button size="icon" variant="ghost" disabled={hasLivePayment(a.id)}
+                                title={hasLivePayment(a.id) ? "This application has payments. Cancel them before revoking the approval" : "Revoke approval"}
+                                onClick={() => { setRevokeNote(""); setRevokeApp(a); }}><Undo2 className="h-4 w-4 text-destructive" /></Button>
                             )}
                           </TableCell>
                         </TableRow>
@@ -1304,23 +1554,33 @@ export default function AdminDashboardPage() {
               </div>
 
               <Dialog open={!!viewApp} onOpenChange={(open) => !open && setViewApp(null)}>
-                <DialogContent className="max-w-lg">
+                <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
                   <DialogHeader><DialogTitle>Application Details</DialogTitle></DialogHeader>
-                  {viewApp && (
+                  {viewApp && (() => {
+                    const open = isOpenApp(viewApp);
+                    const awardOverride = open && awardInput.trim() !== "" ? Number(awardInput) : undefined;
+                    const awardValid = awardOverride === undefined || (Number.isFinite(awardOverride) && awardOverride > 0);
+                    const blocker = open ? (awardValid ? approveBlocker(viewApp, awardOverride) : "Enter an award greater than 0") : null;
+                    const cap = capacityFor(viewApp, awardOverride);
+                    const counts = countsForApp(viewApp);
+                    const currentDocs = viewDocs.filter(counts);
+                    const olderDocs = viewDocs.filter((d) => !counts(d));
+                    const livePay = hasLivePayment(viewApp.id);
+                    return (
                     <div className="space-y-4">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <Label className="text-muted-foreground text-xs">Applicant</Label>
-                          <p className="font-medium">{viewApp.profiles ? `${viewApp.profiles.first_name} ${viewApp.profiles.last_name}` : "—"}</p>
+                          <p className="font-medium">{personName(viewApp.profiles)}</p>
                           {profiles.some((p) => p.id === viewApp.user_id) && (
                             <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => setViewStudent(profiles.find((p) => p.id === viewApp.user_id) ?? null)}>View full profile</button>
                           )}
                         </div>
-                        <div><Label className="text-muted-foreground text-xs">Email</Label><p className="font-medium">{viewApp.profiles?.email || "—"}</p></div>
+                        <div><Label className="text-muted-foreground text-xs">Email</Label><p className="font-medium break-all">{viewApp.profiles?.email || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">School</Label><p className="font-medium">{viewApp.profiles?.school_name || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Course</Label><p className="font-medium">{viewApp.profiles?.course || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Year Level</Label><p className="font-medium">{viewApp.profiles?.year_level || "—"}</p></div>
-                        <div><Label className="text-muted-foreground text-xs">Grade</Label><p className="font-medium">{viewApp.profiles?.average_grade || "—"}</p></div>
+                        <div><Label className="text-muted-foreground text-xs">Current grade</Label><p className="font-medium">{viewApp.profiles?.average_grade ?? "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Scholarship</Label><p className="font-medium">{viewApp.scholarships?.name || "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Status</Label><div>{statusBadge(viewApp.status)}</div></div>
                         <div><Label className="text-muted-foreground text-xs">Type</Label><p className="font-medium">{viewApp.is_renewal ? "Renewal" : "New application"}</p></div>
@@ -1328,6 +1588,17 @@ export default function AdminDashboardPage() {
                         <div><Label className="text-muted-foreground text-xs">Grade when applied</Label><p className="font-medium">{viewApp.average_grade ?? "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Household income</Label><p className="font-medium">{viewApp.household_income != null ? `₱${Number(viewApp.household_income).toLocaleString("en-PH")}` : "—"}</p></div>
                         <div><Label className="text-muted-foreground text-xs">Household size</Label><p className="font-medium">{viewApp.household_size ?? "—"}</p></div>
+                        {cap && (
+                          <div>
+                            <Label className="text-muted-foreground text-xs">Program capacity</Label>
+                            <p className={`font-medium ${open && (cap.slotsFull || cap.overBudget) ? "text-destructive" : ""}`}>
+                              {cap.sch.slots > 0 ? `${cap.approved} of ${cap.sch.slots} slots filled` : `${cap.approved} approved (no slot limit)`}
+                            </p>
+                            {Number(cap.sch.total_budget) > 0 && (
+                              <p className="text-xs text-muted-foreground">{formatPHP(cap.committed)} of {formatPHP(Number(cap.sch.total_budget))} committed</p>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <div>
                         <Label className="text-xs">Applicant statement</Label>
@@ -1345,47 +1616,123 @@ export default function AdminDashboardPage() {
                         </ul>
                       </div>
                       <div>
-                        <Label className="text-xs">Documents</Label>
-                        {docList(viewDocs, docsLoading)}
-                      </div>
-                      <div>
-                        <Label className="text-xs">Reviewer Remarks</Label>
-                        <Textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Add notes..." />
-                        {!["Pending", "Waitlisted"].includes(viewApp.status) && (
-                          <Button size="sm" variant="outline" className="mt-2" onClick={async () => {
-                            const notes = remarks.trim() || null;
-                            const { error } = await supabase.from("applications").update({ notes }).eq("id", viewApp.id);
-                            if (error) { toast.error(error.message); return; }
-                            await logAudit("update_application_remarks", "applications", viewApp.id, { notes: viewApp.notes }, { notes });
-                            toast.success("Remarks saved"); loadData();
-                          }}>Save remarks</Button>
+                        <Label className="text-xs">Documents for this application</Label>
+                        {docList(currentDocs, docsLoading)}
+                        {!docsLoading && olderDocs.length > 0 && (
+                          <details className="mt-2 text-sm">
+                            <summary className="cursor-pointer text-xs text-muted-foreground">
+                              {olderDocs.length} document{olderDocs.length === 1 ? "" : "s"} from earlier years (don&apos;t count for this application)
+                            </summary>
+                            {docList(olderDocs, false)}
+                          </details>
                         )}
                       </div>
-                      {(viewApp.status === "Pending" || viewApp.status === "Waitlisted") && approveBlocker(viewApp) && (
-                        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Can&apos;t approve yet. {approveBlocker(viewApp)}.</p>
+
+                      {viewApp.status === "Approved" && (
+                        <div>
+                          <Label className="text-xs">Award amount (₱)</Label>
+                          <div className="mt-1 flex gap-2">
+                            <Input type="number" min={1} step="0.01" value={awardInput} onChange={(e) => setAwardInput(e.target.value)} disabled={hasDisbursed(viewApp.id)} />
+                            <Button variant="outline" disabled={hasDisbursed(viewApp.id)} onClick={() => saveAward(viewApp)}>Save award</Button>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {hasDisbursed(viewApp.id) ? "Locked: a payment for this award has been disbursed." : "The student is notified. Payments already scheduled keep their amount."}
+                          </p>
+                        </div>
                       )}
-                      {(viewApp.status === "Pending" || viewApp.status === "Waitlisted") && (
+                      {open && (
+                        <div>
+                          <Label className="text-xs">Award amount (₱, optional)</Label>
+                          <Input type="number" min={1} step="0.01" className="mt-1" value={awardInput} onChange={(e) => setAwardInput(e.target.value)}
+                            placeholder={cap?.sch.amount ? `Program award: ${formatPHP(Number(cap.sch.amount))}` : "Program award"} />
+                        </div>
+                      )}
+
+                      <div>
+                        <Label className="text-xs">{viewApp.status === "Disapproved" ? "Reason (shown to the student)" : "Message to the student"}</Label>
+                        <Textarea value={remarks} onChange={(e) => setRemarks(e.target.value)}
+                          placeholder={open ? "Sent with your decision and shown on the student's application. Required to disapprove." : "Shown on the student's application."} />
+                        {open && viewApp.notes && (
+                          <p className="mt-1 text-xs text-muted-foreground">Last message sent: “{viewApp.notes}”. It isn&apos;t sent again unless you write it here.</p>
+                        )}
+                        {["Approved", "Disapproved"].includes(viewApp.status) && (
+                          <Button size="sm" variant="outline" className="mt-2" disabled={viewApp.status === "Disapproved" && !remarks.trim()} onClick={async () => {
+                            const prev = viewApp.notes?.trim() || null;
+                            const notes = remarks.trim() || null;
+                            if (notes === prev) { toast.info("No changes to save"); return; }
+                            const { data, error } = await supabase.from("applications").update({ notes })
+                              .eq("id", viewApp.id).eq("status", viewApp.status).select("id");
+                            if (error) { toast.error(error.message); return; }
+                            if (!data?.length) { toast.error("This application was changed elsewhere. The list has been refreshed."); silentRefreshAdmin(); return; }
+                            await logAudit("update_application_remarks", "applications", viewApp.id, { notes: viewApp.notes }, { notes });
+                            setViewApp({ ...viewApp, notes });
+                            // For a disapproved application the database notifies the student (see migration 040).
+                            toast.success(viewApp.status === "Disapproved" ? "Reason updated — the student was notified" : "Message saved");
+                            loadData(true);
+                          }}>{viewApp.status === "Disapproved" ? "Save reason" : "Save message"}</Button>
+                        )}
+                      </div>
+
+                      <div>
+                        <Label className="text-xs">Internal notes (staff only — never shown to the student)</Label>
+                        {appNotes.length > 0 && (
+                          <ul className="mt-1 space-y-2">
+                            {appNotes.map((n) => (
+                              <li key={n.id} className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                                <p className="whitespace-pre-wrap">{n.body}</p>
+                                <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                                  <span>{n.author_email || "Staff"} · {new Date(n.created_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })}</span>
+                                  {n.author_id === adminUserId && (
+                                    <button type="button" className="hover:text-destructive" title="Delete note" onClick={() => deleteAppNote(n)}><Trash2 className="h-3.5 w-3.5" /></button>
+                                  )}
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <div className="mt-2 flex gap-2">
+                          <Textarea rows={2} value={newAppNote} onChange={(e) => setNewAppNote(e.target.value)} placeholder="e.g. Called the guardian to confirm household income." maxLength={2000} />
+                          <Button variant="outline" className="self-end" disabled={savingAppNote || !newAppNote.trim()} onClick={() => addAppNote(viewApp)}>Add</Button>
+                        </div>
+                      </div>
+
+                      {open && blocker && (
+                        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Can&apos;t approve yet. {blocker}.</p>
+                      )}
+                      {open && (
                         <div className="flex gap-2 pt-2 flex-wrap">
-                          <Button className="flex-1" disabled={!!approveBlocker(viewApp)} title={approveBlocker(viewApp) ?? undefined} onClick={async () => {
-                            if (await decideApplication(viewApp, "Approved", remarks)) { toast.success("Approved!"); setViewApp(null); loadData(); }
+                          <Button className="flex-1" disabled={!!blocker} title={blocker ?? undefined} onClick={async () => {
+                            if (await decideApplication(viewApp, "Approved", remarks, awardOverride ?? null)) { toast.success("Approved!"); setViewApp(null); loadData(true); }
                           }}><CheckCircle className="mr-1 h-4 w-4" /> Approve</Button>
                           {viewApp.status === "Pending" && (
                             <Button variant="outline" className="flex-1" onClick={async () => {
-                              if (await decideApplication(viewApp, "Waitlisted", remarks)) { toast.info("Waitlisted"); setViewApp(null); loadData(); }
+                              if (await decideApplication(viewApp, "Waitlisted", remarks)) { toast.info("Waitlisted"); setViewApp(null); loadData(true); }
                             }}><Hourglass className="mr-1 h-4 w-4" /> Waitlist</Button>
                           )}
-                          <Button variant="destructive" className="flex-1" onClick={async () => {
-                            if (await decideApplication(viewApp, "Disapproved", remarks)) { toast.error("Disapproved"); setViewApp(null); loadData(); }
+                          <Button variant="destructive" className="flex-1" disabled={!remarks.trim()} title={remarks.trim() ? undefined : "Write the reason in the message first — it is shown to the student"} onClick={async () => {
+                            if (await decideApplication(viewApp, "Disapproved", remarks)) { toast.error("Disapproved"); setViewApp(null); loadData(true); }
                           }}><XCircle className="mr-1 h-4 w-4" /> Disapprove</Button>
                         </div>
                       )}
                       {viewApp.status === "Disapproved" && (
                         <Button variant="outline" className="w-full" onClick={async () => {
-                          if (await decideApplication(viewApp, "Pending", remarks)) { toast.success("Reopened"); setViewApp(null); loadData(); }
+                          // The disapproval reason is cleared, so it isn't resent with a later decision.
+                          if (await decideApplication(viewApp, "Pending", null)) { toast.success("Reopened"); setViewApp(null); loadData(true); }
                         }}><RotateCcw className="mr-1 h-4 w-4" /> Reopen for review</Button>
                       )}
+                      {viewApp.status === "Approved" && (
+                        <Button variant="outline" className="w-full text-destructive" disabled={livePay}
+                          title={livePay ? "This application has payments. Cancel them before revoking the approval" : undefined}
+                          onClick={() => { setRevokeNote(""); setRevokeApp(viewApp); }}>
+                          <Undo2 className="mr-1 h-4 w-4" /> Revoke approval
+                        </Button>
+                      )}
+                      {viewApp.status === "Approved" && livePay && (
+                        <p className="text-xs text-muted-foreground">To revoke this approval, cancel its payments in Disbursement first.</p>
+                      )}
                     </div>
-                  )}
+                    );
+                  })()}
                 </DialogContent>
               </Dialog>
             </div>
@@ -2498,6 +2845,65 @@ export default function AdminDashboardPage() {
               ))}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!disapproveApp} onOpenChange={(o) => { if (!o) setDisapproveApp(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Disapprove application</DialogTitle></DialogHeader>
+          <div>
+            <Label className="text-xs">Reason (shown to the student)</Label>
+            <Textarea rows={3} value={disapproveAppNote} onChange={(e) => setDisapproveAppNote(e.target.value)} placeholder="e.g. Your average grade is below the program's minimum." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDisapproveApp(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={disapprovingApp || !disapproveAppNote.trim()} onClick={async () => {
+              if (!disapproveApp) return;
+              setDisapprovingApp(true);
+              const ok = await decideApplication(disapproveApp, "Disapproved", disapproveAppNote);
+              setDisapprovingApp(false);
+              if (ok) { toast.error("Application disapproved"); setDisapproveApp(null); loadData(true); }
+            }}>Disapprove application</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!revokeApp} onOpenChange={(o) => { if (!o) setRevokeApp(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Revoke approval</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {personName(revokeApp?.profiles)}&apos;s application for {revokeApp?.scholarships?.name || "this program"} goes back to Pending, and its slot and award are released.
+          </p>
+          <div>
+            <Label className="text-xs">Reason (shown to the student)</Label>
+            <Textarea rows={3} value={revokeNote} onChange={(e) => setRevokeNote(e.target.value)} placeholder="e.g. Approved by mistake: your residency could not be confirmed." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRevokeApp(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={revokingApp || !revokeNote.trim()} onClick={async () => {
+              if (!revokeApp) return;
+              setRevokingApp(true);
+              const ok = await decideApplication(revokeApp, "Pending", revokeNote);
+              setRevokingApp(false);
+              if (ok) { toast.success("Approval revoked — the student was notified"); setRevokeApp(null); loadData(true); }
+            }}>Revoke approval</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkDisapprove} onOpenChange={(o) => { if (!o) setBulkDisapprove(false); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Disapprove {selectedApps.size} application{selectedApps.size === 1 ? "" : "s"}</DialogTitle></DialogHeader>
+          <div>
+            <Label className="text-xs">Reason (sent to every selected student)</Label>
+            <Textarea rows={3} value={bulkNote} onChange={(e) => setBulkNote(e.target.value)} placeholder="e.g. All slots for this program have been filled." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkDisapprove(false)}>Cancel</Button>
+            <Button variant="destructive" disabled={bulkBusy || !bulkNote.trim()} onClick={async () => {
+              if (await bulkDecide("Disapproved", bulkNote)) setBulkDisapprove(false);
+            }}>Disapprove</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

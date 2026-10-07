@@ -26,7 +26,7 @@ export function buildTimeline(app: App, payments: Payment[]): Step[] {
   ];
 
   if (app.status === "Disapproved") {
-    steps.push({ key: "decision", title: "Not approved", date: app.updated_at, state: "bad",
+    steps.push({ key: "decision", title: "Not approved", date: app.decided_at ?? app.updated_at, state: "bad",
       detail: app.notes || "Your application was not approved this time. You can still apply to other open programs." });
     return steps;
   }
@@ -43,7 +43,7 @@ export function buildTimeline(app: App, payments: Payment[]): Step[] {
   }
 
   // Approved
-  steps.push({ key: "approved", title: "Approved", date: app.updated_at, state: "done",
+  steps.push({ key: "approved", title: "Approved", date: app.approved_at ?? app.updated_at, state: "done",
     detail: [app.amount_approved != null ? `Award ${pesoFixed(app.amount_approved)}` : null, app.notes].filter(Boolean).join(" · ") || undefined });
 
   if (disbursed.length > 0) {

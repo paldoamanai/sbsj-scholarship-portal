@@ -13,7 +13,7 @@ export function DisapprovalReason({ app, compact = false }: { app: Tables<"appli
   return (
     <div className={`rounded-xl border border-red-200 bg-red-50 text-red-800 ${compact ? "px-3 py-2 text-xs" : "px-4 py-3 text-sm"}`}>
       <p className="font-semibold flex items-center gap-1.5">
-        <XCircle className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} /> Not approved · {formatDate(app.updated_at)}
+        <XCircle className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} /> Not approved · {formatDate(app.decided_at ?? app.updated_at)}
       </p>
       <p className="mt-1 whitespace-pre-wrap">
         <span className="font-semibold">Reason: </span>

@@ -19,7 +19,7 @@ import { toast } from "sonner";
 import {
   LayoutDashboard, FileText, Upload, GraduationCap, Banknote, Receipt,
   Bell, User, Settings as SettingsIcon, LogOut, Menu, Lock, Download,
-  AlertTriangle, CheckCircle, Clock, Pencil, Eye, Trash2, Loader2,
+  AlertTriangle, CheckCircle, Clock, Eye, Trash2, Loader2,
   X,
 } from "lucide-react";
 import Overview from "@/components/student/Overview";
@@ -38,7 +38,6 @@ import type { Tables } from "@/integrations/supabase/types";
 import { profileFromUserMetadata } from "@/lib/registration-profile";
 import { useSystemSettings } from "@/hooks/use-system-settings";
 import { applicationsBlockedReason } from "@/lib/settings";
-import { STATEMENT_MIN, STATEMENT_MAX } from "@/validations/application";
 import { DOC_MIME, documentPath, uploadUserDocument } from "@/lib/documents";
 import { uploadPendingDocuments } from "@/lib/pending-documents";
 import { availabilityInfo, programChecks, requirementLines, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
@@ -49,7 +48,6 @@ import ApplicationHistory, { DisapprovalReason } from "@/components/student/Appl
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Payment = Tables<"payments">;
 
-const numOrNull = (v: string) => (v.trim() === "" ? null : Number(v));
 const fmtSize = (n: number | null | undefined) => (n == null ? "" : n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 function DocStatusBadge({ status }: { status: string }) {
@@ -455,18 +453,10 @@ export default function StudentDashboardPage() {
   const [applyScholarshipId, setApplyScholarshipId] = useState("");
   const [applyDialogOpen, setApplyDialogOpen]       = useState(false);
   const [applyLoading, setApplyLoading]             = useState(false);
-  const [applyStatement, setApplyStatement]         = useState("");
-  const [applyIncome, setApplyIncome]               = useState("");
-  const [applySize, setApplySize]                   = useState("");
   const [applyCertified, setApplyCertified]         = useState(false);
-  // The application the View / Edit / Withdraw dialogs act on.
+  // The application the View / Withdraw dialogs act on.
   const [selectedAppId, setSelectedAppId]           = useState<string | null>(null);
   const [viewOpen, setViewOpen]                     = useState(false);
-  const [editOpen, setEditOpen]                     = useState(false);
-  const [editSaving, setEditSaving]                 = useState(false);
-  const [appStatement, setAppStatement]             = useState("");
-  const [appIncome, setAppIncome]                   = useState("");
-  const [appSize, setAppSize]                       = useState("");
   const [withdrawOpen, setWithdrawOpen]             = useState(false);
   const [withdrawing, setWithdrawing]               = useState(false);
   const [openApplyOnLoad, setOpenApplyOnLoad]         = useState(false);
@@ -673,9 +663,10 @@ export default function StudentDashboardPage() {
     return () => { supabase.removeChannel(channel); };
   }, [userId]);
 
-  const currentYear  = new Date().getFullYear();
+  // UTC year, matching the server and database checks (one application per program per year).
+  const currentYear  = new Date().getUTCFullYear();
   // This year's applications. A withdrawn one no longer counts: that program can be applied to again.
-  const yearApps     = applications.filter((app) => app.status !== "Withdrawn" && new Date(app.created_at).getFullYear() === currentYear);
+  const yearApps     = applications.filter((app) => app.status !== "Withdrawn" && new Date(app.created_at).getUTCFullYear() === currentYear);
   const yearAppIds   = new Set(yearApps.map((a) => a.id));
   // Students may apply to, and be approved for, every open program; each program decides on its own.
   const approvedApps = yearApps.filter((a) => a.status === "Approved");
@@ -720,7 +711,7 @@ export default function StudentDashboardPage() {
   const missingDocs = requiredDocTypes.filter(t => !docOk(t));
 
   // Renewal: approved for the chosen program in an earlier year means this one renews it.
-  const approvedBefore = applications.filter((a) => a.status === "Approved" && a.scholarship_id === applyScholarshipId && new Date(a.created_at).getFullYear() < currentYear).length;
+  const approvedBefore = applications.filter((a) => a.status === "Approved" && a.scholarship_id === applyScholarshipId && new Date(a.created_at).getUTCFullYear() < currentYear).length;
   const isRenewing = approvedBefore > 0;
   const minGrade = isRenewing ? settings.renewal_min_grade : settings.min_grade_requirement;
   const myGrade = profile?.average_grade ?? null;
@@ -838,9 +829,6 @@ export default function StudentDashboardPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           scholarship_id: applyScholarshipId,
-          statement: applyStatement.trim(),
-          household_income: numOrNull(applyIncome),
-          household_size: numOrNull(applySize),
           certified: applyCertified,
         }),
       });
@@ -850,34 +838,13 @@ export default function StudentDashboardPage() {
       } else {
         toast.success(isRenewing ? "Renewal application submitted!" : "Application submitted!");
         setApplyDialogOpen(false);
-        setApplyScholarshipId(""); setApplyStatement(""); setApplyIncome(""); setApplySize(""); setApplyCertified(false);
+        setApplyScholarshipId(""); setApplyCertified(false);
         loadData();
       }
     } catch {
       toast.error("Network error. Please try again.");
     } finally {
       setApplyLoading(false);
-    }
-  };
-
-  const saveApplicationEdit = async () => {
-    if (!selectedApp) return;
-    setEditSaving(true);
-    try {
-      const res = await fetch(`/api/applications/${selectedApp.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ statement: appStatement.trim(), household_income: numOrNull(appIncome), household_size: numOrNull(appSize) }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) { toast.error(json.error ?? "Could not save changes."); return; }
-      toast.success("Application updated");
-      setEditOpen(false);
-      loadData();
-    } catch {
-      toast.error("Network error. Please try again.");
-    } finally {
-      setEditSaving(false);
     }
   };
 
@@ -901,13 +868,6 @@ export default function StudentDashboardPage() {
   // ── Section: Application ───────────────────────────────────────────────────
   const openApply = (programId = "") => { setApplyScholarshipId(programId); setApplyDialogOpen(true); };
   const viewApplication = (id: string) => { setSelectedAppId(id); setViewOpen(true); };
-  const editApplication = (a: typeof applications[number]) => {
-    setSelectedAppId(a.id);
-    setAppStatement(a.statement ?? "");
-    setAppIncome(a.household_income?.toString() ?? "");
-    setAppSize(a.household_size?.toString() ?? "");
-    setEditOpen(true);
-  };
   const withdrawPrompt = (a: typeof applications[number]) => { setSelectedAppId(a.id); setWithdrawOpen(true); };
 
   // Documents shown with an application: this year's shared set, or what was filed with an older one.
@@ -1020,12 +980,6 @@ export default function StudentDashboardPage() {
             <ApplicationTimeline app={a} payments={payments} />
             {(a.status === "Pending" || a.status === "Waitlisted") && requirementsChecklist(a)}
             <div className="flex flex-wrap gap-2">
-              {a.status === "Pending" && (
-                <Button size="sm" variant="outline" className="text-xs border-border rounded-xl hover:bg-muted"
-                  onClick={() => editApplication(a)}>
-                  <Pencil className="mr-1 h-3 w-3" /> Edit
-                </Button>
-              )}
               {(a.status === "Pending" || a.status === "Waitlisted") && (
                 <Button size="sm" variant="outline" className="text-xs border-red-200 text-red-600 hover:bg-red-50 rounded-xl"
                   onClick={() => withdrawPrompt(a)}>
@@ -1115,12 +1069,6 @@ export default function StudentDashboardPage() {
                 <div><p className="text-xs text-muted-foreground mb-1">Course · Year</p><p className="font-semibold">{[selectedApp.course, selectedApp.year_level].filter(Boolean).join(" · ") || "—"}</p></div>
                 <div><p className="text-xs text-muted-foreground mb-1">Average grade</p><p className="font-semibold">{selectedApp.average_grade ?? "—"}</p></div>
                 <div><p className="text-xs text-muted-foreground mb-1">Amount approved</p><p className="font-semibold">{peso(selectedApp.amount_approved)}</p></div>
-                <div><p className="text-xs text-muted-foreground mb-1">Household income</p><p className="font-semibold">{peso(selectedApp.household_income)}</p></div>
-                <div><p className="text-xs text-muted-foreground mb-1">Household size</p><p className="font-semibold">{selectedApp.household_size ?? "—"}</p></div>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Statement</p>
-                <p className="text-sm whitespace-pre-wrap rounded-xl bg-muted/50 px-3 py-2">{selectedApp.statement || "—"}</p>
               </div>
               {selectedApp.notes && selectedApp.status !== "Disapproved" && (
                 <div>
@@ -1149,34 +1097,6 @@ export default function StudentDashboardPage() {
               )}
             </>
           )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit */}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="font-display">Edit application{selectedApp?.scholarships?.name ? ` · ${selectedApp.scholarships.name}` : ""}</DialogTitle></DialogHeader>
-          <div>
-            <Label className="text-sm font-medium mb-1.5 block">Statement *</Label>
-            <Textarea rows={6} value={appStatement} maxLength={STATEMENT_MAX} onChange={(e) => setAppStatement(e.target.value)} className="rounded-xl" />
-            <p className={`text-xs mt-1 ${appStatement.trim().length < STATEMENT_MIN ? "text-warning" : "text-muted-foreground"}`}>{appStatement.trim().length} / {STATEMENT_MAX} (minimum {STATEMENT_MIN})</p>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <Label className="text-sm font-medium mb-1.5 block">Monthly household income (₱)</Label>
-              <Input type="number" inputMode="decimal" min={0} value={appIncome} onChange={(e) => setAppIncome(e.target.value)} className="rounded-xl" />
-            </div>
-            <div>
-              <Label className="text-sm font-medium mb-1.5 block">Household size</Label>
-              <Input type="number" inputMode="numeric" min={1} max={30} step={1} value={appSize} onChange={(e) => setAppSize(e.target.value)} className="rounded-xl" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" className="rounded-xl" onClick={() => setEditOpen(false)}>Cancel</Button>
-            <Button className="bg-primary hover:bg-primary text-white rounded-xl" disabled={editSaving || appStatement.trim().length < STATEMENT_MIN} onClick={saveApplicationEdit}>
-              {editSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Save changes
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1243,30 +1163,13 @@ export default function StudentDashboardPage() {
               </SelectContent>
             </Select>
           </div>
-          <div>
-            <Label className="text-sm font-medium text-foreground mb-1.5 block">Why do you need this scholarship? *</Label>
-            <Textarea rows={5} value={applyStatement} maxLength={STATEMENT_MAX} className="rounded-xl"
-              placeholder="Tell us about your situation, your goals and how this scholarship will help."
-              onChange={(e) => setApplyStatement(e.target.value)} />
-            <p className={`text-xs mt-1 ${applyStatement.trim().length < STATEMENT_MIN ? "text-warning" : "text-muted-foreground"}`}>{applyStatement.trim().length} / {STATEMENT_MAX} (minimum {STATEMENT_MIN})</p>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <Label className="text-sm font-medium text-foreground mb-1.5 block">Monthly household income (₱)</Label>
-              <Input type="number" inputMode="decimal" min={0} value={applyIncome} onChange={(e) => setApplyIncome(e.target.value)} className="rounded-xl" placeholder="Optional" />
-            </div>
-            <div>
-              <Label className="text-sm font-medium text-foreground mb-1.5 block">Household size</Label>
-              <Input type="number" inputMode="numeric" min={1} max={30} step={1} value={applySize} onChange={(e) => setApplySize(e.target.value)} className="rounded-xl" placeholder="Optional" />
-            </div>
-          </div>
           <label className="flex items-start gap-3 text-sm text-foreground cursor-pointer">
             <Checkbox checked={applyCertified} onCheckedChange={(v) => setApplyCertified(v === true)} className="mt-0.5" />
             <span>I certify that the information and documents I have provided are true and correct.</span>
           </label>
           <DialogFooter>
             <Button
-              disabled={!canApplyMore || !applyScholarshipId || appliedProgramIds.has(applyScholarshipId) || applyLoading || applyIssues.length > 0 || missingDocs.length > 0 || applyStatement.trim().length < STATEMENT_MIN || !applyCertified}
+              disabled={!canApplyMore || !applyScholarshipId || appliedProgramIds.has(applyScholarshipId) || applyLoading || applyIssues.length > 0 || missingDocs.length > 0 || !applyCertified}
               className="bg-primary hover:bg-primary text-white rounded-xl w-full"
               onClick={submitApplication}>
               {applyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
