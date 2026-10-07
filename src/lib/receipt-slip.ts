@@ -42,10 +42,10 @@ function copy(s: ReceiptSlip, label: string, footer: string) {
   </section>`;
 }
 
+// Prints from a hidden iframe rather than a pop-up: pop-up blockers can't stop it, and print() only runs
+// once the slip has loaded (the old window.onload in a document.write'd pop-up often fired too early).
 export function printReceiptSlip(s: ReceiptSlip) {
-  const win = window.open("", "_blank");
-  if (!win) return false;
-  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Receipt ${esc(s.receiptNo)}</title>
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Receipt ${esc(s.receiptNo)}</title>
 <style>
   @page { size: A4; margin: 12mm; }
   * { box-sizing: border-box; }
@@ -71,10 +71,25 @@ export function printReceiptSlip(s: ReceiptSlip) {
 ${copy(s, "Office copy", "Keep with the disbursement voucher, then upload a scan of this signed copy in the portal.")}
 <hr class="cut">
 ${copy(s, "Student copy", `Keep this copy. To confirm you received this payment, sign in to the scholarship portal, open <strong>Payments</strong> and enter receipt number <strong>${esc(s.receiptNo)}</strong>. Once it is confirmed, you can download a soft copy of this slip there.`)}
-<script>window.onload = () => window.print();</script>
-</body></html>`);
-  win.document.close();
-  return true;
+</body></html>`;
+
+  document.getElementById("receipt-slip-print")?.remove();
+  const frame = document.createElement("iframe");
+  frame.id = "receipt-slip-print";
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+  frame.onload = () => {
+    const win = frame.contentWindow;
+    if (!win) return;
+    // Browsers name the "Save as PDF" file after the top page's title.
+    const title = document.title;
+    document.title = `Receipt ${s.receiptNo}`;
+    win.addEventListener("afterprint", () => { document.title = title; setTimeout(() => frame.remove(), 0); }, { once: true });
+    win.focus();
+    win.print();
+  };
+  frame.srcdoc = html;
+  document.body.appendChild(frame);
 }
 
 // The student's soft copy, saved as a PDF. Only offered once their receipt number is confirmed
