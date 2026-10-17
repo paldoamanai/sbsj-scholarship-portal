@@ -7,7 +7,9 @@ import { isStaffRole, ROLE_LABEL } from "@/lib/permissions";
 // Super admin actions on staff accounts that need Supabase Auth's admin API (service role):
 //   GET                         every staff account with its last sign-in and whether 2FA is on
 //   POST { action: "invite" }   create a staff account and email the person a link to set a password
+//                               (for an invite that is still pending, sends a fresh link instead)
 //   POST { action: "reset_mfa" | "sign_out" | "reset_password", userId }
+//   POST { action: "resend_invite" | "cancel_invite", userId }   only while the invite is pending
 // The caller must be allowed to manage settings (a super admin) and, if they use 2FA, have passed it.
 
 type Caller = { id: string; email: string };
@@ -40,13 +42,21 @@ const audit = (admin: SupabaseClient, caller: Caller, action: string, entityId: 
     user_id: caller.id, user_email: caller.email, action, entity_type: "user_roles", entity_id: entityId, new_value: value,
   });
 
-const siteUrl = (request: Request) =>
-  (process.env.NEXT_PUBLIC_SITE_URL || new URL(request.url).origin).replace(/\/$/, "");
+// The configured site URL, unless it points at localhost while the request came from a real domain
+// (an .env copied to the server): that link would only open on the developer's own machine.
+const isLocal = (url: string) => /\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(url);
+function siteUrl(request: Request) {
+  const origin = new URL(request.url).origin;
+  const configured = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
+  return configured && !(isLocal(configured) && !isLocal(origin)) ? configured : origin;
+}
 
-/** Emails a sign-in link through Resend. Returns false when email isn't configured or sending failed. */
-async function sendLinkEmail(to: string, subject: string, intro: string, link: string, button: string) {
+type Sent = { emailed: true } | { emailed: false; reason: string };
+
+/** Emails a sign-in link through Resend. When it can't, says why, so the super admin can share the link instead. */
+async function sendLinkEmail(to: string, subject: string, intro: string, link: string, button: string): Promise<Sent> {
   const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) return false;
+  if (!apiKey) return { emailed: false, reason: "Email isn't set up on this portal (RESEND_API_KEY is missing)." };
   const html = `
     <div style="font-family:system-ui,sans-serif;max-width:520px;margin:auto;padding:24px">
       <h2 style="margin:0 0 12px;color:#111">${escapeHtml(subject)}</h2>
@@ -59,7 +69,35 @@ async function sendLinkEmail(to: string, subject: string, intro: string, link: s
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ from: process.env.EMAIL_FROM || "SBSJ Scholarship <onboarding@resend.dev>", to, subject, html }),
   }).catch(() => null);
-  return !!res?.ok;
+  if (res?.ok) return { emailed: true };
+  // Resend explains itself, e.g. its test sender only delivers to the Resend account owner.
+  const detail = await res?.json().then((b: { message?: string }) => b?.message).catch(() => null);
+  return { emailed: false, reason: `The email could not be sent${detail ? `: ${detail}` : "."}` };
+}
+
+/** What the API returns after creating a link: the link itself only when it wasn't emailed. */
+const linkResult = (sent: Sent, link: string) =>
+  sent.emailed ? { ok: true, emailed: true, link: null } : { ok: true, emailed: false, link, reason: sent.reason };
+
+// Invited staff set their password on /reset-password, which marks password_set. Accounts invited
+// before that flag existed count as pending until their first sign-in.
+const invitePending = (u: { invited_at?: string; last_sign_in_at?: string; user_metadata?: Record<string, unknown> } | null | undefined) => {
+  if (!u?.invited_at) return false;
+  const set = u.user_metadata?.password_set;
+  return set === false || (set === undefined && !u.last_sign_in_at);
+};
+
+const INVITE_SUBJECT = "You've been added to the SB San Jose scholarship office";
+
+/** A fresh set-your-password link for an invite that is still pending, at the account's current role. */
+async function resendInvite(admin: SupabaseClient, caller: Caller, request: Request, userId: string, email: string, role: string) {
+  const { data, error } = await admin.auth.admin.generateLink({ type: "recovery", email });
+  if (error || !data) return NextResponse.json({ error: error?.message ?? "Could not create the link" }, { status: 500 });
+  const link = `${siteUrl(request)}/auth/confirm?token_hash=${encodeURIComponent(data.properties.hashed_token)}&type=recovery&next=${encodeURIComponent("/reset-password?invite=1")}`;
+  const sent = await sendLinkEmail(email, INVITE_SUBJECT,
+    `You have ${ROLE_LABEL[role]} access to the scholarship portal. Set a password to sign in.`, link, "Set your password");
+  await audit(admin, caller, "resend_staff_invite", userId, { email, emailed: sent.emailed });
+  return NextResponse.json({ ...linkResult(sent, link), resent: true });
 }
 
 export async function GET() {
@@ -78,8 +116,8 @@ export async function GET() {
       role: r.role as string,
       lastSignInAt: u?.last_sign_in_at ?? null,
       mfa: !!u?.factors?.some((f) => f.status === "verified"),
-      // Invited but hasn't set a password and signed in yet.
-      invited: !!u?.invited_at && !u?.last_sign_in_at,
+      // Invited but hasn't set a password yet.
+      invited: invitePending(u),
     };
   }));
   return NextResponse.json({ staff });
@@ -102,13 +140,20 @@ export async function POST(request: Request) {
     if (!isStaffRole(role)) return NextResponse.json({ error: "Choose a staff role" }, { status: 400 });
 
     const { data, error } = await admin.auth.admin.generateLink({
-      type: "invite", email, options: { data: { first_name: firstName, last_name: lastName } },
+      type: "invite", email, options: { data: { first_name: firstName, last_name: lastName, password_set: false } },
     });
     if (error || !data?.user) {
-      const exists = /already/i.test(error?.message ?? "");
-      return NextResponse.json({
-        error: exists ? "That email already has an account. Find it under Add existing account instead." : error?.message ?? "Could not create the account",
-      }, { status: 400 });
+      if (!/already/i.test(error?.message ?? "")) return NextResponse.json({ error: error?.message ?? "Could not create the account" }, { status: 400 });
+
+      // Already invited but never finished (often an expired link): send a fresh one at their current role.
+      const { data: prof } = await admin.from("profiles").select("id").ilike("email", email.replace(/[\\%_]/g, "\\$&")).maybeSingle();
+      const [{ data: existing }, { data: roleRow }] = prof
+        ? await Promise.all([admin.auth.admin.getUserById(prof.id), admin.from("user_roles").select("role").eq("user_id", prof.id).maybeSingle()])
+        : [{ data: null }, { data: null }];
+      if (!prof || !invitePending(existing?.user) || !isStaffRole(roleRow?.role)) {
+        return NextResponse.json({ error: "That email already has an account. Find it under Add existing account instead." }, { status: 400 });
+      }
+      return resendInvite(admin, caller, request, prof.id, email, roleRow!.role as string);
     }
     const userId = data.user.id;
     // The signup trigger made them a student; promote them straight away.
@@ -119,10 +164,10 @@ export async function POST(request: Request) {
     }
     await audit(admin, caller, "invite_staff", userId, { email, role });
 
-    const link = `${siteUrl(request)}/auth/confirm?token_hash=${encodeURIComponent(data.properties.hashed_token)}&type=invite&next=/reset-password`;
-    const emailed = await sendLinkEmail(email, "You've been added to the SB San Jose scholarship office",
+    const link = `${siteUrl(request)}/auth/confirm?token_hash=${encodeURIComponent(data.properties.hashed_token)}&type=invite&next=${encodeURIComponent("/reset-password?invite=1")}`;
+    const sent = await sendLinkEmail(email, INVITE_SUBJECT,
       `You now have ${ROLE_LABEL[role]} access to the scholarship portal. Set a password to sign in.`, link, "Set your password");
-    return NextResponse.json({ ok: true, emailed, link: emailed ? null : link });
+    return NextResponse.json(linkResult(sent, link));
   }
 
   const userId = String(body?.userId ?? "");
@@ -139,8 +184,27 @@ export async function POST(request: Request) {
       if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
     }
     // Sessions that already passed 2FA would otherwise stay signed in.
-    await admin.rpc("revoke_user_sessions", { _user_id: userId });
-    await audit(admin, caller, "reset_staff_2fa", userId, { factors_removed: data?.factors?.length ?? 0 });
+    const { error: revokeErr } = await admin.rpc("revoke_user_sessions", { _user_id: userId });
+    await audit(admin, caller, "reset_staff_2fa", userId, { factors_removed: data?.factors?.length ?? 0, signed_out: !revokeErr });
+    if (revokeErr) {
+      return NextResponse.json({ error: `Two-factor was removed, but their sessions could not be ended: ${revokeErr.message}. Use Sign out everywhere.` }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  if (action === "resend_invite" || action === "cancel_invite") {
+    const { data: u } = await admin.auth.admin.getUserById(userId);
+    if (!invitePending(u?.user)) return NextResponse.json({ error: "They already set a password, so there is no invite to change" }, { status: 400 });
+
+    if (action === "resend_invite") {
+      if (!u?.user?.email) return NextResponse.json({ error: "That account has no email address" }, { status: 400 });
+      return resendInvite(admin, caller, request, userId, u.user.email, roleRow!.role as string);
+    }
+
+    // Deleting the account (and with it the role and profile) makes the old link useless.
+    const { error } = await admin.auth.admin.deleteUser(userId);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    await audit(admin, caller, "cancel_staff_invite", userId, { email: u?.user?.email ?? null, role: roleRow!.role });
     return NextResponse.json({ ok: true });
   }
 
@@ -158,10 +222,10 @@ export async function POST(request: Request) {
     const { data, error } = await admin.auth.admin.generateLink({ type: "recovery", email });
     if (error || !data) return NextResponse.json({ error: error?.message ?? "Could not create the link" }, { status: 500 });
     const link = `${siteUrl(request)}/auth/confirm?token_hash=${encodeURIComponent(data.properties.hashed_token)}&type=recovery&next=/reset-password`;
-    const emailed = await sendLinkEmail(email, "Reset your scholarship portal password",
+    const sent = await sendLinkEmail(email, "Reset your scholarship portal password",
       "A super admin started a password reset for your staff account. Choose a new password to sign in again.", link, "Choose a new password");
-    await audit(admin, caller, "reset_staff_password", userId, { emailed });
-    return NextResponse.json({ ok: true, emailed, link: emailed ? null : link });
+    await audit(admin, caller, "reset_staff_password", userId, { emailed: sent.emailed });
+    return NextResponse.json(linkResult(sent, link));
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });
