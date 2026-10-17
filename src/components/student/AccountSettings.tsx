@@ -11,6 +11,7 @@ import { AppDialog, DialogField } from "@/components/AppDialog";
 import { Panel, SectionTitle } from "@/components/student/ui";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/format";
+import { downloadMyDataPDF } from "@/lib/my-data-pdf";
 import { emailChangeSchema, passwordSchema } from "@/validations/profile";
 import type { Tables } from "@/integrations/supabase/types";
 
@@ -81,14 +82,19 @@ export default function AccountSettings({ userId, userEmail, profile, dataReques
   const exportData = async () => {
     setExporting(true);
     try {
-      const tables = ["applications", "documents", "payments", "payment_issues", "grade_updates", "notifications", "data_requests"] as const;
-      const results = await Promise.all(tables.map((t) => supabase.from(t).select("*").eq("user_id", userId)));
-      const data: Record<string, unknown> = { exported_at: new Date().toISOString(), profile, email: userEmail };
-      tables.forEach((t, i) => { data[t] = results[i].data ?? []; });
-      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
-      const a = document.createElement("a");
-      a.href = url; a.download = `my-data-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      const tables = [
+        ["applications", "Applications", "Application"],
+        ["documents", "Documents", "Document"],
+        ["payments", "Payments", "Payment"],
+        ["payment_issues", "Payment Issues", "Issue"],
+        ["grade_updates", "Grade Updates", "Grade update"],
+        ["notifications", "Notifications", "Notification"],
+        ["data_requests", "Data Requests", "Request"],
+      ] as const;
+      const results = await Promise.all(tables.map(([t]) => supabase.from(t).select("*").eq("user_id", userId)));
+      await downloadMyDataPDF(userEmail, profile, tables.map(([, title, itemLabel], i) => ({ title, itemLabel, rows: (results[i].data ?? []) as Record<string, unknown>[] })));
+    } catch (e) {
+      toast.error("Could not create the PDF", { description: e instanceof Error ? e.message : undefined });
     } finally {
       setExporting(false);
     }
