@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, Camera, CheckCircle, Loader2, Lock, Upload, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,26 @@ const toForm = (p: Tables<"profiles"> | null): StudentProfileForm => ({
   student_id_number: p?.student_id_number ?? "",
 });
 
+// Locked once this year's scholarship is approved (the `locked` prop).
+const LOCKED_KEYS = ["first_name", "middle_name", "last_name", "dob", "sex", "year_level", "school_name", "course"] as const;
+const AUTOSAVE_MS = 1500;
+
+// Unsaved profile edits are kept per student in this browser until they reach the server.
+const draftKey = (userId: string) => `profile-draft:${userId}`;
+function readDraft(userId: string): Record<string, unknown> | null {
+  try {
+    const raw = localStorage.getItem(draftKey(userId));
+    const draft = raw ? JSON.parse(raw) : null;
+    return draft && typeof draft === "object" ? draft : null;
+  } catch { return null; }
+}
+function writeDraft(userId: string, form: StudentProfileForm | null) {
+  try {
+    if (form) localStorage.setItem(draftKey(userId), JSON.stringify(form));
+    else localStorage.removeItem(draftKey(userId));
+  } catch { /* storage blocked: auto-save to the server still works */ }
+}
+
 function Field({ label, error, hint, children, className = "" }: {
   label: string; error?: string; hint?: React.ReactNode; children: React.ReactNode; className?: string;
 }) {
@@ -62,19 +82,71 @@ export default function ProfileSection({ profile, userId, userEmail, application
   const { settings } = useSystemSettings();
 
   // ── profile form ──
-  const [form, setForm] = useState<StudentProfileForm>(() => toForm(profile));
+  const idsLocked = applications.some((a) => a.status !== "Withdrawn");
+  // The saved profile plus any unsaved draft kept on this device; a draft never overrides locked fields.
+  const withDraft = (p: Tables<"profiles"> | null): StudentProfileForm => {
+    const base = toForm(p);
+    const draft = userId ? readDraft(userId) : null;
+    if (!draft) return base;
+    const merged = { ...base } as Record<string, string>;
+    for (const k of Object.keys(base)) if (typeof draft[k] === "string") merged[k] = draft[k];
+    if (locked) for (const k of LOCKED_KEYS) merged[k] = base[k];
+    if (idsLocked) merged.student_id_number = base.student_id_number;
+    return merged as StudentProfileForm;
+  };
+  const [form, setForm] = useState<StudentProfileForm>(() => withDraft(profile));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-  useEffect(() => { setForm(toForm(profile)); setErrors({}); }, [profile]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setForm(withDraft(profile)); setErrors({}); }, [profile, userId, locked, idsLocked]);
 
   const saved = useMemo(() => toForm(profile), [profile]);
   const dirty = JSON.stringify(form) !== JSON.stringify(saved);
+  const valid = useMemo(() => studentProfileSchema.safeParse(form).success, [form]);
   const set = <K extends keyof StudentProfileForm>(key: K, value: StudentProfileForm[K]) => {
     setForm((f) => ({ ...f, [key]: value }));
     setErrors((e) => ({ ...e, [key]: "" }));
   };
-  const idsLocked = applications.some((a) => a.status !== "Withdrawn");
   const completeness = profileCompleteness(profile);
+
+  // Every change is kept on this device right away, so a refresh or a tab switch loses nothing.
+  useEffect(() => { if (userId) writeDraft(userId, dirty ? form : null); }, [form, dirty, userId]);
+
+  // ── auto-save: once the details are valid, they save themselves a moment after the student stops typing ──
+  const formRef = useRef(form);
+  formRef.current = form;
+  const failedRef = useRef<string | null>(null);
+  const [autoState, setAutoState] = useState<"idle" | "saved" | "error">("idle");
+
+  const persist = async (data: StudentProfileForm, auto: boolean) => {
+    const sent = JSON.stringify(formRef.current);
+    setAutoState("idle");
+    setSaving(true);
+    // Empty text is stored as null so "not filled in" is one state.
+    const payload = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v === "" ? null : v]));
+    const { error } = await supabase.from("profiles").update(payload).eq("id", userId);
+    setSaving(false);
+    if (error) {
+      if (auto) { failedRef.current = sent; setAutoState("error"); } else toast.error("Could not save", { description: error.message });
+      return;
+    }
+    failedRef.current = null;
+    // Nothing typed while saving: drop the draft so the reloaded profile (trimmed by the server) takes over.
+    if (JSON.stringify(formRef.current) === sent && userId) writeDraft(userId, null);
+    setAutoState("saved");
+    if (!auto) toast.success("Profile saved");
+    onChanged();
+  };
+
+  useEffect(() => {
+    if (!dirty || saving || !userId) return;
+    if (failedRef.current === JSON.stringify(form)) return;
+    const parsed = studentProfileSchema.safeParse(form);
+    if (!parsed.success) return;
+    const t = setTimeout(() => { void persist(parsed.data, true); }, AUTOSAVE_MS);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, dirty, saving, userId]);
 
   const schools = withCurrent(schoolsFor(form.year_level), form.school_name);
   const courses = withCurrent(coursesFor(form.year_level, form.school_name), form.course);
@@ -95,14 +167,7 @@ export default function ProfileSection({ profile, userId, userEmail, application
       toast.error("Check the highlighted fields");
       return;
     }
-    setSaving(true);
-    // Empty text is stored as null so "not filled in" is one state.
-    const payload = Object.fromEntries(Object.entries(parsed.data).map(([k, v]) => [k, v === "" ? null : v]));
-    const { error } = await supabase.from("profiles").update(payload).eq("id", userId);
-    setSaving(false);
-    if (error) { toast.error("Could not save", { description: error.message }); return; }
-    toast.success("Profile saved");
-    onChanged();
+    await persist(parsed.data, false);
   };
 
   // ── photo ──
@@ -291,7 +356,15 @@ export default function ProfileSection({ profile, userId, userEmail, application
             <Button disabled={!dirty || saving} className="bg-primary hover:bg-primary text-white rounded-xl px-6" onClick={save}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Save changes
             </Button>
-            {dirty && <span className="text-xs text-amber-700">You have unsaved changes.</span>}
+            {saving || (dirty && valid && autoState !== "error") ? (
+              <span className="text-xs text-muted-foreground">Saving…</span>
+            ) : dirty && autoState === "error" ? (
+              <span className="text-xs text-red-600">Couldn&apos;t save automatically. Your changes are kept on this device. Press Save changes to try again.</span>
+            ) : dirty ? (
+              <span className="text-xs text-amber-700">Draft kept on this device. It saves automatically once the details are complete and valid.</span>
+            ) : autoState === "saved" ? (
+              <span className="inline-flex items-center gap-1 text-xs text-emerald-700"><CheckCircle className="h-3.5 w-3.5" />All changes saved</span>
+            ) : null}
             {dirty && <Button variant="ghost" className="rounded-xl text-xs" onClick={() => { setForm(saved); setErrors({}); }}>Discard</Button>}
           </div>
         </div>
