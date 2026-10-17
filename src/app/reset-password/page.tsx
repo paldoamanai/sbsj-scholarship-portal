@@ -13,7 +13,7 @@ import { KeyRound, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { PASSWORD_HINT, passwordProblem } from "@/validations/auth";
 
-/** Reached from the reset email: /auth/callback signs the person in, then sends them here. */
+/** Reached from a reset email or a staff invite (?invite=1): the link signs the person in, then sends them here. */
 export default function ResetPasswordPage() {
   const router = useRouter();
   const [ready, setReady] = useState<"checking" | "ok" | "expired">("checking");
@@ -21,8 +21,10 @@ export default function ResetPasswordPage() {
   const [confirm, setConfirm] = useState("");
   const [errors, setErrors] = useState<{ password?: string; confirm?: string }>({});
   const [loading, setLoading] = useState(false);
+  const [invite, setInvite] = useState(false);
 
   useEffect(() => {
+    setInvite(new URLSearchParams(window.location.search).get("invite") === "1");
     createClient().auth.getUser().then(({ data }) => setReady(data.user ? "ok" : "expired"));
   }, []);
 
@@ -37,7 +39,8 @@ export default function ResetPasswordPage() {
 
     setLoading(true);
     const supabase = createClient();
-    const { error } = await supabase.auth.updateUser({ password });
+    // password_set ends a staff invite's "pending" state in the admin panel.
+    const { error } = await supabase.auth.updateUser({ password, data: { password_set: true } });
     if (error) {
       setLoading(false);
       toast.error("Could not change your password", { description: error.message });
@@ -45,7 +48,7 @@ export default function ResetPasswordPage() {
     }
     // Sign out so the next login goes through the normal steps (including two-factor, if on).
     await supabase.auth.signOut();
-    toast.success("Password changed", { description: "Log in with your new password." });
+    toast.success(invite ? "Password set" : "Password changed", { description: "Log in with your new password." });
     router.push("/login");
   };
 
@@ -60,12 +63,15 @@ export default function ResetPasswordPage() {
                 <KeyRound className="h-7 w-7 text-orange-600" />
               </div>
             </div>
-            <CardTitle className="font-display text-2xl">Set a new password</CardTitle>
-            {ready === "expired" && <CardDescription>This reset link is invalid or has expired.</CardDescription>}
+            <CardTitle className="font-display text-2xl">{invite ? "Set your password" : "Set a new password"}</CardTitle>
+            {ready === "ok" && invite && <CardDescription>Welcome to the scholarship office. Choose a password for your staff account.</CardDescription>}
+            {ready === "expired" && <CardDescription>{invite
+              ? "This invite link is invalid or has expired. Ask your super admin to send the invite again."
+              : "This reset link is invalid or has expired."}</CardDescription>}
           </CardHeader>
           <CardContent>
             {ready === "checking" && <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
-            {ready === "expired" && (
+            {ready === "expired" && !invite && (
               <Button asChild className="w-full bg-gradient-primary shadow-primary"><Link href="/forgot-password">Send a new link</Link></Button>
             )}
             {ready === "ok" && (
@@ -84,7 +90,7 @@ export default function ResetPasswordPage() {
                 </div>
                 <Button type="submit" className="w-full bg-gradient-primary shadow-primary" disabled={loading}>
                   {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Change password
+                  {invite ? "Set password" : "Change password"}
                 </Button>
               </form>
             )}

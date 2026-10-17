@@ -33,7 +33,7 @@ type Props = {
 type Person = { id: string; email: string | null; name: string; role: string };
 type Security = { lastSignInAt: string | null; mfa: boolean; invited: boolean };
 type Pending = { person: Person; to: string };
-type SecAction = { person: Person; action: "reset_mfa" | "sign_out" | "reset_password" };
+type SecAction = { person: Person; action: "reset_mfa" | "sign_out" | "reset_password" | "resend_invite" | "cancel_invite" };
 
 const nameOf = (p: { first_name: string | null; last_name: string | null; email: string | null }) =>
   [p.first_name, p.last_name].filter(Boolean).join(" ") || p.email || "Unnamed account";
@@ -56,6 +56,16 @@ const SEC_COPY: Record<SecAction["action"], { title: (n: string) => string; body
     body: () => "They get an email with a one-time link to choose a new password. Their current password keeps working until they do.",
     done: "Password reset link created",
   },
+  resend_invite: {
+    title: (n) => `Send ${n} a new invite link?`,
+    body: () => "They get a fresh link to set their password, at the role they already have. Any earlier link stops working.",
+    done: "New invite link sent",
+  },
+  cancel_invite: {
+    title: (n) => `Cancel ${n}'s invite?`,
+    body: (n) => `Deletes the account created for ${n}, so their invite link stops working. You can invite them again later.`,
+    done: "Invite cancelled",
+  },
 };
 
 /** Super admin page: who has staff access, their roles and account security, and adding new staff. */
@@ -75,7 +85,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
   const [invite, setInvite] = useState({ email: "", firstName: "", lastName: "", role: "reviewer" });
   const [inviting, setInviting] = useState(false);
   // A link to hand over in person when the portal can't send email.
-  const [shareLink, setShareLink] = useState<{ title: string; link: string } | null>(null);
+  const [shareLink, setShareLink] = useState<{ title: string; link: string; reason?: string } | null>(null);
 
   const loadSecurity = useCallback(async () => {
     const res = await fetch("/api/admin/staff").catch(() => null);
@@ -127,10 +137,18 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
   const apply = async () => {
     if (!pending) return;
     setBusy(true);
+    // End their sessions first: once they are a student, the staff API no longer acts on the account.
+    if (pending.to === "student") {
+      const r = await post({ action: "sign_out", userId: pending.person.id });
+      if (!r.ok) { setBusy(false); setPending(null); toast.error("Staff access not removed", { description: r.error }); return; }
+    }
     const { error } = await supabase.rpc("set_user_role", { _user_id: pending.person.id, _role: pending.to });
     setBusy(false);
     setPending(null);
-    if (error) { toast.error("Role not changed", { description: error.message }); return; }
+    if (error) {
+      toast.error("Role not changed", { description: pending.to === "student" ? `${error.message} They were signed out, but still have staff access.` : error.message });
+      return;
+    }
     toast.success(`${pending.person.name} is now ${pending.to === "student" ? "a student account" : ROLE_LABEL[pending.to]}`);
     setFound(null);
     setEmail("");
@@ -154,9 +172,12 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
     const { person, action } = secAction;
     setSecAction(null);
     if (!r.ok) { toast.error("Not done", { description: r.error }); return; }
-    if (r.body?.link) setShareLink({ title: `Password reset link for ${person.name}`, link: r.body.link });
-    else toast.success(SEC_COPY[action].done, { description: action === "reset_password" ? `Emailed to ${person.email}` : undefined });
-    loadSecurity();
+    const emailed = action === "reset_password" || action === "resend_invite";
+    if (r.body?.link) {
+      setShareLink({ title: `${action === "resend_invite" ? "New invite" : "Password reset"} link for ${person.name}`, link: r.body.link, reason: r.body.reason });
+    } else toast.success(SEC_COPY[action].done, { description: emailed ? `Emailed to ${person.email}` : undefined });
+    if (action === "cancel_invite") await load();
+    else loadSecurity();
     onChanged();
   };
 
@@ -166,15 +187,15 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
     const r = await post({ action: "invite", ...invite });
     setInviting(false);
     if (!r.ok) { toast.error("Invite not sent", { description: r.error }); return; }
-    if (r.body?.link) setShareLink({ title: `Invite link for ${invite.firstName}`, link: r.body.link });
-    else toast.success(`Invite emailed to ${invite.email}`);
+    if (r.body?.link) setShareLink({ title: `${r.body.resent ? "New invite" : "Invite"} link for ${invite.firstName}`, link: r.body.link, reason: r.body.reason });
+    else toast.success(r.body?.resent ? `They hadn't finished their invite. A new link was emailed to ${invite.email}` : `Invite emailed to ${invite.email}`);
     setInvite({ email: "", firstName: "", lastName: "", role: "reviewer" });
     await load();
     onChanged();
   };
 
   const describe = (p: Pending) => {
-    if (p.to === "student") return `${p.person.name} loses access to the admin panel straight away and becomes a regular student account.`;
+    if (p.to === "student") return `${p.person.name} loses access to the admin panel straight away, is signed out everywhere and becomes a regular student account.`;
     if (p.to === "super_admin" && p.person.id === userId) {
       return "You become the first super admin. From then on, only super admins can change settings and manage staff.";
     }
@@ -259,7 +280,14 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
                               {onShowActivity && (
                                 <DropdownMenuItem onClick={() => onShowActivity(s.id)}><History className="mr-2 h-4 w-4" />View activity</DropdownMenuItem>
                               )}
-                              {!self && <>
+                              {!self && sec?.invited && <>
+                                <DropdownMenuItem onClick={() => setSecAction({ person: s, action: "resend_invite" })}><MailPlus className="mr-2 h-4 w-4" />Resend invite</DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setSecAction({ person: s, action: "cancel_invite" })}>
+                                  <UserMinus className="mr-2 h-4 w-4" />Cancel invite
+                                </DropdownMenuItem>
+                              </>}
+                              {!self && !sec?.invited && <>
                                 <DropdownMenuItem onClick={() => setSecAction({ person: s, action: "reset_password" })}><KeyRound className="mr-2 h-4 w-4" />Send password reset</DropdownMenuItem>
                                 <DropdownMenuItem disabled={!sec?.mfa} onClick={() => setSecAction({ person: s, action: "reset_mfa" })}><ShieldOff className="mr-2 h-4 w-4" />Turn off two-factor</DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => setSecAction({ person: s, action: "sign_out" })}><LogOut className="mr-2 h-4 w-4" />Sign out everywhere</DropdownMenuItem>
@@ -285,7 +313,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Invite new staff</CardTitle>
-            <CardDescription>Creates the account and emails them a link to set a password. Use this for people who don&apos;t have a portal account yet.</CardDescription>
+            <CardDescription>Creates the account and emails them a link to set a password. Use this for people who don&apos;t have a portal account yet. If an earlier invite expired before they set a password, invite them again for a new link.</CardDescription>
           </CardHeader>
           <CardContent>
             <form className="space-y-3" onSubmit={sendInvite}>
@@ -382,7 +410,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
           <AlertDialogHeader>
             <AlertDialogTitle className="font-display">{shareLink?.title}</AlertDialogTitle>
             <AlertDialogDescription>
-              Email isn&apos;t set up on this portal, so give them this one-time link yourself, in person or through a private message. Anyone with the link can sign in to this account.
+              {shareLink?.reason ?? "The email could not be sent."} Give them this one-time link yourself, in person or through a private message. Anyone with the link can sign in to this account.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Input readOnly value={shareLink?.link ?? ""} onFocus={(e) => e.target.select()} className="font-mono text-xs" />
