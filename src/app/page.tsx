@@ -33,7 +33,7 @@ export default async function Page() {
       {
         "@type": "GovernmentOrganization",
         "@id": `${siteUrl}/#organization`,
-        name: "Sangguniang Bayan ng San Jose",
+        name: "Local Government Unit of San Jose, Occidental Mindoro",
         url: siteUrl,
         logo: new URL("/municipal-logo.png", siteUrl).toString(),
         email: s.contact_email || undefined,

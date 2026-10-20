@@ -1538,7 +1538,7 @@ export default function StudentDashboardPage() {
             <Image src="/municipal-logo.png" alt="Logo" width={36} height={36} className="h-9 w-9 object-cover" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-display font-bold text-sidebar-foreground truncate">SB San Jose</p>
+            <p className="text-sm font-display font-bold text-sidebar-foreground truncate">San Jose</p>
             <p className="text-xs text-muted-foreground">Scholarship Portal</p>
           </div>
           <button className="lg:hidden ml-auto -mr-2 h-10 w-10 flex items-center justify-center rounded-xl text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent" onClick={() => setSidebarOpen(false)} aria-label="Close menu">

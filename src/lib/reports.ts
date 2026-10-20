@@ -740,7 +740,7 @@ export async function renderPDF(def: ReportDef, file: string, opts: ExportOpts =
   const pageH = doc.internal.pageSize.getHeight();
   const clean = (t: string) => t.replace(/₱/g, "PHP ");
   doc.setFontSize(16);
-  doc.text(opts.programName || "SB San Jose Scholarship Portal", 14, 15);
+  doc.text(opts.programName || "San Jose Scholarship Portal", 14, 15);
   doc.setFontSize(12);
   doc.text(clean(def.title), 14, 22);
   doc.setFontSize(9);
@@ -799,7 +799,7 @@ export async function renderPDF(def: ReportDef, file: string, opts: ExportOpts =
 export async function renderExcel(def: ReportDef, file: string, opts: Pick<ExportOpts, "generatedBy" | "programName"> = {}) {
   const XLSX = await import("xlsx");
   const wb = XLSX.utils.book_new();
-  const about = [[opts.programName || "SB San Jose Scholarship Portal"], [def.title], [`Generated ${new Date().toLocaleString()}${opts.generatedBy ? ` by ${opts.generatedBy}` : ""}`], ...def.filters.map((f) => [f]), ...(def.notes ?? []).map((n) => [n])];
+  const about = [[opts.programName || "San Jose Scholarship Portal"], [def.title], [`Generated ${new Date().toLocaleString()}${opts.generatedBy ? ` by ${opts.generatedBy}` : ""}`], ...def.filters.map((f) => [f]), ...(def.notes ?? []).map((n) => [n])];
   const aboutSheet = XLSX.utils.aoa_to_sheet(about);
   aboutSheet["!cols"] = [{ wch: 90 }];
   XLSX.utils.book_append_sheet(wb, aboutSheet, "About");

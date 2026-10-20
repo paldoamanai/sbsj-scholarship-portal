@@ -8,12 +8,12 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: "San Jose Scholarship & Financial Assistance",
   description:
-    "Sangguniang Bayan ng San Jose Scholarship Portal. Apply, track, and receive scholarships transparently.",
+    "San Jose Scholarship Portal. Apply, track, and receive scholarships transparently.",
   openGraph: {
     title: "San Jose Scholarship & Financial Assistance",
     description:
       "Apply, track, and receive scholarships transparently. Built for the students of San Jose, Occidental Mindoro.",
-    siteName: "SB San Jose Scholarship Portal",
+    siteName: "San Jose Scholarship Portal",
     type: "website",
     locale: "en_PH",
     images: [{ url: "/hero-bg.jpg", alt: "San Jose, Occidental Mindoro" }],

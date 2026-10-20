@@ -95,7 +95,7 @@ export async function POST(request: Request) {
       <h2 style="margin:0 0 12px;color:#111">${escapeHtml(record.title)}</h2>
       <p style="margin:0 0 20px;color:#444;line-height:1.5">${escapeHtml(record.message)}</p>
       ${url ? `<a href="${escapeHtml(url)}" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Open in the portal</a>` : ""}
-      <p style="margin:24px 0 0;color:#888;font-size:12px">SB San Jose Scholarship Portal. ${prefsUrl
+      <p style="margin:24px 0 0;color:#888;font-size:12px">San Jose Scholarship Portal. ${prefsUrl
         ? `<a href="${escapeHtml(prefsUrl)}" style="color:#888">Manage which emails you receive</a>.`
         : "You can change which emails you receive under Settings in the portal."}</p>
     </div>`;
@@ -104,7 +104,7 @@ export async function POST(request: Request) {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      from: process.env.EMAIL_FROM || "SBSJ Scholarship <onboarding@resend.dev>",
+      from: process.env.EMAIL_FROM || "San Jose Scholarship <onboarding@resend.dev>",
       to,
       subject: record.title,
       html,

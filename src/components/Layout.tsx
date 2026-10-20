@@ -25,7 +25,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
           <Link href="/" className="group flex min-w-0 items-center gap-3">
             <Image
               src="/municipal-logo.png"
-              alt="SB San Jose Logo"
+              alt="Municipality of San Jose seal"
               width={48}
               height={48}
               priority
@@ -42,8 +42,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
                   overlay ? "text-orange-200" : "text-primary"
                 )}
               >
-                <span className="sm:hidden">SB San Jose</span>
-                <span className="hidden sm:inline">Sangguniang Bayan ng San Jose</span>
+                San Jose
               </p>
               <p
                 className={cn(

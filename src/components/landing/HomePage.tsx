@@ -9,7 +9,7 @@ import ScholarshipCard from "@/components/ScholarshipCard";
 import { applyHref, type PublicScholarship } from "@/lib/scholarships";
 import { formatDate } from "@/lib/format";
 import { applicationsBlock, type AppSettings } from "@/lib/settings";
-import { landingCopy, LANDING_LANGS, type LandingLang } from "@/lib/landing-copy";
+import { landingCopy } from "@/lib/landing-copy";
 import FloatingActions from "@/components/FloatingActions";
 import ContactForm from "@/components/ContactForm";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -24,7 +24,7 @@ import {
   GraduationCap, ArrowRight, Zap, BarChart3, Wallet, Bell,
   UserPlus, FileText, Search, CheckCircle2, Mail, Phone, MapPin, ChevronDown, Clock,
   CalendarDays, Users, Layers, ClipboardCheck, ShieldCheck, Megaphone, AlertCircle, RefreshCw,
-  LayoutDashboard, Languages, ExternalLink,
+  LayoutDashboard, ExternalLink,
 } from "lucide-react";
 
 export type PublicStats = { scholars: number; active_programs: number; applications_received: number };
@@ -108,25 +108,6 @@ function SectionHeading({ parts }: { parts: string[] }) {
   );
 }
 
-// ─── Language (remembered per browser) ────────────────────────────────────────
-
-const LANG_KEY = "landing-lang";
-
-function useLandingLang(): [LandingLang, (l: LandingLang) => void] {
-  const [lang, setLang] = useState<LandingLang>("en");
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(LANG_KEY);
-      if (saved === "en" || saved === "fil") setLang(saved);
-    } catch { /* storage unavailable */ }
-  }, []);
-  const choose = useCallback((l: LandingLang) => {
-    setLang(l);
-    try { localStorage.setItem(LANG_KEY, l); } catch { /* storage unavailable */ }
-  }, []);
-  return [lang, choose];
-}
-
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
 const featureIcons = [Zap, BarChart3, Wallet, Bell];
@@ -142,7 +123,6 @@ export default function HomePage({ initial }: { initial: HomePageData }) {
   const { signedIn, dashboardHref } = useAccountLink();
   const { settings: liveSettings, loaded: settingsLoaded } = useSystemSettings();
   const settings = settingsLoaded ? liveSettings : initial.settings;
-  const [lang, setLang] = useLandingLang();
 
   const [scholarships, setScholarships] = useState<PublicScholarship[]>(initial.scholarships ?? []);
   const [scholarshipsLoading, setScholarshipsLoading] = useState(initial.scholarships === null);
@@ -202,7 +182,7 @@ export default function HomePage({ initial }: { initial: HomePageData }) {
   const openCount = scholarships.filter((x) => x.availability === "open").length;
 
   const block = applicationsBlock(settings);
-  const t = landingCopy(lang, settings, block);
+  const t = landingCopy(settings, block);
 
   const contactItems = [
     { icon: Mail,   label: t.contact.email,  value: settings.contact_email,   href: settings.contact_email ? `mailto:${settings.contact_email}` : undefined },
@@ -233,7 +213,7 @@ export default function HomePage({ initial }: { initial: HomePageData }) {
 
   return (
     <Layout>
-      <div lang={lang === "fil" ? "fil" : "en"}>
+      <div>
 
       {/* ── Hero ──────────────────────────────────────── */}
       <section className="relative min-h-[100svh] flex items-center overflow-hidden pt-28 pb-16">
@@ -250,34 +230,6 @@ export default function HomePage({ initial }: { initial: HomePageData }) {
 
         <div className="container relative z-10">
           <div className="max-w-3xl space-y-7 animate-fade-in-up">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-sm text-white backdrop-blur-md">
-                <GraduationCap className="h-4 w-4 text-orange-400" />
-                Sangguniang Bayan ng San Jose
-              </div>
-              <div
-                role="group"
-                aria-label={t.languageLabel}
-                className="inline-flex items-center gap-1 rounded-full border border-white/20 bg-black/20 p-1 text-xs text-white backdrop-blur-md"
-              >
-                <Languages className="ml-1.5 h-3.5 w-3.5 text-white/70" aria-hidden />
-                {LANDING_LANGS.map((l) => (
-                  <button
-                    key={l.code}
-                    type="button"
-                    lang={l.code}
-                    aria-pressed={lang === l.code}
-                    onClick={() => setLang(l.code)}
-                    className={cn(
-                      "rounded-full px-3 py-1 font-medium transition-colors cursor-pointer",
-                      lang === l.code ? "bg-white text-foreground" : "text-white/80 hover:bg-white/15"
-                    )}
-                  >
-                    {l.label}
-                  </button>
-                ))}
-              </div>
-            </div>
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-display font-bold text-white leading-[1.05] tracking-tight drop-shadow-xl text-balance">
               {t.hero.title[0]}<br />
               <span className="text-orange-400">{t.hero.title[1]}</span>
@@ -665,8 +617,7 @@ export default function HomePage({ initial }: { initial: HomePageData }) {
               <Image src="/municipal-logo.png" alt="Municipality of San Jose seal" width={56} height={56} className="h-14 w-14" />
               <div>
                 <p className="text-xs font-bold tracking-[0.2em] uppercase text-primary">{t.offeredBy.label}</p>
-                <p className="font-display font-bold text-foreground">Sangguniang Bayan ng San Jose</p>
-                <p className="text-sm text-muted-foreground">{t.offeredBy.sub}</p>
+                <p className="font-display font-bold text-foreground">{t.offeredBy.sub}</p>
               </div>
             </div>
           </Reveal>

@@ -67,7 +67,7 @@ async function sendLinkEmail(to: string, subject: string, intro: string, link: s
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: process.env.EMAIL_FROM || "SBSJ Scholarship <onboarding@resend.dev>", to, subject, html }),
+    body: JSON.stringify({ from: process.env.EMAIL_FROM || "San Jose Scholarship <onboarding@resend.dev>", to, subject, html }),
   }).catch(() => null);
   if (res?.ok) return { emailed: true };
   // Resend explains itself, e.g. its test sender only delivers to the Resend account owner.
@@ -87,7 +87,7 @@ const invitePending = (u: { invited_at?: string; last_sign_in_at?: string; user_
   return set === false || (set === undefined && !u.last_sign_in_at);
 };
 
-const INVITE_SUBJECT = "You've been added to the SB San Jose scholarship office";
+const INVITE_SUBJECT = "You've been added to the Mayor Office scholarship staff";
 
 /** A fresh set-your-password link for an invite that is still pending, at the account's current role. */
 async function resendInvite(admin: SupabaseClient, caller: Caller, request: Request, userId: string, email: string, role: string) {

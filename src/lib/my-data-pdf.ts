@@ -39,7 +39,7 @@ export async function downloadMyDataPDF(email: string, profile: Row | null, sect
   const lastY = () => (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
 
   doc.setFont("helvetica", "bold").setFontSize(16);
-  doc.text("SB San Jose Scholarship Portal", left, 16);
+  doc.text("San Jose Scholarship Portal", left, 16);
   doc.setFontSize(12);
   doc.text("My Data", left, 23);
   doc.setFont("helvetica", "normal").setFontSize(9);
