@@ -144,7 +144,7 @@ export default function SettingsPanel({ rows, auditLogs, onSave, readOnly = fals
       {readOnly && (
         <div className="flex items-start gap-3 rounded-lg border bg-muted/50 p-3 text-sm">
           <Lock className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
-          <p>Only a super admin can change these settings. You can view them, and every change is listed under Recent Changes.</p>
+          <p>Only the Mayor Office can change these settings. You can view them, and every change is listed under Recent Changes.</p>
         </div>
       )}
 

@@ -1041,6 +1041,12 @@ export type Database = {
         }
         Returns: boolean
       }
+      delete_scholarship_cascade: {
+        Args: {
+          _scholarship_id: string
+        }
+        Returns: Json
+      }
       set_user_role: {
         Args: {
           _user_id: string

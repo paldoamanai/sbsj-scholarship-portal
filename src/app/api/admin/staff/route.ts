@@ -26,7 +26,7 @@ async function authorize(): Promise<{ caller: Caller; admin: SupabaseClient } | 
     supabase.rpc("can_manage_settings", { _user_id: user.id }),
     supabase.rpc("mfa_ok", { _user: user.id }),
   ]);
-  if (canManage !== true) return NextResponse.json({ error: "Only a super admin can do this" }, { status: 403 });
+  if (canManage !== true) return NextResponse.json({ error: "Only the Mayor Office can do this" }, { status: 403 });
   if (mfaOk !== true) return NextResponse.json({ error: "Two-factor verification required" }, { status: 401 });
 
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -223,7 +223,7 @@ export async function POST(request: Request) {
     if (error || !data) return NextResponse.json({ error: error?.message ?? "Could not create the link" }, { status: 500 });
     const link = `${siteUrl(request)}/auth/confirm?token_hash=${encodeURIComponent(data.properties.hashed_token)}&type=recovery&next=/reset-password`;
     const sent = await sendLinkEmail(email, "Reset your scholarship portal password",
-      "A super admin started a password reset for your staff account. Choose a new password to sign in again.", link, "Choose a new password");
+      "The Mayor Office started a password reset for your staff account. Choose a new password to sign in again.", link, "Choose a new password");
     await audit(admin, caller, "reset_staff_password", userId, { emailed: sent.emailed });
     return NextResponse.json(linkResult(sent, link));
   }

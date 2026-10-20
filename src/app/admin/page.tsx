@@ -134,6 +134,7 @@ export default function AdminDashboardPage() {
   const [deleteSch, setDeleteSch] = useState<Tables<"scholarships"> | null>(null);
   // Deleting a program is permanent, so the super admin types its name to confirm.
   const [deleteSchText, setDeleteSchText] = useState("");
+  const [deletingSch, setDeletingSch] = useState(false);
   const [fundPeriod, setFundPeriod] = useState("all"); // shared by Fund Management and Reports
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -663,17 +664,23 @@ export default function AdminDashboardPage() {
     toast.success(`${sch.name} ${sch.is_active ? "disabled" : "enabled"}`); loadData();
   };
 
+  // Typing the name to confirm ignores case and extra spaces, so a name like "SBSJ  Merit " still matches.
+  const sameName = (a: string, b: string) => a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
   const confirmDeleteScholarship = async () => {
-    if (!deleteSch) return;
-    const { error } = await supabase.from("scholarships").delete().eq("id", deleteSch.id);
+    if (!deleteSch || deletingSch) return;
+    setDeletingSch(true);
+    // Removes the program with its applications, documents, notes and payments in one transaction.
+    const { data, error } = await supabase.rpc("delete_scholarship_cascade", { _scholarship_id: deleteSch.id });
+    setDeletingSch(false);
     if (error) {
       toast.error("Could not delete", {
-        description: error.code === "23503" ? "This program has applications, so it can't be deleted. Disable it instead." : error.message,
+        description: error.code === "PGRST202" ? "The database is missing delete_scholarship_cascade. Run migration 059 in Supabase." : error.message,
       });
       return;
     }
-    await logAudit("delete_scholarship", "scholarships", deleteSch.id, { name: deleteSch.name }, null);
-    toast.success("Scholarship deleted");
+    const removed = (data ?? {}) as { applications?: number; payments?: number };
+    await logAudit("delete_scholarship", "scholarships", deleteSch.id, { name: deleteSch.name, applications: removed.applications ?? 0, payments: removed.payments ?? 0 }, null);
+    toast.success("Scholarship deleted", removed.applications ? { description: `Also removed ${removed.applications} application${removed.applications === 1 ? "" : "s"} and ${removed.payments ?? 0} payment${removed.payments === 1 ? "" : "s"}.` } : undefined);
     setDeleteSch(null); setDeleteSchText(""); loadData();
   };
 
@@ -1502,7 +1509,7 @@ export default function AdminDashboardPage() {
         <div className="flex items-center gap-3 p-4 border-b">
           <Image src="/municipal-logo.png" alt="Logo" width={32} height={32} className="h-8 w-8" />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold truncate">SB San Jose Admin</p>
+            <p className="text-sm font-semibold truncate">Mayor Office</p>
             <p className="text-xs text-muted-foreground truncate">Scholarship System</p>
           </div>
           <button className="lg:hidden" onClick={() => setSidebarOpen(false)}><X className="h-5 w-5" /></button>
@@ -2020,13 +2027,18 @@ export default function AdminDashboardPage() {
                 description="This permanently removes the program and can't be undone."
                 footer={<>
                   <Button variant="outline" onClick={() => { setDeleteSch(null); setDeleteSchText(""); }}>Cancel</Button>
-                  <Button variant="destructive" disabled={!deleteSch || applicantCount(deleteSch.id) > 0 || deleteSchText.trim() !== deleteSch.name.trim()} onClick={confirmDeleteScholarship}>Delete program</Button>
+                  <Button variant="destructive" disabled={!deleteSch || deletingSch || !sameName(deleteSchText, deleteSch.name)} onClick={confirmDeleteScholarship}>
+                    {deletingSch && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Delete program
+                  </Button>
                 </>}>
-                {deleteSch && applicantCount(deleteSch.id) > 0 ? (
+                {deleteSch && applicantCount(deleteSch.id) > 0 && (
                   <DialogNote tone="warning" icon={<AlertTriangle className="h-3.5 w-3.5" />}>
-                    It has {applicantCount(deleteSch.id)} application{applicantCount(deleteSch.id) === 1 ? "" : "s"}, so it can&apos;t be deleted. Turn off &ldquo;Accepting applications&rdquo; instead.
+                    It has {applicantCount(deleteSch.id)} application{applicantCount(deleteSch.id) === 1 ? "" : "s"}
+                    {payments.some((p) => applications.some((a) => a.id === p.application_id && a.scholarship_id === deleteSch.id)) ? " with payments" : ""}.
+                    {" "}Deleting the program also deletes {applicantCount(deleteSch.id) === 1 ? "it" : "them"} and their documents, notes and payment records. To keep the records, turn off &ldquo;Accepting applications&rdquo; instead.
                   </DialogNote>
-                ) : deleteSch && (
+                )}
+                {deleteSch && (
                   <DialogField label={<>Type <strong>{deleteSch.name}</strong> to confirm</>} htmlFor="delete-sch-name">
                     <Input id="delete-sch-name" value={deleteSchText} onChange={(e) => setDeleteSchText(e.target.value)} autoComplete="off" />
                   </DialogField>
@@ -3031,7 +3043,7 @@ export default function AdminDashboardPage() {
                           <li key={r.id} className={`rounded-md border px-3 py-2 text-sm ${r.status === "Pending" ? "border-warning/40 bg-warning/5" : ""}`}>
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <span className="font-medium">Account deletion · {r.status} <span className="font-normal text-muted-foreground">· {new Date(r.created_at).toLocaleDateString()}</span></span>
-                              {r.status === "Pending" && !can.super && <span className="text-xs text-muted-foreground">A super admin handles this</span>}
+                              {r.status === "Pending" && !can.super && <span className="text-xs text-muted-foreground">The Mayor Office handles this</span>}
                               {r.status === "Pending" && can.super && (
                                 <span className="flex gap-1.5">
                                   <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setReqResponse(""); setHandleReq({ req: r, status: "Declined" }); }}>Decline</Button>

@@ -5,7 +5,7 @@ export const STAFF_ROLES = ["super_admin", "admin", "reviewer", "finance_admin"]
 export type StaffRole = (typeof STAFF_ROLES)[number];
 
 export const ROLE_LABEL: Record<string, string> = {
-  super_admin: "Super Admin", admin: "Admin", reviewer: "Reviewer", finance_admin: "Finance", student: "Student",
+  super_admin: "Mayor Office", admin: "Admin", reviewer: "Reviewer", finance_admin: "Finance", student: "Student",
 };
 
 export const ROLE_DESCRIPTION: Record<StaffRole, string> = {

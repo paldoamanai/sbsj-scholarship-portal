@@ -197,7 +197,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
   const describe = (p: Pending) => {
     if (p.to === "student") return `${p.person.name} loses access to the admin panel straight away, is signed out everywhere and becomes a regular student account.`;
     if (p.to === "super_admin" && p.person.id === userId) {
-      return "You become the first super admin. From then on, only super admins can change settings and manage staff.";
+      return "You become the first Mayor Office account. From then on, only Mayor Office accounts can change settings and manage staff.";
     }
     return `${ROLE_LABEL[p.to]}: ${ROLE_DESCRIPTION[p.to as keyof typeof ROLE_DESCRIPTION]}`;
   };
@@ -216,10 +216,10 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
       {!loading && !hasSuperAdmin && (
         <Card className="border-amber-200 bg-amber-50/60">
           <CardContent className="pt-6 space-y-3 text-sm">
-            <p><strong>There is no super admin yet.</strong> Until there is one, every admin can change settings and manage staff.</p>
+            <p><strong>There is no Mayor Office account yet.</strong> Until there is one, every admin can change settings and manage staff.</p>
             {me && (
               <Button size="sm" onClick={() => setPending({ person: me, to: "super_admin" })}>
-                <ShieldCheck className="mr-2 h-4 w-4" />Make me the super admin
+                <ShieldCheck className="mr-2 h-4 w-4" />Make me the Mayor Office
               </Button>
             )}
           </CardContent>
@@ -369,7 +369,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
         <CardHeader><CardTitle className="text-base">What each role can do</CardTitle></CardHeader>
         <CardContent className="text-sm space-y-2">
           {STAFF_ROLES.map((r) => <p key={r}><strong>{ROLE_LABEL[r]}</strong>: {ROLE_DESCRIPTION[r]}</p>)}
-          <p className="text-xs text-muted-foreground">Every staff role can view programs, applicants, students and payments. Keep one or two super admins, so someone can still manage staff if one person loses access. Every change on this page is recorded in the audit log.</p>
+          <p className="text-xs text-muted-foreground">Every staff role can view programs, applicants, students and payments. Keep one or two Mayor Office accounts, so someone can still manage staff if one person loses access. Every change on this page is recorded in the audit log.</p>
         </CardContent>
       </Card>
 
