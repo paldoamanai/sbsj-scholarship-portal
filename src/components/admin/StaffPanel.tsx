@@ -290,7 +290,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity, managerO
     <span className="flex h-10 items-center text-sm">{OFFICE_LABEL[managerOffice as keyof typeof OFFICE_LABEL]}</span>
   ) : (
     <Select value={value ?? ALL} onValueChange={(v) => onChange(v === ALL ? null : v)} disabled={disabled}>
-      <SelectTrigger className="w-40"><SelectValue>{disabled ? "—" : isOffice(value) ? OFFICE_LABEL[value] : "All offices"}</SelectValue></SelectTrigger>
+      <SelectTrigger className="w-52"><SelectValue>{disabled ? "—" : isOffice(value) ? OFFICE_LABEL[value] : "All offices"}</SelectValue></SelectTrigger>
       <SelectContent>
         <SelectItem value={ALL}>All offices</SelectItem>
         {STAFF_OFFICES.map((o) => <SelectItem key={o} value={o}>{OFFICE_LABEL[o]}</SelectItem>)}

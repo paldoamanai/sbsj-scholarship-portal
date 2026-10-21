@@ -40,20 +40,27 @@ export function permissionsFor(role: string | null | undefined, canManageSetting
   };
 }
 
-// Offices (migrations 060 and 061): an Admin, Reviewer or Finance account can belong to Barangay
-// Affairs or MSWDO. It keeps its role's permissions but only sees its office's programs and what's
+// Offices (migrations 060, 061 and 066): an Admin, Reviewer or Finance account can belong to Barangay
+// Affairs, MSWDO or the Sangguniang Bayan Office. It keeps its role's permissions but only sees its office's programs and what's
 // filed under them. No office means municipality-wide, like the Mayor Office.
-export const STAFF_OFFICES = ["barangay_affairs", "mswdo"] as const;
+export const STAFF_OFFICES = ["barangay_affairs", "mswdo", "sangguniang_bayan"] as const;
 export type StaffOffice = (typeof STAFF_OFFICES)[number];
 
 export const OFFICE_LABEL: Record<StaffOffice, string> = {
   barangay_affairs: "Barangay Affairs",
   mswdo: "MSWDO",
+  sangguniang_bayan: "Sangguniang Bayan Office",
 };
 export const OFFICE_FULL_NAME: Record<StaffOffice, string> = {
   barangay_affairs: "Barangay Affairs",
   mswdo: "Municipal Social Welfare and Development Office",
+  sangguniang_bayan: "Sangguniang Bayan Office",
 };
+/** An office's own seal, where it has one; the others use the municipal seal. */
+export const OFFICE_LOGO: Partial<Record<StaffOffice, string>> = {
+  sangguniang_bayan: "/sangguniang-bayan-logo.png",
+};
+export const officeLogo = (office: string | null | undefined) => (isOffice(office) && OFFICE_LOGO[office]) || "/municipal-logo.png";
 
 export const isOffice = (o: string | null | undefined): o is StaffOffice => (STAFF_OFFICES as readonly string[]).includes(o ?? "");
 /** The Mayor Office works across every office, so it can't belong to one. */
