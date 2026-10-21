@@ -72,15 +72,33 @@ export async function updateSession(request: NextRequest) {
   const onAuthRoute = authRoutes.some((route) => path.startsWith(route));
   const onAdmin = path.startsWith("/admin");
   const onStudent = path.startsWith("/student-dashboard");
-  if (user && !needsSecondStep && (onAuthRoute || onAdmin || onStudent)) {
-    const { data: roleData } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", user.id)
-      .single();
+  const onStudentApi = protectedApis.some((route) => path.startsWith(route)) && !path.startsWith("/api/admin");
+  if (user && !needsSecondStep && (onAuthRoute || onAdmin || onStudent || onStudentApi)) {
+    const [{ data: roleData }, { data: profile }] = await Promise.all([
+      supabase.from("user_roles").select("role").eq("user_id", user.id).single(),
+      supabase.from("profiles").select("is_active").eq("id", user.id).maybeSingle(),
+    ]);
 
     const userRole = (roleData as { role?: string } | null)?.role || "student";
     const home = isAdminRole(userRole) ? "/admin" : "/student-dashboard";
+
+    // A deactivated student is signed out wherever they are. New sign-ins are refused by Supabase Auth
+    // (/api/admin/students bans the login); this catches sessions from before, and older deactivations.
+    if (!isAdminRole(userRole) && (profile as { is_active?: boolean } | null)?.is_active === false) {
+      await supabase.auth.signOut();
+      if (onStudentApi) {
+        const res = NextResponse.json({ error: "This account has been deactivated" }, { status: 403 });
+        supabaseResponse.cookies.getAll().forEach((c) => res.cookies.set(c));
+        return res;
+      }
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
+      url.search = "?error=inactive";
+      const res = NextResponse.redirect(url);
+      supabaseResponse.cookies.getAll().forEach((c) => res.cookies.set(c));
+      return res;
+    }
+
     // Signed-in people skip the login pages, and each role stays on its own dashboard.
     if (onAuthRoute || (onAdmin && home !== "/admin") || (onStudent && home !== "/student-dashboard")) {
       const url = request.nextUrl.clone();

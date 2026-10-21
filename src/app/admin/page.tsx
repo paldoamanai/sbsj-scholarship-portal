@@ -41,6 +41,7 @@ import OverviewPanel from "@/components/admin/OverviewPanel";
 import AdminProfilePanel from "@/components/admin/AdminProfilePanel";
 import SettingsPanel from "@/components/admin/SettingsPanel";
 import StaffPanel from "@/components/admin/StaffPanel";
+import StudentAccountActions from "@/components/admin/StudentAccountActions";
 import ReportsPanel from "@/components/admin/ReportsPanel";
 import {
   ALL_FILTERS, buildReport, getRange, logsToSection, personName, renderExcel, renderPDF,
@@ -174,7 +175,7 @@ export default function AdminDashboardPage() {
   const [dataReqs, setDataReqs] = useState<Tables<"data_requests">[]>([]);
   const [disapproveGrade, setDisapproveGrade] = useState<Tables<"grade_updates"> | null>(null);
   const [gradeNote, setGradeNote] = useState("");
-  const [handleReq, setHandleReq] = useState<{ req: Tables<"data_requests">; status: "Completed" | "Declined" } | null>(null);
+  const [handleReq, setHandleReq] = useState<Tables<"data_requests"> | null>(null);
   const [reqResponse, setReqResponse] = useState("");
   const [studentSearch, setStudentSearch] = useState("");
   const [studentFilter, setStudentFilter] = useState("all");
@@ -801,10 +802,10 @@ export default function AdminDashboardPage() {
   const respondToRequest = async () => {
     if (!handleReq) return;
     setPayBusy(true);
-    const { error } = await supabase.rpc("handle_data_request", { _id: handleReq.req.id, _status: handleReq.status, _response: reqResponse });
+    const { error } = await supabase.rpc("handle_data_request", { _id: handleReq.id, _status: "Declined", _response: reqResponse });
     setPayBusy(false);
     if (error) { toast.error(error.message); return; }
-    toast.success(handleReq.status === "Completed" ? "Marked as completed" : "Request declined");
+    toast.success("Request declined");
     setHandleReq(null); setReqResponse("");
     loadData();
   };
@@ -937,9 +938,13 @@ export default function AdminDashboardPage() {
 
   const toggleStudentActive = async (p: Tables<"profiles">) => {
     const next = !p.is_active;
-    const { error } = await supabase.rpc("set_student_active", { _user_id: p.id, _active: next });
-    if (error) { toast.error(error.message); return; }
-    await logAudit(next ? "activate_student" : "deactivate_student", "profiles", p.id, { is_active: p.is_active }, { is_active: next });
+    // The server also blocks (or restores) their sign-in and ends their sessions, and writes the audit entry.
+    const res = await fetch("/api/admin/students", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set_active", userId: p.id, active: next }),
+    }).catch(() => null);
+    const body = await res?.json().catch(() => null);
+    if (!res?.ok) { toast.error((body?.error as string) ?? "Request failed"); if (res) loadData(); return; }
     toast.success(`${p.first_name || "Student"} ${next ? "activated" : "deactivated"}`);
     setViewStudent((cur) => (cur && cur.id === p.id ? { ...cur, is_active: next } : cur));
     loadData();
@@ -2967,9 +2972,17 @@ export default function AdminDashboardPage() {
         description={viewStudent ? `${`${viewStudent.first_name || ""} ${viewStudent.last_name || ""}`.trim() || viewStudent.email}${viewStudent.student_id_number ? ` · ${viewStudent.student_id_number}` : ""}` : undefined}
         footer={viewStudent && <>
           {can.manage && (
-            <Button variant={viewStudent.is_active ? "outline" : "default"} className={`sm:mr-auto ${viewStudent.is_active ? "text-destructive" : ""}`} onClick={() => toggleStudentActive(viewStudent)}>
-              <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
-            </Button>
+            <div className="flex gap-2 sm:mr-auto">
+              <Button variant={viewStudent.is_active ? "outline" : "default"} className={viewStudent.is_active ? "text-destructive" : ""} onClick={() => toggleStudentActive(viewStudent)}>
+                <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
+              </Button>
+              <StudentAccountActions
+                student={{ id: viewStudent.id, name: `${viewStudent.first_name || ""} ${viewStudent.last_name || ""}`.trim() || viewStudent.email || "this student", email: viewStudent.email }}
+                canDelete={can.super}
+                disbursedPayments={studentPayments(viewStudent.id).filter((pm) => pm.status === "Disbursed").length}
+                requestId={dataReqs.find((r) => r.user_id === viewStudent.id && r.status === "Pending")?.id}
+                onDeleted={() => { setViewStudent(null); loadData(); }} />
+            </div>
           )}
           <Button variant="outline" onClick={() => setViewStudent(null)}>Close</Button>
         </>}>
@@ -3090,8 +3103,7 @@ export default function AdminDashboardPage() {
                               {r.status === "Pending" && !can.super && <span className="text-xs text-muted-foreground">The Mayor Office handles this</span>}
                               {r.status === "Pending" && can.super && (
                                 <span className="flex gap-1.5">
-                                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setReqResponse(""); setHandleReq({ req: r, status: "Declined" }); }}>Decline</Button>
-                                  <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => { setReqResponse("Your account and data have been deleted."); setHandleReq({ req: r, status: "Completed" }); }}>Mark completed</Button>
+                                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setReqResponse(""); setHandleReq(r); }}>Decline</Button>
                                 </span>
                               )}
                             </div>
@@ -3101,7 +3113,7 @@ export default function AdminDashboardPage() {
                         ))}
                       </ul>
                       {reqs.some((r) => r.status === "Pending") && (
-                        <p className="mt-1 text-xs text-muted-foreground">Deleting the account itself is done in the Supabase dashboard (Authentication → Users), then remove their files from Storage. Mark it completed afterwards.</p>
+                        <p className="mt-1 text-xs text-muted-foreground">To honour it, use Account → Delete account below. That removes their login, records and files, and the request with them.</p>
                       )}
                     </div>
                   );
@@ -3124,13 +3136,13 @@ export default function AdminDashboardPage() {
         onConfirm={async () => { if (disapproveGrade && await reviewGrade(disapproveGrade, "Disapproved", gradeNote)) setDisapproveGrade(null); }} />
 
       <ReasonDialog open={!!handleReq} onClose={() => setHandleReq(null)}
-        title={handleReq?.status === "Completed" ? "Complete deletion request" : "Decline deletion request"}
-        description={handleReq?.status === "Completed" ? "Only mark it completed after the account and its files are deleted." : "The student's account and data are kept."}
+        title="Decline deletion request"
+        description="The student's account and data are kept."
         label="Message to the student"
-        placeholder={handleReq?.status === "Declined" ? "Explain why, e.g. payment records must be kept for audit." : ""}
+        placeholder="Explain why, e.g. payment records must be kept for audit."
         value={reqResponse} onChange={setReqResponse} busy={payBusy}
-        confirmLabel={handleReq?.status === "Completed" ? "Mark completed" : "Decline request"}
-        confirmVariant={handleReq?.status === "Declined" ? "default" : "destructive"}
+        confirmLabel="Decline request"
+        confirmVariant="default"
         onConfirm={respondToRequest} />
 
       <ReasonDialog open={!!disapproveReceipt} onClose={() => setDisapproveReceipt(null)}

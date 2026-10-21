@@ -15,6 +15,8 @@ import { rememberCredential } from "@/lib/credentials";
 import { isAdminRole } from "@/lib/settings";
 import Captcha, { captchaEnabled } from "@/components/Captcha";
 
+const DEACTIVATED = "This account has been deactivated. Contact the scholarship office if you think this is a mistake.";
+
 export default function LoginPage() {
   const router = useRouter();
   const [isAdmin, setIsAdmin] = useState(false);
@@ -74,6 +76,8 @@ export default function LoginPage() {
   // Sent back here by the middleware with a password-only session: go straight to the code step.
   useEffect(() => {
     // /auth/callback sends people here when an email link was invalid, expired or opened on another device.
+    if (new URLSearchParams(window.location.search).get("error") === "inactive")
+      toast.error("You've been signed out", { description: DEACTIVATED });
     if (new URLSearchParams(window.location.search).get("error") === "auth")
       toast.error("That link is invalid or has expired", { description: "Request a new one, or log in if your account is already verified." });
     needsSecondStep().catch(() => {});
@@ -134,7 +138,8 @@ export default function LoginPage() {
       const notConfirmed = error.code === "email_not_confirmed" || /not confirmed/i.test(error.message);
       setUnconfirmed(notConfirmed);
       toast.error("Login failed", {
-        description: notConfirmed ? "Your email isn't verified yet. Open the link we emailed you, or resend it below." : error.message,
+        description: notConfirmed ? "Your email isn't verified yet. Open the link we emailed you, or resend it below."
+          : error.code === "user_banned" ? DEACTIVATED : error.message,
       });
       setLoading(false);
       return;
@@ -146,6 +151,16 @@ export default function LoginPage() {
       ? await supabase.from("user_roles").select("role").eq("user_id", user.id).single()
       : { data: null };
     const accountIsAdmin = isAdminRole((roleData as { role?: string } | null)?.role || "student");
+    // Before 2FA the profile may not be readable (null); the middleware checks again after it.
+    const { data: profile } = user && !accountIsAdmin
+      ? await supabase.from("profiles").select("is_active").eq("id", user.id).maybeSingle()
+      : { data: null };
+    if (profile?.is_active === false) {
+      await supabase.auth.signOut();
+      toast.error("Login failed", { description: DEACTIVATED });
+      setLoading(false);
+      return;
+    }
     if (accountIsAdmin !== isAdmin) {
       await supabase.auth.signOut();
       toast.error("Login failed", {

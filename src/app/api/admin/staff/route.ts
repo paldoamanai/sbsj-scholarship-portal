@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient as createServiceClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { normalizeSupabaseUrl } from "@/lib/supabase/url";
+import { linkResult, sendLinkEmail, serviceClient, siteUrl } from "@/lib/admin-api";
 import { isOffice, isStaffRole, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 
 // Actions on staff accounts that need Supabase Auth's admin API (service role):
@@ -24,9 +24,6 @@ const inScope = (caller: Caller, role: string, office: string | null) =>
   !caller.office || (OFFICE_ADMIN_ROLES.includes(role) && office === caller.office);
 const OUT_OF_SCOPE = "You can only manage Reviewer and Finance accounts in your own office";
 
-const escapeHtml = (s: string) =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
 async function authorize(): Promise<{ caller: Caller; admin: SupabaseClient } | NextResponse> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -41,11 +38,8 @@ async function authorize(): Promise<{ caller: Caller; admin: SupabaseClient } | 
   if (canManage !== true && !office) return NextResponse.json({ error: "Only the Mayor Office or an office Admin can do this" }, { status: 403 });
   if (mfaOk !== true) return NextResponse.json({ error: "Two-factor verification required" }, { status: 401 });
 
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!serviceKey) return NextResponse.json({ error: "SUPABASE_SERVICE_ROLE_KEY is not set on the server" }, { status: 500 });
-  const admin = createServiceClient(normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL), serviceKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  const admin = serviceClient();
+  if (!admin) return NextResponse.json({ error: "SUPABASE_SERVICE_ROLE_KEY is not set on the server" }, { status: 500 });
   return { caller: { id: user.id, email: user.email ?? "", office }, admin };
 }
 
@@ -53,43 +47,6 @@ const audit = (admin: SupabaseClient, caller: Caller, action: string, entityId: 
   admin.from("audit_logs").insert({
     user_id: caller.id, user_email: caller.email, action, entity_type: "user_roles", entity_id: entityId, new_value: value,
   });
-
-// The configured site URL, unless it points at localhost while the request came from a real domain
-// (an .env copied to the server): that link would only open on the developer's own machine.
-const isLocal = (url: string) => /\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(url);
-function siteUrl(request: Request) {
-  const origin = new URL(request.url).origin;
-  const configured = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
-  return configured && !(isLocal(configured) && !isLocal(origin)) ? configured : origin;
-}
-
-type Sent = { emailed: true } | { emailed: false; reason: string };
-
-/** Emails a sign-in link through Resend. When it can't, says why, so the super admin can share the link instead. */
-async function sendLinkEmail(to: string, subject: string, intro: string, link: string, button: string): Promise<Sent> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) return { emailed: false, reason: "Email isn't set up on this portal (RESEND_API_KEY is missing)." };
-  const html = `
-    <div style="font-family:system-ui,sans-serif;max-width:520px;margin:auto;padding:24px">
-      <h2 style="margin:0 0 12px;color:#111">${escapeHtml(subject)}</h2>
-      <p style="margin:0 0 20px;color:#444;line-height:1.5">${escapeHtml(intro)}</p>
-      <a href="${escapeHtml(link)}" style="display:inline-block;background:#ea580c;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">${escapeHtml(button)}</a>
-      <p style="margin:20px 0 0;color:#888;font-size:12px">This link works once. If you weren't expecting it, ignore this email.</p>
-    </div>`;
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: process.env.EMAIL_FROM || "San Jose Scholarship <onboarding@resend.dev>", to, subject, html }),
-  }).catch(() => null);
-  if (res?.ok) return { emailed: true };
-  // Resend explains itself, e.g. its test sender only delivers to the Resend account owner.
-  const detail = await res?.json().then((b: { message?: string }) => b?.message).catch(() => null);
-  return { emailed: false, reason: `The email could not be sent${detail ? `: ${detail}` : "."}` };
-}
-
-/** What the API returns after creating a link: the link itself only when it wasn't emailed. */
-const linkResult = (sent: Sent, link: string) =>
-  sent.emailed ? { ok: true, emailed: true, link: null } : { ok: true, emailed: false, link, reason: sent.reason };
 
 // Invited staff set their password on /reset-password, which marks password_set. Accounts invited
 // before that flag existed count as pending until their first sign-in.
