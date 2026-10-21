@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, FileText, XCircle } from "lucide-react";
+import { ChevronRight, FileText, XCircle } from "@/components/icons";
 import { StatusBadge } from "@/components/student/ui";
 import { formatDate, peso } from "@/lib/format";
 import type { Tables } from "@/integrations/supabase/types";

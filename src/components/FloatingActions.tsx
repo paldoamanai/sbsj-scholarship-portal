@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, ArrowUp } from "lucide-react";
+import { ArrowRight, ArrowUp } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { useSignedIn } from "@/hooks/use-signed-in";
 

@@ -25,7 +25,7 @@ import {
   UserPlus, FileText, Search, CheckCircle2, Mail, Phone, MapPin, Clock,
   CalendarDays, Users, Layers, ClipboardCheck, ShieldCheck, Megaphone, AlertCircle, RefreshCw,
   LayoutDashboard, ExternalLink,
-} from "lucide-react";
+} from "@/components/icons";
 
 export type PublicStats = { scholars: number; active_programs: number; applications_received: number };
 export type PublicAnnouncement = { id: string; title: string; message: string; created_at: string };

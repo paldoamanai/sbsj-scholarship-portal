@@ -3,7 +3,7 @@
 // The fields of the add / edit scholarship dialog. The admin page owns the form (and reads it with
 // FormData on submit), the year-level / barangay selections and the active switch; this lays them out.
 import { useState, type ReactNode } from "react";
-import { Check } from "lucide-react";
+import { Check } from "@/components/icons";
 import type { Tables } from "@/integrations/supabase/types";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/MoneyInput";

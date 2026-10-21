@@ -8,7 +8,7 @@ import { useSystemSettings } from "@/hooks/use-system-settings";
 import { createClient } from "@/lib/supabase/client";
 import { isAdminRole } from "@/lib/settings";
 import type { User } from "@supabase/supabase-js";
-import { GraduationCap, Mail, Phone, MapPin, Facebook, ExternalLink } from "lucide-react";
+import { GraduationCap, Mail, Phone, MapPin, Facebook, ExternalLink } from "@/components/icons";
 
 const LandingFooter = () => {
   const { settings } = useSystemSettings();

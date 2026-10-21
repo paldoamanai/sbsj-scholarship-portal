@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Check, Circle, Clock, X } from "lucide-react";
+import { AlertTriangle, Check, Circle, Clock, X } from "@/components/icons";
 import { formatDate, pesoFixed } from "@/lib/format";
 import type { Tables } from "@/integrations/supabase/types";
 

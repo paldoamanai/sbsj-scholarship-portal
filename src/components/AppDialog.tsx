@@ -4,7 +4,7 @@
 // and a footer that stays in view while the body scrolls. Plus the pieces dialogs repeat: a labelled
 // field, a label/value grid for details, a titled section, and the "write a reason" confirmation.
 import type { FormEventHandler, ReactNode } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/components/icons";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";

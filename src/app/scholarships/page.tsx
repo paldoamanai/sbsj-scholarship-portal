@@ -12,7 +12,7 @@ import { useSystemSettings } from "@/hooks/use-system-settings";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { GraduationCap, Search, ArrowRight, SlidersHorizontal } from "lucide-react";
+import { GraduationCap, Search, ArrowRight, SlidersHorizontal } from "@/components/icons";
 
 export default function ScholarshipsPage() {
   const router = useRouter();

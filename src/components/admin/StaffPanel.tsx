@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   Copy, History, KeyRound, Loader2, LogOut, MailPlus, MoreHorizontal, Pencil, Search, ShieldCheck, ShieldOff, Trash2, UserMinus, UserPlus,
-} from "lucide-react";
+} from "@/components/icons";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

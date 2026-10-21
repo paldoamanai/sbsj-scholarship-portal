@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { LogIn, ShieldCheck, Loader2, Eye, EyeOff, GraduationCap } from "lucide-react";
+import { LogIn, ShieldCheck, Loader2, Eye, EyeOff, GraduationCap } from "@/components/icons";
 import { createClient } from "@/lib/supabase/client";
 import { rememberCredential } from "@/lib/credentials";
 import { isAdminRole } from "@/lib/settings";

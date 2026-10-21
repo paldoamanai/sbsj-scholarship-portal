@@ -6,7 +6,7 @@ import {
   FileText, CheckCircle, XCircle, Clock, Users, Banknote, Plus, Bell, ArrowRight, GraduationCap,
   RefreshCw, Loader2, AlertTriangle, Wallet, CalendarClock, TrendingUp, TrendingDown, Minus,
   FileDown, ScrollText, Table2, BarChart3, UserX,
-} from "lucide-react";
+} from "@/components/icons";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";

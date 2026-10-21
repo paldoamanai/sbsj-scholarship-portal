@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import {
   AlertTriangle, ArrowRight, Banknote, Bell, CalendarDays, CheckCircle, Eye, FileText,
   GraduationCap, Info, Lock, Upload, User, Users, XCircle,
-} from "lucide-react";
+} from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { AppDialog, Detail, DetailGrid, DialogNote, DialogSection } from "@/components/AppDialog";
 import ProfileImage from "@/components/ProfileImage";

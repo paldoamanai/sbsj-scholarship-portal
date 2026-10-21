@@ -1,6 +1,6 @@
 "use client";
 
-import { Calendar, GraduationCap, ChevronRight, Info, Clock, CheckCircle2, Banknote, Users } from "lucide-react";
+import { Calendar, GraduationCap, ChevronRight, Info, Clock, CheckCircle2, Banknote, Users } from "@/components/icons";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

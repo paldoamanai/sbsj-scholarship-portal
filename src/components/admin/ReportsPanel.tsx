@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import {
   Users, Wallet, Banknote, BarChart3, ScrollText, FileDown, Eye, PiggyBank, GraduationCap, Activity, History, AlertTriangle, Loader2,
-} from "lucide-react";
+} from "@/components/icons";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
