@@ -893,6 +893,12 @@ export default function AdminDashboardPage() {
     }
   };
 
+  // Account deletion requests waiting for the Mayor Office, oldest first. The student may not be a scholar,
+  // so these are listed on their own rather than only as a badge in the Students table.
+  const pendingDeletions = dataReqs.filter((r) => r.status === "Pending")
+    .sort((x, y) => x.created_at.localeCompare(y.created_at))
+    .map((r) => ({ req: r, profile: profiles.find((p) => p.id === r.user_id) ?? null }));
+
   const STUDENT_PAGE_SIZE = 10;
   // The Students section lists scholars only: accounts with at least one approved application.
   // Everyone else is reached through Applicants.
@@ -1601,6 +1607,7 @@ export default function AdminDashboardPage() {
               loadError={loadError}
               onRefresh={() => loadData(true)}
               onViewApp={setViewApp}
+              deletionRequests={can.super ? pendingDeletions.length : 0}
               onNavigate={(section, opts) => {
                 setActiveSection(section);
                 if (opts?.status !== undefined) { setStatusFilter(opts.status); setAppPage(1); }
@@ -2186,6 +2193,31 @@ export default function AdminDashboardPage() {
                   <Button variant="outline" onClick={exportStudents}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
                 </div>
               </div>
+              {can.super && pendingDeletions.length > 0 && (
+                <Card className="border-destructive/30">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Account deletion requests ({pendingDeletions.length})</CardTitle>
+                    <CardDescription>Open each student to delete their account, or decline with a reason.</CardDescription>
+                  </CardHeader>
+                  <Table>
+                    <TableBody>
+                      {pendingDeletions.map(({ req, profile }) => (
+                        <TableRow key={req.id}>
+                          <TableCell>
+                            <p className="font-medium">{profile ? personName(profile) : "Unknown student"}</p>
+                            <p className="text-xs text-muted-foreground">{profile?.email ?? req.user_id}</p>
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground max-w-[320px]">{req.reason ? <span className="line-clamp-2" title={req.reason}>{req.reason}</span> : "No reason given"}</TableCell>
+                          <TableCell className="text-xs whitespace-nowrap">Requested {new Date(req.created_at).toLocaleDateString()}</TableCell>
+                          <TableCell className="text-right">
+                            <Button size="sm" variant="outline" disabled={!profile} onClick={() => profile && setViewStudent(profile)}><Eye className="mr-1 h-4 w-4" /> Open</Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Card>
+              )}
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">

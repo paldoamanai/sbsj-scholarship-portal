@@ -31,6 +31,8 @@ type Props = {
   onRefresh: () => void;
   onNavigate: (section: string, opts?: { status?: string }) => void;
   onViewApp: (a: OverviewApp) => void;
+  /** Pending account deletion requests, shown to whoever handles them (the Mayor Office). */
+  deletionRequests?: number;
 };
 
 const initials = (first?: string | null, last?: string | null) => `${(first || "?")[0] || ""}${(last || "")[0] || ""}`.toUpperCase();
@@ -159,6 +161,7 @@ function Trend({ current, previous }: { current: number; previous: number | null
 export default function OverviewPanel({
   applications, scholarships, profiles, notApplied = [], payments, auditLogs,
   firstName, refreshing, lastUpdated, loadError, onRefresh, onNavigate, onViewApp,
+  deletionRequests = 0,
 }: Props) {
   const [period, setPeriod] = useState("all");
 
@@ -271,6 +274,7 @@ export default function OverviewPanel({
     ...data.closingSoon.map((s) => ({ show: true, icon: CalendarClock, tone: "text-warning", text: `${s.name} closes ${new Date(`${s.deadline}T00:00:00`).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}`, cta: "View", go: () => onNavigate("scholarships") })),
     ...data.pastDeadline.map((s) => ({ show: true, icon: AlertTriangle, tone: "text-destructive", text: `${s.name} is active but past its deadline`, cta: "Fix", go: () => onNavigate("scholarships") })),
     ...data.fullPrograms.map((s) => ({ show: true, icon: GraduationCap, tone: "text-warning", text: `${s.name} has filled all ${s.slots} slots`, cta: "View", go: () => onNavigate("scholarships") })),
+    { show: deletionRequests > 0, icon: UserX, tone: "text-destructive", text: `${deletionRequests} account deletion request${deletionRequests === 1 ? "" : "s"} waiting`, cta: "Handle", go: () => onNavigate("students") },
   ].filter((x) => x.show);
 
   return (
