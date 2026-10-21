@@ -16,13 +16,14 @@ import ProfileImage from "@/components/ProfileImage";
 import SecuritySettings from "@/components/account/SecuritySettings";
 import { adminProfileSchema, passwordSchema } from "@/validations/profile";
 import type { Tables, Json } from "@/integrations/supabase/types";
-import { ROLE_LABEL } from "@/lib/permissions";
+import { staffLabel } from "@/lib/permissions";
 
 type Props = {
   profile: Tables<"profiles"> | null;
   email: string;
   userId: string;
   role: string;
+  office?: string | null;
   auditLogs: Tables<"audit_logs">[];
   logAudit: (action: string, entityType: string, entityId?: string, prev?: Json | null, next?: Json | null) => Promise<void>;
   onChanged: () => void;
@@ -44,7 +45,7 @@ function FieldError({ msg }: { msg?: string }) {
   return msg ? <p className="text-xs text-destructive mt-1">{msg}</p> : null;
 }
 
-export default function AdminProfilePanel({ profile, email, userId, role, auditLogs, logAudit, onChanged }: Props) {
+export default function AdminProfilePanel({ profile, email, userId, role, office, auditLogs, logAudit, onChanged }: Props) {
   const supabase = useMemo(() => createClient(), []);
 
   // ── account details (from auth) ──
@@ -169,7 +170,7 @@ export default function AdminProfilePanel({ profile, email, userId, role, auditL
               <p className="text-lg font-semibold truncate">{fullName}</p>
               <p className="text-sm text-muted-foreground truncate">{email}</p>
               <div className="mt-1 flex gap-2">
-                <Badge>{ROLE_LABEL[role] ?? role ?? "Admin"}</Badge>
+                <Badge>{role ? staffLabel(role, office) : "Admin"}</Badge>
                 <Badge variant={profile?.is_active === false ? "destructive" : "secondary"}>{profile?.is_active === false ? "Inactive" : "Active"}</Badge>
               </div>
             </div>

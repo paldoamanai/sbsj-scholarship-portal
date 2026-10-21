@@ -75,7 +75,6 @@ export function landingCopy(s: AppSettings, block: ApplicationsBlock | null) {
       closedNote: "You can still create an account so you're ready when applications open.",
       openNow: (n: number) =>
         `${n} ${n === 1 ? "program is" : "programs are"} open now — see programs`,
-      scroll: "Scroll to learn more",
     },
     dates: {
       title: block ? "Applications" : "Application period",
@@ -140,7 +139,7 @@ export function landingCopy(s: AppSettings, block: ApplicationsBlock | null) {
       label: "Our Impact",
       heading: ["Scholars Through", "the Years"],
       desc: "The number of scholars approved in each school year.",
-      scholars: (n: number) => `${n.toLocaleString()} ${n === 1 ? "scholar" : "scholars"}`,
+      scholars: (n: number) => `${n.toLocaleString("en-PH")} ${n === 1 ? "scholar" : "scholars"}`,
     },
     features: {
       label: "Our Platform",

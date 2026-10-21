@@ -34,7 +34,7 @@ import type { Tables } from "@/integrations/supabase/types";
 import { profileFromUserMetadata } from "@/lib/registration-profile";
 import { useSystemSettings } from "@/hooks/use-system-settings";
 import { applicationsBlockedReason, ayStart } from "@/lib/settings";
-import { DOC_MIME, documentPath, uploadUserDocument } from "@/lib/documents";
+import { DOC_MIME, LETTER_OF_INTENT, PHOTO_MIME, documentPath, shrinkPhoto, uploadLetterPhoto, uploadUserDocument } from "@/lib/documents";
 import { uploadPendingDocuments } from "@/lib/pending-documents";
 import { availabilityInfo, programChecks, requirementLines, sameTown, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
 import { inBarangays } from "@/lib/barangays";
@@ -483,6 +483,9 @@ export default function StudentDashboardPage() {
   const [applyDialogOpen, setApplyDialogOpen]       = useState(false);
   const [applyLoading, setApplyLoading]             = useState(false);
   const [applyCertified, setApplyCertified]         = useState(false);
+  // The letter of intent photo for the application being written, and a preview of it.
+  const [applyLetter, setApplyLetter]               = useState<{ file: File; url: string } | null>(null);
+  const [replacingLetter, setReplacingLetter]       = useState(false);
   const submittingRef = useRef(false);
   // The application the View / Withdraw dialogs act on.
   const [selectedAppId, setSelectedAppId]           = useState<string | null>(null);
@@ -760,7 +763,8 @@ export default function StudentDashboardPage() {
   const requiredDocTypes = settings.required_documents;
   // Documents are shared by all of this academic year's applications: filed with any of them, or still
   // unattached (uploaded ahead of applying). Documents tied to older years don't count. Latest wins.
-  const inDocSet = (d: Tables<"documents">) => !d.application_id || yearAppIds.has(d.application_id);
+  // Letters of intent belong to one application each, so they aren't part of the shared set.
+  const inDocSet = (d: Tables<"documents">) => d.document_type !== LETTER_OF_INTENT && (!d.application_id || yearAppIds.has(d.application_id));
   const docByType = new Map<string, Tables<"documents">>();
   [...documents]
     .filter(inDocSet)
@@ -898,14 +902,21 @@ export default function StudentDashboardPage() {
   const submitApplication = async () => {
     // A ref, not applyLoading: a quick double-click fires twice before the disabled state renders.
     if (!applyScholarshipId || submittingRef.current) return;
+    if (!applyLetter) { toast.error("Attach a photo of your letter of intent."); return; }
     submittingRef.current = true;
     setApplyLoading(true);
+    // The photo goes to storage first; the application then files it. If applying fails, it is removed again.
+    let letterPath: string | null = null;
     try {
+      const up = await uploadLetterPhoto(supabase, userId, applyLetter.file);
+      if ("error" in up) { toast.error("Could not upload your letter of intent", { description: up.error }); return; }
+      letterPath = up.path;
       const res = await fetch("/api/applications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           scholarship_id: applyScholarshipId,
+          letter_of_intent_path: letterPath,
           certified: applyCertified,
         }),
       });
@@ -913,16 +924,53 @@ export default function StudentDashboardPage() {
       if (!res.ok) {
         toast.error(json.error ?? "Failed to submit application.");
       } else {
+        letterPath = null;
         toast.success(isRenewing ? "Renewal application submitted!" : "Application submitted!");
         setApplyDialogOpen(false);
-        setApplyScholarshipId(""); setApplyCertified(false);
+        setApplyScholarshipId(""); setApplyCertified(false); pickLetter(null);
         loadData();
       }
     } catch {
       toast.error("Network error. Please try again.");
     } finally {
+      if (letterPath) await supabase.storage.from("documents").remove([letterPath]);
       submittingRef.current = false;
       setApplyLoading(false);
+    }
+  };
+
+  /** Checks a picked letter of intent photo (shrinking a large phone photo) and shows a preview of it. */
+  const preparePhoto = async (picked: File) => {
+    if (!PHOTO_MIME.includes(picked.type)) { toast.error("The letter of intent must be a photo (JPG or PNG)."); return null; }
+    const file = await shrinkPhoto(picked, settings.max_upload_mb * 1024 * 1024);
+    if (file.size === 0) { toast.error("That photo is empty."); return null; }
+    if (file.size > settings.max_upload_mb * 1024 * 1024) { toast.error(`Photo is too large (max ${settings.max_upload_mb} MB).`); return null; }
+    return file;
+  };
+  const pickLetter = async (picked: File | null) => {
+    const file = picked ? await preparePhoto(picked) : null;
+    if (picked && !file) return;
+    if (applyLetter) URL.revokeObjectURL(applyLetter.url);
+    setApplyLetter(file ? { file, url: URL.createObjectURL(file) } : null);
+  };
+
+  // A disapproved letter is replaced from its application; the older copy is removed once the new one is filed.
+  const replaceLetter = async (app: typeof applications[number], picked: File) => {
+    const file = await preparePhoto(picked);
+    if (!file) return;
+    setReplacingLetter(true);
+    try {
+      const result = await uploadUserDocument(supabase, { userId, docType: LETTER_OF_INTENT, file, applicationId: app.id });
+      if ("error" in result) { toast.error("Upload failed", { description: result.error }); return; }
+      for (const d of documents.filter((x) => x.document_type === LETTER_OF_INTENT && x.application_id === app.id && x.id !== result.row.id)) {
+        const { data: gone } = await supabase.from("documents").delete().eq("id", d.id).select("id");
+        const oldPath = documentPath(d);
+        if (gone?.length && oldPath) await supabase.storage.from("documents").remove([oldPath]);
+      }
+      toast.success("Letter of intent replaced", { description: "The office will review the new photo." });
+      loadData();
+    } finally {
+      setReplacingLetter(false);
     }
   };
 
@@ -978,8 +1026,11 @@ export default function StudentDashboardPage() {
   const withdrawPrompt = (a: typeof applications[number]) => { setSelectedAppId(a.id); setWithdrawOpen(true); };
 
   // Documents shown with an application: this academic year's shared set, or what was filed with an older one.
+  const letterFor = (a: typeof applications[number]) =>
+    documents.filter((d) => d.document_type === LETTER_OF_INTENT && d.application_id === a.id)
+      .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
   const docsFor = (a: typeof applications[number]) => {
-    if (yearAppIds.has(a.id)) return [...docByType.values()];
+    if (yearAppIds.has(a.id)) { const l = letterFor(a); return l ? [l, ...docByType.values()] : [...docByType.values()]; }
     const latest = new Map<string, Tables<"documents">>();
     [...documents].filter((d) => d.application_id === a.id)
       .sort((x, y) => x.uploaded_at.localeCompare(y.uploaded_at))
@@ -1227,6 +1278,16 @@ export default function StudentDashboardPage() {
                         <span className="min-w-0 truncate"><span className="font-medium">{d.document_type}</span> · {d.file_name}</span>
                         <span className="flex items-center gap-2 shrink-0"><DocStatusBadge status={d.status} /><Eye className="h-3.5 w-3.5 text-muted-foreground" /></span>
                       </button>
+                      {d.document_type === LETTER_OF_INTENT && d.status === "Disapproved" && (selectedApp.status === "Pending" || selectedApp.status === "Waitlisted") && (
+                        <div className="mt-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                          <p>{d.review_note ? `Reason: ${d.review_note}` : "The office asked for a new photo of your letter of intent."}</p>
+                          <label className={`mt-1.5 inline-flex items-center gap-1 rounded-lg border border-red-300 bg-white px-2.5 py-1 font-medium ${replacingLetter ? "opacity-60" : "cursor-pointer hover:bg-red-100"}`}>
+                            {replacingLetter ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}Replace photo
+                            <input type="file" accept="image/jpeg,image/png" className="sr-only" disabled={replacingLetter}
+                              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) replaceLetter(selectedApp, f); }} />
+                          </label>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -1254,13 +1315,13 @@ export default function StudentDashboardPage() {
       </AppDialog>
 
       {/* Apply */}
-      <AppDialog open={applyDialogOpen} onOpenChange={(o) => { if (!applyLoading) setApplyDialogOpen(o); }} size="md" className="rounded-2xl"
+      <AppDialog open={applyDialogOpen} onOpenChange={(o) => { if (!applyLoading) { setApplyDialogOpen(o); if (!o) pickLetter(null); } }} size="md" className="rounded-2xl"
         title={isRenewing ? "Renew Scholarship" : "Apply for Scholarship"}
         description={<>You can apply to every open program. <strong className="text-foreground">Each program decides on its own</strong>: you are approved only if you meet that program&apos;s requirements{minGrade > 0 && <>, including an average grade of at least <strong className="text-foreground">{minGrade}</strong></>}.</>}
         footer={<>
-          <Button variant="outline" className="rounded-xl" disabled={applyLoading} onClick={() => setApplyDialogOpen(false)}>Cancel</Button>
+          <Button variant="outline" className="rounded-xl" disabled={applyLoading} onClick={() => { setApplyDialogOpen(false); pickLetter(null); }}>Cancel</Button>
           <Button
-            disabled={!canApplyMore || !applyScholarshipId || appliedProgramIds.has(applyScholarshipId) || applyLoading || applyIssues.length > 0 || missingDocs.length > 0 || !applyCertified}
+            disabled={!canApplyMore || !applyScholarshipId || appliedProgramIds.has(applyScholarshipId) || applyLoading || applyIssues.length > 0 || missingDocs.length > 0 || !applyLetter || !applyCertified}
             className="rounded-xl"
             onClick={submitApplication}>
             {applyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -1300,6 +1361,26 @@ export default function StudentDashboardPage() {
               ))}
             </SelectContent>
           </Select>
+        </DialogField>
+        <DialogField label="Letter of intent (photo) *" htmlFor="apply-letter"
+          hint="A letter to this program saying why you are applying. Take a clear photo of the whole page, or choose one (JPG or PNG). Each application needs its own.">
+          {applyLetter ? (
+            <div className="flex items-center gap-3 rounded-xl border px-3 py-2">
+              {/* eslint-disable-next-line @next/next/no-img-element -- a local preview (blob: URL) */}
+              <img src={applyLetter.url} alt="Your letter of intent" className="h-16 w-12 shrink-0 rounded-md border object-cover" />
+              <div className="min-w-0 flex-1 text-sm">
+                <p className="truncate font-medium">{applyLetter.file.name}</p>
+                <p className="text-xs text-muted-foreground">{applyLetter.file.size < 1048576 ? `${Math.max(1, Math.round(applyLetter.file.size / 1024))} KB` : `${(applyLetter.file.size / 1048576).toFixed(1)} MB`}</p>
+              </div>
+              <Button type="button" size="sm" variant="ghost" className="rounded-lg" disabled={applyLoading} onClick={() => pickLetter(null)}>Remove</Button>
+            </div>
+          ) : (
+            <label htmlFor="apply-letter" className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-4 text-sm text-muted-foreground hover:bg-muted/50">
+              <Upload className="h-4 w-4" />Take or choose a photo
+            </label>
+          )}
+          <input id="apply-letter" type="file" accept="image/jpeg,image/png" className="sr-only"
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) pickLetter(f); }} />
         </DialogField>
         <label className="flex items-start gap-3 rounded-xl border bg-muted/30 px-4 py-3 text-sm text-foreground cursor-pointer">
           <Checkbox checked={applyCertified} onCheckedChange={(v) => setApplyCertified(v === true)} className="mt-0.5" />

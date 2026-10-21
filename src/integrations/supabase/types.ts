@@ -21,6 +21,7 @@ export type Database = {
           academic_year: string | null
           semester: string | null
           is_renewal: boolean
+          letter_of_intent_path: string | null
           statement: string | null
           household_income: number | null
           household_size: number | null
@@ -47,6 +48,7 @@ export type Database = {
           academic_year?: string | null
           semester?: string | null
           is_renewal?: boolean
+          letter_of_intent_path?: string | null
           statement?: string | null
           household_income?: number | null
           household_size?: number | null
@@ -73,6 +75,7 @@ export type Database = {
           academic_year?: string | null
           semester?: string | null
           is_renewal?: boolean
+          letter_of_intent_path?: string | null
           statement?: string | null
           household_income?: number | null
           household_size?: number | null
@@ -646,6 +649,7 @@ export type Database = {
         Row: {
           id: string
           name: string
+          office: string | null
           description: string | null
           amount: number
           slots: number
@@ -660,10 +664,12 @@ export type Database = {
           municipality: string | null
           barangays: string[] | null
           release_schedule: string
+          release_months: number
         }
         Insert: {
           id?: string
           name: string
+          office?: string | null
           description?: string | null
           amount?: number
           slots?: number
@@ -678,10 +684,12 @@ export type Database = {
           municipality?: string | null
           barangays?: string[] | null
           release_schedule?: string
+          release_months?: number
         }
         Update: {
           id?: string
           name?: string
+          office?: string | null
           description?: string | null
           amount?: number
           slots?: number
@@ -696,6 +704,7 @@ export type Database = {
           municipality?: string | null
           barangays?: string[] | null
           release_schedule?: string
+          release_months?: number
         }
         Relationships: []
       }
@@ -704,17 +713,20 @@ export type Database = {
           id: string
           user_id: string
           role: "admin" | "student"
+          office: string | null
           created_at: string
         }
         Insert: {
           id?: string
           user_id: string
           role: "admin" | "student"
+          office?: string | null
           created_at?: string
         }
         Update: {
           id?: string
           user_id?: string
+          office?: string | null
           role?: "admin" | "student"
           created_at?: string
         }
@@ -868,6 +880,7 @@ export type Database = {
           municipality: string | null
           barangays: string[] | null
           release_schedule: string
+          release_months: number
           created_at: string
           availability: "open" | "upcoming" | "closed" | "full"
         }[]
@@ -1040,6 +1053,21 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      set_staff_office: {
+        Args: {
+          _user_id: string
+          _office: string | null
+        }
+        Returns: undefined
+      }
+      set_staff_access: {
+        Args: {
+          _user_id: string
+          _role: string
+          _office: string | null
+        }
+        Returns: undefined
       }
       delete_scholarship_cascade: {
         Args: {

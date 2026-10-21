@@ -2,6 +2,8 @@
 // The receipt number on it is only visible to staff in the portal; the student types it back from
 // their copy to confirm they received the money (see submit_student_receipt, migration 048).
 
+import { pesoFixed as peso } from "@/lib/format";
+
 export type ReceiptSlip = {
   receiptNo: string;
   studentName: string;
@@ -15,7 +17,6 @@ export type ReceiptSlip = {
 };
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
-const peso = (n: number) => `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 function copy(s: ReceiptSlip, label: string, footer: string) {
   const date = new Date().toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" });

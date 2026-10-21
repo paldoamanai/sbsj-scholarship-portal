@@ -16,13 +16,13 @@ export const metadata: Metadata = {
     siteName: "San Jose Scholarship Portal",
     type: "website",
     locale: "en_PH",
-    images: [{ url: "/hero-bg.jpg", alt: "San Jose, Occidental Mindoro" }],
+    images: [{ url: "/municipal-logo.png", width: 512, height: 512, alt: "Municipality of San Jose seal" }],
   },
   twitter: {
-    card: "summary_large_image",
+    card: "summary",
     title: "San Jose Scholarship & Financial Assistance",
     description: "Apply, track, and receive scholarships transparently.",
-    images: ["/hero-bg.jpg"],
+    images: ["/municipal-logo.png"],
   },
 };
 

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient as createServiceClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { normalizeSupabaseUrl } from "@/lib/supabase/url";
-import { isStaffRole, ROLE_LABEL } from "@/lib/permissions";
+import { isOffice, isStaffRole, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 
 // Super admin actions on staff accounts that need Supabase Auth's admin API (service role):
 //   GET                         every staff account with its last sign-in and whether 2FA is on
@@ -10,6 +10,8 @@ import { isStaffRole, ROLE_LABEL } from "@/lib/permissions";
 //                               (for an invite that is still pending, sends a fresh link instead)
 //   POST { action: "reset_mfa" | "sign_out" | "reset_password", userId }
 //   POST { action: "resend_invite" | "cancel_invite", userId }   only while the invite is pending
+//   POST { action: "update_details", userId, firstName, lastName, email }
+//   POST { action: "delete_account", userId }   deletes the login; the audit log keeps their history
 // The caller must be allowed to manage settings (a super admin) and, if they use 2FA, have passed it.
 
 type Caller = { id: string; email: string };
@@ -89,14 +91,17 @@ const invitePending = (u: { invited_at?: string; last_sign_in_at?: string; user_
 
 const INVITE_SUBJECT = "You've been added to the Mayor Office scholarship staff";
 
-/** A fresh set-your-password link for an invite that is still pending, at the account's current role. */
-async function resendInvite(admin: SupabaseClient, caller: Caller, request: Request, userId: string, email: string, role: string) {
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const escapeLike = (s: string) => s.replace(/[\\%_]/g, "\\$&");
+
+/** A fresh set-your-password link for an invite that is still pending, at the account's current role and office. */
+async function resendInvite(admin: SupabaseClient, caller: Caller, request: Request, userId: string, email: string, role: string, office: string | null) {
   const { data, error } = await admin.auth.admin.generateLink({ type: "recovery", email });
   if (error || !data) return NextResponse.json({ error: error?.message ?? "Could not create the link" }, { status: 500 });
   const link = `${siteUrl(request)}/auth/confirm?token_hash=${encodeURIComponent(data.properties.hashed_token)}&type=recovery&next=${encodeURIComponent("/reset-password?invite=1")}`;
   const sent = await sendLinkEmail(email, INVITE_SUBJECT,
-    `You have ${ROLE_LABEL[role]} access to the scholarship portal. Set a password to sign in.`, link, "Set your password");
-  await audit(admin, caller, "resend_staff_invite", userId, { email, emailed: sent.emailed });
+    `You have ${staffLabel(role, office)} access to the scholarship portal. Set a password to sign in.`, link, "Set your password");
+  await audit(admin, caller, "resend_staff_invite", userId, { email, role, office, emailed: sent.emailed });
   return NextResponse.json({ ...linkResult(sent, link), resent: true });
 }
 
@@ -135,7 +140,9 @@ export async function POST(request: Request) {
     const firstName = String(body?.firstName ?? "").trim();
     const lastName = String(body?.lastName ?? "").trim();
     const role = String(body?.role ?? "");
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return NextResponse.json({ error: "Enter a valid email address" }, { status: 400 });
+    const requestedOffice = String(body?.office ?? "");
+    const office = isOffice(requestedOffice) && roleCanHaveOffice(role) ? requestedOffice : null;
+    if (!EMAIL_RE.test(email)) return NextResponse.json({ error: "Enter a valid email address" }, { status: 400 });
     if (!firstName || !lastName) return NextResponse.json({ error: "Enter their first and last name" }, { status: 400 });
     if (!isStaffRole(role)) return NextResponse.json({ error: "Choose a staff role" }, { status: 400 });
 
@@ -145,36 +152,49 @@ export async function POST(request: Request) {
     if (error || !data?.user) {
       if (!/already/i.test(error?.message ?? "")) return NextResponse.json({ error: error?.message ?? "Could not create the account" }, { status: 400 });
 
-      // Already invited but never finished (often an expired link): send a fresh one at their current role.
-      const { data: prof } = await admin.from("profiles").select("id").ilike("email", email.replace(/[\\%_]/g, "\\$&")).maybeSingle();
+      // Already invited but never finished (often an expired link): move them to the role and office
+      // picked now, and send a fresh link.
+      const { data: prof } = await admin.from("profiles").select("id").ilike("email", escapeLike(email)).maybeSingle();
       const [{ data: existing }, { data: roleRow }] = prof
-        ? await Promise.all([admin.auth.admin.getUserById(prof.id), admin.from("user_roles").select("role").eq("user_id", prof.id).maybeSingle()])
+        ? await Promise.all([admin.auth.admin.getUserById(prof.id), admin.from("user_roles").select("*").eq("user_id", prof.id).maybeSingle()])
         : [{ data: null }, { data: null }];
       if (!prof || !invitePending(existing?.user) || !isStaffRole(roleRow?.role)) {
         return NextResponse.json({ error: "That email already has an account. Find it under Add existing account instead." }, { status: 400 });
       }
-      return resendInvite(admin, caller, request, prof.id, email, roleRow!.role as string);
+      const oldOffice = (roleRow?.office as string | null | undefined) ?? null;
+      const updated = roleRow!.role !== role || oldOffice !== office;
+      if (updated) {
+        const { error: roleErr } = await admin.from("user_roles")
+          .update({ role, ...(office || oldOffice ? { office } : {}) }).eq("user_id", prof.id);
+        if (roleErr) return NextResponse.json({ error: roleErr.message }, { status: 500 });
+        await audit(admin, caller, "change_pending_invite", prof.id, { email, role, office, previous_role: roleRow!.role, previous_office: oldOffice });
+      }
+      const res = await resendInvite(admin, caller, request, prof.id, email, role, office);
+      if (!res.ok) return res;
+      return NextResponse.json({ ...(await res.json()), updated });
     }
     const userId = data.user.id;
     // The signup trigger made them a student; promote them straight away.
-    const { error: roleErr } = await admin.from("user_roles").upsert({ user_id: userId, role }, { onConflict: "user_id" });
+    const { error: roleErr } = await admin.from("user_roles").upsert({ user_id: userId, role, ...(office ? { office } : {}) }, { onConflict: "user_id" });
     if (roleErr) {
       await admin.auth.admin.deleteUser(userId);
       return NextResponse.json({ error: roleErr.message }, { status: 500 });
     }
-    await audit(admin, caller, "invite_staff", userId, { email, role });
+    await audit(admin, caller, "invite_staff", userId, { email, role, office });
 
     const link = `${siteUrl(request)}/auth/confirm?token_hash=${encodeURIComponent(data.properties.hashed_token)}&type=invite&next=${encodeURIComponent("/reset-password?invite=1")}`;
     const sent = await sendLinkEmail(email, INVITE_SUBJECT,
-      `You now have ${ROLE_LABEL[role]} access to the scholarship portal. Set a password to sign in.`, link, "Set your password");
+      `You now have ${staffLabel(role, office)} access to the scholarship portal. Set a password to sign in.`, link, "Set your password");
     return NextResponse.json(linkResult(sent, link));
   }
 
   const userId = String(body?.userId ?? "");
   if (!userId) return NextResponse.json({ error: "Missing account" }, { status: 400 });
   if (userId === caller.id) return NextResponse.json({ error: "Use your own Profile page for your account" }, { status: 400 });
-  const { data: roleRow } = await admin.from("user_roles").select("role").eq("user_id", userId).maybeSingle();
+  const { data: roleRow } = await admin.from("user_roles").select("*").eq("user_id", userId).maybeSingle(); // "*": works before migration 060 too
   if (!isStaffRole(roleRow?.role)) return NextResponse.json({ error: "That account is not staff" }, { status: 400 });
+  const role = roleRow!.role as string;
+  const office = (roleRow?.office as string | null | undefined) ?? null;
 
   if (action === "reset_mfa") {
     const { data, error } = await admin.auth.admin.mfa.listFactors({ userId });
@@ -198,13 +218,13 @@ export async function POST(request: Request) {
 
     if (action === "resend_invite") {
       if (!u?.user?.email) return NextResponse.json({ error: "That account has no email address" }, { status: 400 });
-      return resendInvite(admin, caller, request, userId, u.user.email, roleRow!.role as string);
+      return resendInvite(admin, caller, request, userId, u.user.email, role, office);
     }
 
     // Deleting the account (and with it the role and profile) makes the old link useless.
     const { error } = await admin.auth.admin.deleteUser(userId);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    await audit(admin, caller, "cancel_staff_invite", userId, { email: u?.user?.email ?? null, role: roleRow!.role });
+    await audit(admin, caller, "cancel_staff_invite", userId, { email: u?.user?.email ?? null, role, office });
     return NextResponse.json({ ok: true });
   }
 
@@ -226,6 +246,48 @@ export async function POST(request: Request) {
       "The Mayor Office started a password reset for your staff account. Choose a new password to sign in again.", link, "Choose a new password");
     await audit(admin, caller, "reset_staff_password", userId, { emailed: sent.emailed });
     return NextResponse.json(linkResult(sent, link));
+  }
+
+  if (action === "update_details") {
+    const email = String(body?.email ?? "").trim().toLowerCase();
+    const firstName = String(body?.firstName ?? "").trim();
+    const lastName = String(body?.lastName ?? "").trim();
+    if (!EMAIL_RE.test(email)) return NextResponse.json({ error: "Enter a valid email address" }, { status: 400 });
+    if (!firstName || !lastName) return NextResponse.json({ error: "Enter their first and last name" }, { status: 400 });
+
+    const [{ data: u }, { data: prof }] = await Promise.all([
+      admin.auth.admin.getUserById(userId),
+      admin.from("profiles").select("email, first_name, last_name").eq("id", userId).maybeSingle(),
+    ]);
+    if (!u?.user) return NextResponse.json({ error: "Account not found" }, { status: 404 });
+    const oldEmail = (u.user.email ?? "").toLowerCase();
+    if (email !== oldEmail) {
+      const { data: taken } = await admin.from("profiles").select("id").ilike("email", escapeLike(email)).neq("id", userId).maybeSingle();
+      if (taken) return NextResponse.json({ error: "Another account already uses that email" }, { status: 400 });
+    }
+    // Changed straight away, without a confirmation email: the Mayor Office vouches for the address.
+    const { error } = await admin.auth.admin.updateUserById(userId, {
+      ...(email !== oldEmail ? { email, email_confirm: true } : {}),
+      user_metadata: { ...u.user.user_metadata, first_name: firstName, last_name: lastName },
+    });
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    const { error: profErr } = await admin.from("profiles").update({ email, first_name: firstName, last_name: lastName }).eq("id", userId);
+    if (profErr) return NextResponse.json({ error: `Sign-in details saved, but the profile wasn't: ${profErr.message}` }, { status: 500 });
+    await audit(admin, caller, "update_staff_details", userId, {
+      previous: { email: oldEmail, first_name: prof?.first_name ?? null, last_name: prof?.last_name ?? null },
+      email, first_name: firstName, last_name: lastName,
+    });
+    return NextResponse.json({ ok: true, emailChanged: email !== oldEmail });
+  }
+
+  if (action === "delete_account") {
+    const { data: u } = await admin.auth.admin.getUserById(userId);
+    // Deleting the login also ends its sessions and removes its role and profile. Records they
+    // worked on stay; their "done by" columns become empty, and the audit log keeps their email.
+    const { error } = await admin.auth.admin.deleteUser(userId);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    await audit(admin, caller, "delete_staff_account", userId, { email: u?.user?.email ?? null, role, office });
+    return NextResponse.json({ ok: true });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });
