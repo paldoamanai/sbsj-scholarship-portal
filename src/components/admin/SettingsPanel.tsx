@@ -30,7 +30,7 @@ interface Props {
 
 const LABELS: Record<SettingKey, string> = {
   academic_year: "Academic year", current_semester: "Semester", min_grade_requirement: "Minimum grade",
-  max_scholarships_per_student: "Max applications per academic year", payment_methods: "Payment methods",
+  payment_methods: "Payment methods",
   email_notifications: "Email notifications", applications_open: "Applications open",
   application_open_date: "Opening date", application_close_date: "Closing date",
   maintenance_mode: "Maintenance mode", maintenance_message: "Maintenance message",
@@ -68,7 +68,7 @@ export default function SettingsPanel({ rows, auditLogs, onSave, readOnly = fals
     const next: Partial<AppSettings> = {};
     const errs: Partial<Record<SettingKey, string>> = {};
     for (const k of dirtyKeys(keys)) {
-      const value = k === "min_grade_requirement" || k === "max_scholarships_per_student" || k === "max_upload_mb"
+      const value = k === "min_grade_requirement" || k === "max_upload_mb"
         ? Number(draft[k]) : draft[k];
       const err = validateSetting(k, value);
       if (err) errs[k] = err; else (next as Record<string, unknown>)[k] = value;

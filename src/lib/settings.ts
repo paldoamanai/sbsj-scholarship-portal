@@ -23,7 +23,6 @@ export interface AppSettings {
   academic_year: string;
   current_semester: string;
   min_grade_requirement: number;
-  max_scholarships_per_student: number;
   payment_methods: PaymentMethod[];
   email_notifications: boolean;
   applications_open: boolean;
@@ -56,7 +55,6 @@ export const SETTING_DEFAULTS: AppSettings = {
   academic_year: "2025-2026",
   current_semester: "1st Semester",
   min_grade_requirement: 85,
-  max_scholarships_per_student: 1,
   payment_methods: ["Cash", "Cheque"],
   email_notifications: true,
   applications_open: true,
@@ -118,7 +116,6 @@ export function parseSettings(rows: { key: string; value: Json }[] | null | unde
     academic_year: str(raw.academic_year, academicYearOf(new Date())),
     current_semester: str(raw.current_semester, d.current_semester),
     min_grade_requirement: num(raw.min_grade_requirement, d.min_grade_requirement),
-    max_scholarships_per_student: num(raw.max_scholarships_per_student, d.max_scholarships_per_student),
     payment_methods: methods.length ? methods : d.payment_methods,
     email_notifications: bool(raw.email_notifications, d.email_notifications),
     applications_open: bool(raw.applications_open, d.applications_open),
@@ -178,10 +175,6 @@ export function validateSetting(key: SettingKey, value: unknown): string | null 
     case "min_grade_requirement": {
       const n = Number(value);
       return Number.isFinite(n) && n >= 0 && n <= 100 ? null : "Minimum grade must be between 0 and 100";
-    }
-    case "max_scholarships_per_student": {
-      const n = Number(value);
-      return Number.isInteger(n) && n >= 1 && n <= 20 ? null : "Max applications must be a whole number from 1 to 20";
     }
     case "default_payment_lead_days": {
       const n = Number(value);
