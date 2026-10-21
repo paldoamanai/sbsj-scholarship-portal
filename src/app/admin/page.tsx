@@ -48,7 +48,7 @@ import {
 } from "@/lib/reports";
 import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
 import { asMonths, asSchedule, isMonthTerm, openTerms, secondSemesterGradeWarning, termAmount, termLabel, termsFor, type PaymentTerm } from "@/lib/release-schedule";
-import { OFFICE_FULL_NAME, OFFICE_LABEL, isOffice, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
+import { OFFICE_FULL_NAME, OFFICE_LABEL, isOffice, officeLogo, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 import { printReceiptSlip } from "@/lib/receipt-slip";
 import { LETTER_OF_INTENT } from "@/lib/documents";
 import { peso, pesoFixed as formatPHP } from "@/lib/format";
@@ -1534,7 +1534,7 @@ export default function AdminDashboardPage() {
     <div className="flex min-h-screen bg-background">
       <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-card border-r flex flex-col transform transition-transform lg:relative lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex items-center gap-3 p-4 border-b">
-          <Image src="/municipal-logo.png" alt="Logo" width={32} height={32} className="h-8 w-8" />
+          <Image src={officeLogo(myOffice)} alt={myOffice ? `${OFFICE_FULL_NAME[myOffice]} seal` : "Municipality of San Jose seal"} width={32} height={32} className="h-8 w-8" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold truncate" title={myOffice ? OFFICE_FULL_NAME[myOffice] : undefined}>{myOffice ? OFFICE_LABEL[myOffice] : "Mayor Office"}</p>
             <p className="text-xs text-muted-foreground truncate">Scholarship System</p>
