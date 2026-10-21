@@ -1,4 +1,4 @@
-import { CheckCircle, ChevronRight, Clock, XCircle, type LucideIcon } from "lucide-react";
+import { CheckCircle, ChevronRight, Clock, XCircle, type IconComponent } from "@/components/icons";
 
 // Small layout pieces shared by the student dashboard and its extracted sections.
 
@@ -22,7 +22,7 @@ export function Panel({ children, className = "" }: { children: React.ReactNode;
 
 export function StatusBadge({ status }: { status: string | null | undefined }) {
   if (!status || status === "—") return <span className="text-sm text-muted-foreground">—</span>;
-  const map: Record<string, { icon: LucideIcon; cls: string }> = {
+  const map: Record<string, { icon: IconComponent; cls: string }> = {
     Approved:   { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
     Pending:    { icon: Clock,        cls: "bg-amber-50 text-amber-700 border-amber-200" },
     Disapproved:   { icon: XCircle,      cls: "bg-red-50 text-red-700 border-red-200" },
@@ -45,7 +45,7 @@ export function StatusBadge({ status }: { status: string | null | undefined }) {
 
 /** A headline number. Pass `onClick` to make the whole card a link to the relevant tab. */
 export function StatCard({ icon: Icon, label, value, sub, subTone = "neutral", accent = false, onClick }: {
-  icon: LucideIcon;
+  icon: IconComponent;
   label: string;
   value: string | number;
   sub?: string;

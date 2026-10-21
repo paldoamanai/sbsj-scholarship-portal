@@ -17,7 +17,7 @@ import {
   Bell, User, Settings as SettingsIcon, LogOut, Menu, Lock, Download,
   AlertTriangle, CheckCircle, Clock, Eye, Trash2, Loader2,
   X, HelpCircle, Printer,
-} from "lucide-react";
+} from "@/components/icons";
 import Overview from "@/components/student/Overview";
 import { createClient } from "@/lib/supabase/client";
 import ProfileSection from "@/components/student/ProfileSection";

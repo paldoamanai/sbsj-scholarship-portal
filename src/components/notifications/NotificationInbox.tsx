@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { Bell, Check, Circle, Loader2, Search, Trash2 } from "lucide-react";
+import { Bell, Check, Circle, Loader2, Search, Trash2 } from "@/components/icons";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";

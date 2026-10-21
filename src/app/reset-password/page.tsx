@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { KeyRound, Loader2, ShieldCheck } from "lucide-react";
+import { KeyRound, Loader2, ShieldCheck } from "@/components/icons";
 import { createClient } from "@/lib/supabase/client";
 import { OFFICE_FULL_NAME, ROLE_DESCRIPTION, isOffice, isStaffRole, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 import { PASSWORD_HINT, passwordProblem } from "@/validations/auth";

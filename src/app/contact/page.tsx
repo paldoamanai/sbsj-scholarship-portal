@@ -5,7 +5,7 @@ import LandingFooter from "@/components/LandingFooter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import ContactForm from "@/components/ContactForm";
 import { useSystemSettings } from "@/hooks/use-system-settings";
-import { Mail, Phone, MapPin, Clock } from "lucide-react";
+import { Mail, Phone, MapPin, Clock } from "@/components/icons";
 
 
 export default function ContactPage() {

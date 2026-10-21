@@ -1,7 +1,7 @@
 import Layout from "@/components/Layout";
 import LandingFooter from "@/components/LandingFooter";
 import { Card, CardContent } from "@/components/ui/card";
-import { GraduationCap, Target, Heart, Users } from "lucide-react";
+import { GraduationCap, Target, Heart, Users } from "@/components/icons";
 
 const values = [
   { icon: GraduationCap, title: "Education First", description: "We believe every deserving student in San Jose, Occidental Mindoro should have access to quality education regardless of financial status." },

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Camera, Loader2, User, ShieldCheck, Mail, KeyRound, History } from "lucide-react";
+import { Camera, Loader2, User, ShieldCheck, Mail, KeyRound, History } from "@/components/icons";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

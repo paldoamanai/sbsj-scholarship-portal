@@ -20,7 +20,7 @@ import {
   Bell, ScrollText, Settings as SettingsIcon, Lock,
   FileDown, Receipt, Loader2, User, Upload, ArrowRight,
    ChevronRight, ChevronLeft, ExternalLink, Printer, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2,
-} from "lucide-react";
+} from "@/components/icons";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";

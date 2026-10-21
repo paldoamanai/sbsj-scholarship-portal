@@ -18,7 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import {
   User, School, Lock, Upload, ChevronRight, ChevronLeft, AlertTriangle, Loader2, Eye, EyeOff, CalendarIcon, MailCheck,
-} from "lucide-react";
+} from "@/components/icons";
 import { format, subYears } from "date-fns";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
