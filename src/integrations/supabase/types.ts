@@ -1061,6 +1061,12 @@ export type Database = {
         }
         Returns: undefined
       }
+      staff_manager_office: {
+        Args: {
+          _user: string
+        }
+        Returns: string | null
+      }
       set_staff_access: {
         Args: {
           _user_id: string

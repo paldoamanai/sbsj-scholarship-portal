@@ -20,6 +20,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 import {
   OFFICE_FULL_NAME, OFFICE_LABEL, ROLE_DESCRIPTION, ROLE_LABEL, STAFF_OFFICES, STAFF_ROLES, isOffice, roleCanHaveOffice, staffLabel, type StaffRole,
 } from "@/lib/permissions";
@@ -30,7 +31,12 @@ type Props = {
   onChanged: () => void;
   /** Opens the audit log filtered to everything this staff member did. */
   onShowActivity?: (userId: string) => void;
+  /** Set for an office Admin: they manage only this office's Reviewer and Finance accounts (migration 065). */
+  managerOffice?: string | null;
 };
+
+/** The roles an office Admin can give. */
+const OFFICE_ADMIN_ROLES: StaffRole[] = ["reviewer", "finance_admin"];
 
 type Person = {
   id: string; email: string | null; name: string; firstName: string; lastName: string; role: string; office: string | null;
@@ -90,7 +96,9 @@ const SEC_COPY: Record<SecAction["action"], { title: (n: string) => string; body
 };
 
 /** Super admin page: who has staff access, their roles and account security, and adding new staff. */
-export default function StaffPanel({ userId, onChanged, onShowActivity }: Props) {
+export default function StaffPanel({ userId, onChanged, onShowActivity, managerOffice = null }: Props) {
+  const scoped = isOffice(managerOffice);
+  const givableRoles = scoped ? OFFICE_ADMIN_ROLES : STAFF_ROLES;
   const supabase = useMemo(() => createClient(), []);
   const [staff, setStaff] = useState<Person[]>([]);
   const [security, setSecurity] = useState<Record<string, Security>>({});
@@ -105,7 +113,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
   const [pending, setPending] = useState<Pending | null>(null);
   const [secAction, setSecAction] = useState<SecAction | null>(null);
   const [busy, setBusy] = useState(false);
-  const [invite, setInvite] = useState({ email: "", firstName: "", lastName: "", role: "reviewer", office: null as string | null });
+  const [invite, setInvite] = useState({ email: "", firstName: "", lastName: "", role: "reviewer", office: managerOffice });
   const [inviting, setInviting] = useState(false);
   const [confirmInvite, setConfirmInvite] = useState(false);
   const [editing, setEditing] = useState<Editing | null>(null);
@@ -130,10 +138,12 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
     const byId = new Map((profs ?? []).map((p) => [p.id, p]));
     setStaff((roles ?? [])
       .map((r) => toPerson(r.user_id, byId.get(r.user_id), r))
+      // An office Admin sees themselves and the team they manage.
+      .filter((p) => !scoped || p.id === userId || (OFFICE_ADMIN_ROLES.includes(p.role as StaffRole) && p.office === managerOffice))
       .sort((a, b) => ORDER(a) - ORDER(b) || a.name.localeCompare(b.name)));
     setLoading(false);
     loadSecurity();
-  }, [supabase, loadSecurity]);
+  }, [supabase, loadSecurity, scoped, managerOffice, userId]);
   useEffect(() => { load(); }, [load]);
 
   const hasSuperAdmin = staff.some((s) => s.role === "super_admin");
@@ -233,7 +243,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
     if (r.body?.updated) toast.info(`Their earlier invite was still pending, so it now gives ${label} access.`);
     if (r.body?.link) setShareLink({ title: `${r.body.resent ? "New invite" : "Invite"} link for ${invite.firstName}`, link: r.body.link, reason: r.body.reason });
     else toast.success(r.body?.resent ? `They hadn't finished their invite. A new link was emailed to ${invite.email}` : `Invite emailed to ${invite.email}`);
-    setInvite({ email: "", firstName: "", lastName: "", role: "reviewer", office: null });
+    setInvite({ email: "", firstName: "", lastName: "", role: "reviewer", office: managerOffice });
     await load();
     onChanged();
   };
@@ -271,11 +281,14 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
   const roleSelect = (value: string, onChange: (v: string) => void) => (
     <Select value={value} onValueChange={onChange}>
       <SelectTrigger className="w-36"><SelectValue>{ROLE_LABEL[value] ?? value}</SelectValue></SelectTrigger>
-      <SelectContent>{STAFF_ROLES.map((r) => <SelectItem key={r} value={r}>{ROLE_LABEL[r]}</SelectItem>)}</SelectContent>
+      <SelectContent>{givableRoles.map((r) => <SelectItem key={r} value={r}>{ROLE_LABEL[r]}</SelectItem>)}</SelectContent>
     </Select>
   );
 
-  const officeSelect = (value: string | null, onChange: (v: string | null) => void, disabled = false) => (
+  const officeSelect = (value: string | null, onChange: (v: string | null) => void, disabled = false) => scoped ? (
+    // An office Admin's staff stay in their office.
+    <span className="flex h-10 items-center text-sm">{OFFICE_LABEL[managerOffice as keyof typeof OFFICE_LABEL]}</span>
+  ) : (
     <Select value={value ?? ALL} onValueChange={(v) => onChange(v === ALL ? null : v)} disabled={disabled}>
       <SelectTrigger className="w-40"><SelectValue>{disabled ? "—" : isOffice(value) ? OFFICE_LABEL[value] : "All offices"}</SelectValue></SelectTrigger>
       <SelectContent>
@@ -289,7 +302,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
     <div className="space-y-4 animate-fade-in max-w-5xl">
       <h2 className="text-xl font-display font-bold">Staff</h2>
 
-      {!loading && !hasSuperAdmin && (
+      {!loading && !hasSuperAdmin && !scoped && (
         <Card className="border-amber-200 bg-amber-50/60">
           <CardContent className="pt-6 space-y-3 text-sm">
             <p><strong>There is no Mayor Office account yet.</strong> Until there is one, every admin can change settings and manage staff.</p>
@@ -314,7 +327,9 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Staff accounts</CardTitle>
-          <CardDescription>Everyone who can sign in to the admin panel. You can&apos;t change your own role or security here.</CardDescription>
+          <CardDescription>{scoped
+            ? <>The Reviewer and Finance staff of {OFFICE_FULL_NAME[managerOffice as keyof typeof OFFICE_FULL_NAME]}, which you manage. Other staff are managed by the Mayor Office. You can&apos;t change your own role or security here.</>
+            : <>Everyone who can sign in to the admin panel. You can&apos;t change your own role or security here.</>}</CardDescription>
         </CardHeader>
         <CardContent>
           {securityError && <p className="mb-3 text-xs text-muted-foreground">Sign-in details unavailable: {securityError}</p>}
@@ -398,7 +413,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className={cn("grid gap-4", !scoped && "lg:grid-cols-2")}>
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Invite new staff</CardTitle>
@@ -425,7 +440,8 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
           </CardContent>
         </Card>
 
-        <Card>
+        {/* Office Admins invite new accounts only: promoting an existing one is for the Mayor Office. */}
+        {!scoped && <Card>
           <CardHeader>
             <CardTitle className="text-base">Add existing account</CardTitle>
             <CardDescription>Give staff access to someone who already registered. Search by name or email. An account that has applied for a scholarship can&apos;t be made staff.</CardDescription>
@@ -467,15 +483,17 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
               </div>
             )}
           </CardContent>
-        </Card>
+        </Card>}
       </div>
 
       <Card>
         <CardHeader><CardTitle className="text-base">What each role can do</CardTitle></CardHeader>
         <CardContent className="text-sm space-y-2">
-          {STAFF_ROLES.map((r) => <p key={r}><strong>{ROLE_LABEL[r]}</strong>: {ROLE_DESCRIPTION[r]}</p>)}
+          {givableRoles.map((r) => <p key={r}><strong>{ROLE_LABEL[r]}</strong>: {ROLE_DESCRIPTION[r]}</p>)}
+          {scoped ? <p>Staff you add belong to {OFFICE_FULL_NAME[managerOffice as keyof typeof OFFICE_FULL_NAME]} and only see its programs, and their applicants, documents and payments. For an Admin account or a move to another office, ask the Mayor Office.</p> : <>
           <p><strong>Office</strong>: an Admin, Reviewer or Finance account can belong to {STAFF_OFFICES.map((o) => OFFICE_FULL_NAME[o]).join(" or ")}. It keeps its role&apos;s permissions, but only sees that office&apos;s programs and their applicants, documents and payments. &ldquo;All offices&rdquo; works across the whole municipality.</p>
           <p className="text-xs text-muted-foreground">Every staff role can view programs, applicants, students and payments. Keep one or two Mayor Office accounts, so someone can still manage staff if one person loses access. Every change on this page is recorded in the audit log.</p>
+          </>}
         </CardContent>
       </Card>
 

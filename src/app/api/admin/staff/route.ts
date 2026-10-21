@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { normalizeSupabaseUrl } from "@/lib/supabase/url";
 import { isOffice, isStaffRole, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 
-// Super admin actions on staff accounts that need Supabase Auth's admin API (service role):
+// Actions on staff accounts that need Supabase Auth's admin API (service role):
 //   GET                         every staff account with its last sign-in and whether 2FA is on
 //   POST { action: "invite" }   create a staff account and email the person a link to set a password
 //                               (for an invite that is still pending, sends a fresh link instead)
@@ -12,9 +12,17 @@ import { isOffice, isStaffRole, roleCanHaveOffice, staffLabel } from "@/lib/perm
 //   POST { action: "resend_invite" | "cancel_invite", userId }   only while the invite is pending
 //   POST { action: "update_details", userId, firstName, lastName, email }
 //   POST { action: "delete_account", userId }   deletes the login; the audit log keeps their history
-// The caller must be allowed to manage settings (a super admin) and, if they use 2FA, have passed it.
+// The caller must be allowed to manage settings (the Mayor Office), or be an Admin of an office (065),
+// who manages only that office's Reviewer and Finance accounts. If they use 2FA, they must have passed it.
 
-type Caller = { id: string; email: string };
+/** `office`: set for an office Admin, whose actions are limited to that office's Reviewer and Finance accounts. */
+type Caller = { id: string; email: string; office: string | null };
+
+const OFFICE_ADMIN_ROLES = ["reviewer", "finance_admin"];
+/** Whether the caller may act on a staff account with this role and office. */
+const inScope = (caller: Caller, role: string, office: string | null) =>
+  !caller.office || (OFFICE_ADMIN_ROLES.includes(role) && office === caller.office);
+const OUT_OF_SCOPE = "You can only manage Reviewer and Finance accounts in your own office";
 
 const escapeHtml = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -24,11 +32,13 @@ async function authorize(): Promise<{ caller: Caller; admin: SupabaseClient } | 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
-  const [{ data: canManage }, { data: mfaOk }] = await Promise.all([
+  const [{ data: canManage }, { data: mfaOk }, { data: managed }] = await Promise.all([
     supabase.rpc("can_manage_settings", { _user_id: user.id }),
     supabase.rpc("mfa_ok", { _user: user.id }),
+    supabase.rpc("staff_manager_office", { _user: user.id }),
   ]);
-  if (canManage !== true) return NextResponse.json({ error: "Only the Mayor Office can do this" }, { status: 403 });
+  const office = canManage === true ? null : isOffice(managed) ? managed : null;
+  if (canManage !== true && !office) return NextResponse.json({ error: "Only the Mayor Office or an office Admin can do this" }, { status: 403 });
   if (mfaOk !== true) return NextResponse.json({ error: "Two-factor verification required" }, { status: 401 });
 
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -36,7 +46,7 @@ async function authorize(): Promise<{ caller: Caller; admin: SupabaseClient } | 
   const admin = createServiceClient(normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL), serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  return { caller: { id: user.id, email: user.email ?? "" }, admin };
+  return { caller: { id: user.id, email: user.email ?? "", office }, admin };
 }
 
 const audit = (admin: SupabaseClient, caller: Caller, action: string, entityId: string, value: Record<string, unknown>) =>
@@ -108,12 +118,13 @@ async function resendInvite(admin: SupabaseClient, caller: Caller, request: Requ
 export async function GET() {
   const auth = await authorize();
   if (auth instanceof NextResponse) return auth;
-  const { admin } = auth;
+  const { admin, caller } = auth;
 
-  const { data: roles, error } = await admin.from("user_roles").select("user_id, role").neq("role", "student");
+  const { data: roles, error } = await admin.from("user_roles").select("*").neq("role", "student"); // "*": works before migration 060 too
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const staff = await Promise.all((roles ?? []).filter((r) => isStaffRole(r.role)).map(async (r) => {
+  const visible = (roles ?? []).filter((r) => isStaffRole(r.role) && (r.user_id === caller.id || inScope(caller, r.role, r.office ?? null)));
+  const staff = await Promise.all(visible.map(async (r) => {
     const { data } = await admin.auth.admin.getUserById(r.user_id);
     const u = data?.user;
     return {
@@ -141,10 +152,12 @@ export async function POST(request: Request) {
     const lastName = String(body?.lastName ?? "").trim();
     const role = String(body?.role ?? "");
     const requestedOffice = String(body?.office ?? "");
-    const office = isOffice(requestedOffice) && roleCanHaveOffice(role) ? requestedOffice : null;
+    // An office Admin's staff always join their office.
+    const office = caller.office ?? (isOffice(requestedOffice) && roleCanHaveOffice(role) ? requestedOffice : null);
     if (!EMAIL_RE.test(email)) return NextResponse.json({ error: "Enter a valid email address" }, { status: 400 });
     if (!firstName || !lastName) return NextResponse.json({ error: "Enter their first and last name" }, { status: 400 });
     if (!isStaffRole(role)) return NextResponse.json({ error: "Choose a staff role" }, { status: 400 });
+    if (!inScope(caller, role, office)) return NextResponse.json({ error: "Office Admins can invite Reviewer or Finance staff for their own office" }, { status: 403 });
 
     const { data, error } = await admin.auth.admin.generateLink({
       type: "invite", email, options: { data: { first_name: firstName, last_name: lastName, password_set: false } },
@@ -158,10 +171,12 @@ export async function POST(request: Request) {
       const [{ data: existing }, { data: roleRow }] = prof
         ? await Promise.all([admin.auth.admin.getUserById(prof.id), admin.from("user_roles").select("*").eq("user_id", prof.id).maybeSingle()])
         : [{ data: null }, { data: null }];
-      if (!prof || !invitePending(existing?.user) || !isStaffRole(roleRow?.role)) {
-        return NextResponse.json({ error: "That email already has an account. Find it under Add existing account instead." }, { status: 400 });
-      }
       const oldOffice = (roleRow?.office as string | null | undefined) ?? null;
+      if (!prof || !invitePending(existing?.user) || !isStaffRole(roleRow?.role) || !inScope(caller, roleRow!.role as string, oldOffice)) {
+        return NextResponse.json({
+          error: caller.office ? "That email already has an account. Ask the Mayor Office to give it access." : "That email already has an account. Find it under Add existing account instead.",
+        }, { status: 400 });
+      }
       const updated = roleRow!.role !== role || oldOffice !== office;
       if (updated) {
         const { error: roleErr } = await admin.from("user_roles")
@@ -195,6 +210,7 @@ export async function POST(request: Request) {
   if (!isStaffRole(roleRow?.role)) return NextResponse.json({ error: "That account is not staff" }, { status: 400 });
   const role = roleRow!.role as string;
   const office = (roleRow?.office as string | null | undefined) ?? null;
+  if (!inScope(caller, role, office)) return NextResponse.json({ error: OUT_OF_SCOPE }, { status: 403 });
 
   if (action === "reset_mfa") {
     const { data, error } = await admin.auth.admin.mfa.listFactors({ userId });

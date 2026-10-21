@@ -9,8 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { KeyRound, Loader2 } from "lucide-react";
+import { KeyRound, Loader2, ShieldCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { OFFICE_FULL_NAME, ROLE_DESCRIPTION, isOffice, isStaffRole, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 import { PASSWORD_HINT, passwordProblem } from "@/validations/auth";
 
 /** Reached from a reset email or a staff invite (?invite=1): the link signs the person in, then sends them here. */
@@ -22,10 +23,20 @@ export default function ResetPasswordPage() {
   const [errors, setErrors] = useState<{ password?: string; confirm?: string }>({});
   const [loading, setLoading] = useState(false);
   const [invite, setInvite] = useState(false);
+  // The access an invite gives, shown so they know what they're accepting.
+  const [access, setAccess] = useState<{ role: string; office: string | null } | null>(null);
 
   useEffect(() => {
-    setInvite(new URLSearchParams(window.location.search).get("invite") === "1");
-    createClient().auth.getUser().then(({ data }) => setReady(data.user ? "ok" : "expired"));
+    const isInvite = new URLSearchParams(window.location.search).get("invite") === "1";
+    setInvite(isInvite);
+    const supabase = createClient();
+    supabase.auth.getUser().then(async ({ data }) => {
+      if (data.user && isInvite) {
+        const { data: row } = await supabase.from("user_roles").select("role, office").eq("user_id", data.user.id).maybeSingle();
+        if (row && isStaffRole(row.role)) setAccess({ role: row.role, office: row.office ?? null });
+      }
+      setReady(data.user ? "ok" : "expired");
+    });
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -73,6 +84,20 @@ export default function ResetPasswordPage() {
             {ready === "checking" && <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
             {ready === "expired" && !invite && (
               <Button asChild className="w-full bg-gradient-primary shadow-primary"><Link href="/forgot-password">Send a new link</Link></Button>
+            )}
+            {ready === "ok" && access && (
+              <div className="mb-5 rounded-lg border border-orange-200 bg-orange-50/60 p-3 text-sm dark:border-orange-900 dark:bg-orange-950/30">
+                <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <ShieldCheck className="h-3.5 w-3.5 text-orange-600" />Your access
+                </p>
+                <p className="mt-1 font-semibold text-foreground">{staffLabel(access.role, access.office)}</p>
+                <p className="mt-1 text-muted-foreground">
+                  {ROLE_DESCRIPTION[access.role as keyof typeof ROLE_DESCRIPTION]}
+                  {roleCanHaveOffice(access.role) && (isOffice(access.office)
+                    ? ` Only ${OFFICE_FULL_NAME[access.office]} programs, and their applicants and payments.`
+                    : " Across all offices.")}
+                </p>
+              </div>
             )}
             {ready === "ok" && (
               <form onSubmit={handleSubmit} className="space-y-4">

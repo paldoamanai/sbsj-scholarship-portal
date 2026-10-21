@@ -250,7 +250,9 @@ export default function AdminDashboardPage() {
   const myOffice = roleCanHaveOffice(adminRole) && isOffice(adminOffice) ? adminOffice : null;
   // Programs carry an office once migration 061 has run; until then the program form doesn't offer one.
   const officesReady = scholarships.some((sch) => "office" in sch);
-  const canSee = (key: string) => (key === "staff" ? can.super : !(hiddenSections[adminRole] ?? []).includes(key));
+  // An Admin of an office manages that office's Reviewer and Finance staff (migration 065).
+  const managedOffice = adminRole === "admin" ? myOffice : null;
+  const canSee = (key: string) => (key === "staff" ? can.super || !!managedOffice : !(hiddenSections[adminRole] ?? []).includes(key));
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -2824,9 +2826,9 @@ export default function AdminDashboardPage() {
             />
           )}
 
-          {/* STAFF (super admins only) */}
-          {activeSection === "staff" && canManageSettings && (
-            <StaffPanel userId={adminUserId} onChanged={() => loadData(true)}
+          {/* STAFF (the Mayor Office, or an office Admin for their own office) */}
+          {activeSection === "staff" && (canManageSettings || managedOffice) && (
+            <StaffPanel userId={adminUserId} onChanged={() => loadData(true)} managerOffice={canManageSettings ? null : managedOffice}
               onShowActivity={(id) => { setAuditUser(id); setAuditPage(1); setActiveSection("audit-logs"); }} />
           )}
 
