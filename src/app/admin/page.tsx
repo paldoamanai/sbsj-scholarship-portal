@@ -32,6 +32,7 @@ import NotificationInbox, { NOTIFICATION_PAGE } from "@/components/notifications
 import AnnouncementsPanel from "@/components/admin/AnnouncementsPanel";
 import ReminderJobsCard from "@/components/admin/ReminderJobsCard";
 import { useUnreadTitle } from "@/hooks/use-unread-title";
+import { useAuditLogQuery } from "@/hooks/use-audit-log-query";
 import { showDesktopAlert } from "@/lib/desktop-alerts";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
 import OverviewPanel from "@/components/admin/OverviewPanel";
@@ -864,29 +865,33 @@ export default function AdminDashboardPage() {
 
   // ── Audit log browsing ──
   const AUDIT_PAGE_SIZE = 15;
-  const auditActions = useMemo(() => [...new Set(auditLogs.map((l) => l.action))].sort(), [auditLogs]);
-  const auditEntities = useMemo(() => [...new Set(auditLogs.map((l) => l.entity_type))].sort(), [auditLogs]);
-  const filteredLogs = useMemo(() => {
-    const q = auditSearch.trim().toLowerCase();
-    const from = auditFrom ? new Date(`${auditFrom}T00:00:00`) : null;
-    const to = auditTo ? new Date(`${auditTo}T23:59:59.999`) : null;
-    return auditLogs.filter((l) => {
-      if (auditAction !== "all" && l.action !== auditAction) return false;
-      if (auditEntity !== "all" && l.entity_type !== auditEntity) return false;
-      if (auditUser !== "all" && l.user_id !== auditUser) return false;
-      const t = new Date(l.created_at);
-      if ((from && t < from) || (to && t > to)) return false;
-      return !q || `${l.user_email || ""} ${l.action} ${l.entity_type} ${l.entity_id || ""}`.toLowerCase().includes(q);
-    });
-  }, [auditLogs, auditSearch, auditAction, auditEntity, auditUser, auditFrom, auditTo]);
-  const auditPages = Math.max(1, Math.ceil(filteredLogs.length / AUDIT_PAGE_SIZE));
+  // Choices come from the recent entries; a chosen one stays listed even if it's only in older history.
+  const auditActions = useMemo(() => [...new Set([...auditLogs.map((l) => l.action), ...(auditAction !== "all" ? [auditAction] : [])])].sort(), [auditLogs, auditAction]);
+  const auditEntities = useMemo(() => [...new Set([...auditLogs.map((l) => l.entity_type), "system_settings", ...(auditEntity !== "all" ? [auditEntity] : [])])].sort(), [auditLogs, auditEntity]);
+  // Searched and paged in the database, so the whole history is reachable, not just the entries loaded above.
+  const auditQuery = useAuditLogQuery(supabase,
+    { search: auditSearch, action: auditAction, entity: auditEntity, user: auditUser, from: auditFrom, to: auditTo },
+    auditPage, AUDIT_PAGE_SIZE, activeSection === "audit-logs");
+  const auditPages = Math.max(1, Math.ceil(auditQuery.count / AUDIT_PAGE_SIZE));
   const currentAuditPage = Math.min(auditPage, auditPages);
-  const pagedLogs = filteredLogs.slice((currentAuditPage - 1) * AUDIT_PAGE_SIZE, currentAuditPage * AUDIT_PAGE_SIZE);
-  const auditDef = (): ReportDef => ({
-    title: "Audit Log", count: filteredLogs.length, countLabel: "entries",
-    filters: [`${filteredLogs.length} of ${auditLogs.length} loaded entries`, ...(auditAction !== "all" ? [`Action: ${auditAction}`] : []), ...(auditEntity !== "all" ? [`Entity: ${auditEntity}`] : []), ...(auditUser !== "all" ? [`Staff: ${staff.find((m) => m.id === auditUser)?.name ?? auditUser}`] : []), ...(auditFrom || auditTo ? [`Dates: ${auditFrom || "…"} to ${auditTo || "…"}`] : [])],
-    sections: [logsToSection(filteredLogs, reportData())],
-  });
+  const pagedLogs = auditQuery.rows;
+  const [exportingAudit, setExportingAudit] = useState(false);
+  const exportAudit = async (kind: "pdf" | "xlsx") => {
+    setExportingAudit(true);
+    try {
+      const { rows, truncated } = await auditQuery.fetchAll();
+      const def: ReportDef = {
+        title: "Audit Log", count: rows.length, countLabel: "entries",
+        filters: [truncated ? `First ${rows.length.toLocaleString()} of ${auditQuery.count.toLocaleString()} matching entries` : `${rows.length.toLocaleString()} matching entries`, ...(auditSearch.trim() ? [`Search: ${auditSearch.trim()}`] : []), ...(auditAction !== "all" ? [`Action: ${auditAction}`] : []), ...(auditEntity !== "all" ? [`Entity: ${auditEntity}`] : []), ...(auditUser !== "all" ? [`Staff: ${staff.find((m) => m.id === auditUser)?.name ?? auditUser}`] : []), ...(auditFrom || auditTo ? [`Dates: ${auditFrom || "…"} to ${auditTo || "…"}`] : [])],
+        sections: [logsToSection(rows, reportData())],
+      };
+      await exportDef(def, "audit-log", kind, kind === "pdf");
+    } catch (e) {
+      toast.error("Export failed", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setExportingAudit(false);
+    }
+  };
 
   const STUDENT_PAGE_SIZE = 10;
   // The Students section lists scholars only: accounts with at least one approved application.
@@ -2693,8 +2698,8 @@ export default function AdminDashboardPage() {
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <h2 className="text-xl font-display font-bold">Audit Logs</h2>
                 <div className="flex gap-2 flex-wrap">
-                  <Button variant="outline" onClick={() => exportDef(auditDef(), "audit-log", "pdf", true)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
-                  <Button variant="outline" onClick={() => exportDef(auditDef(), "audit-log", "xlsx")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
+                  <Button variant="outline" disabled={exportingAudit || auditQuery.count === 0} onClick={() => exportAudit("pdf")}>{exportingAudit ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <FileDown className="mr-1 h-4 w-4" />} PDF</Button>
+                  <Button variant="outline" disabled={exportingAudit || auditQuery.count === 0} onClick={() => exportAudit("xlsx")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
                 </div>
               </div>
               <div className="flex gap-2 flex-wrap items-center">
@@ -2735,7 +2740,9 @@ export default function AdminDashboardPage() {
                     <TableHead>Date</TableHead><TableHead>User</TableHead><TableHead>Action</TableHead><TableHead>Entity</TableHead><TableHead>Changed</TableHead><TableHead className="text-right">Details</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {pagedLogs.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No audit logs found</TableCell></TableRow>}
+                    {pagedLogs.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      {auditQuery.loading ? <Loader2 className="mx-auto h-5 w-5 animate-spin" /> : auditQuery.error ? `Couldn't load the audit log: ${auditQuery.error}` : "No audit logs found"}
+                    </TableCell></TableRow>}
                     {pagedLogs.map((log) => (
                       <TableRow key={log.id}>
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{new Date(log.created_at).toLocaleString()}</TableCell>
@@ -2750,7 +2757,7 @@ export default function AdminDashboardPage() {
                 </Table>
               </Card>
               <div className="flex items-center justify-between text-sm text-muted-foreground">
-                <span>{filteredLogs.length === 0 ? "0 entries" : `Showing ${(currentAuditPage - 1) * AUDIT_PAGE_SIZE + 1}–${Math.min(currentAuditPage * AUDIT_PAGE_SIZE, filteredLogs.length)} of ${filteredLogs.length}`}{auditLogs.length >= 1000 && " (latest 1,000 loaded)"}</span>
+                <span>{auditQuery.count === 0 ? "0 entries" : `Showing ${((currentAuditPage - 1) * AUDIT_PAGE_SIZE + 1).toLocaleString()}–${Math.min(currentAuditPage * AUDIT_PAGE_SIZE, auditQuery.count).toLocaleString()} of ${auditQuery.count.toLocaleString()}`}{auditQuery.loading && pagedLogs.length > 0 && " · updating…"}</span>
                 <div className="flex items-center gap-2">
                   <Button size="sm" variant="outline" disabled={currentAuditPage <= 1} onClick={() => setAuditPage(currentAuditPage - 1)}><ChevronLeft className="h-4 w-4" /></Button>
                   <span>Page {currentAuditPage} of {auditPages}</span>
@@ -2821,7 +2828,8 @@ export default function AdminDashboardPage() {
           {/* SETTINGS */}
           {activeSection === "settings" && (
             <div className="space-y-4">
-              <SettingsPanel rows={systemSettings} auditLogs={auditLogs} onSave={saveSettings} readOnly={!canManageSettings} />
+              <SettingsPanel rows={systemSettings} onSave={saveSettings} readOnly={!canManageSettings}
+                onShowHistory={() => { setAuditSearch(""); setAuditAction("all"); setAuditUser("all"); setAuditFrom(""); setAuditTo(""); setAuditEntity("system_settings"); setAuditPage(1); setActiveSection("audit-logs"); }} />
               {can.manage && <ReminderJobsCard />}
             </div>
           )}
