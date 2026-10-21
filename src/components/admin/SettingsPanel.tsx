@@ -13,7 +13,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import type { Json, Tables } from "@/integrations/supabase/types";
+import type { Tables } from "@/integrations/supabase/types";
 import {
   PAYMENT_METHODS, SEMESTERS, SETTING_DEFAULTS, parseSettings, validateSetting,
   type AppSettings, type PaymentMethod, type SettingKey,
@@ -21,33 +21,17 @@ import {
 
 interface Props {
   rows: Tables<"system_settings">[];
-  auditLogs: Tables<"audit_logs">[];
+  /** Opens the Audit Logs at the settings changes. */
+  onShowHistory: () => void;
   /** Persists the given settings. Resolves true on success. */
   onSave: (changes: Partial<AppSettings>, action?: "update_setting" | "reset_settings") => Promise<boolean>;
   /** Shows the settings without letting them be changed (an admin, once a super admin exists). */
   readOnly?: boolean;
 }
 
-const LABELS: Record<SettingKey, string> = {
-  academic_year: "Academic year", current_semester: "Semester", min_grade_requirement: "Minimum grade",
-  max_scholarships_per_student: "Max applications per academic year", payment_methods: "Payment methods",
-  email_notifications: "Email notifications", applications_open: "Applications open",
-  application_open_date: "Opening date", application_close_date: "Closing date",
-  maintenance_mode: "Maintenance mode", maintenance_message: "Maintenance message",
-  max_upload_mb: "Max upload size", program_name: "Program name", contact_email: "Contact email",
-  contact_phone: "Contact phone", contact_address: "Contact address", office_hours: "Office hours", facebook_url: "Facebook page link",
-  required_documents: "Required documents", default_payment_method: "Default payment method",
-  default_payment_lead_days: "Default payment lead time", renewal_enabled: "Renewals open",
-  renewal_min_grade: "Renewal minimum grade", max_renewals: "Max renewals",
-  payment_pickup_location: "Payment pickup place", payment_pickup_instructions: "Payment claim instructions",
-  report_prepared_by: "Report prepared by", report_prepared_title: "Preparer's position",
-  report_approved_by: "Report approved by", report_approved_title: "Approver's position",
-};
-
-const fmt = (v: unknown) => (Array.isArray(v) ? v.join(", ") : typeof v === "boolean" ? (v ? "On" : "Off") : v === "" || v == null ? "—" : String(v));
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
-export default function SettingsPanel({ rows, auditLogs, onSave, readOnly = false }: Props) {
+export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = false }: Props) {
   const saved = useMemo(() => parseSettings(rows), [rows]);
   const [draft, setDraft] = useState<AppSettings>(saved);
   const [errors, setErrors] = useState<Partial<Record<SettingKey, string>>>({});
@@ -68,7 +52,7 @@ export default function SettingsPanel({ rows, auditLogs, onSave, readOnly = fals
     const next: Partial<AppSettings> = {};
     const errs: Partial<Record<SettingKey, string>> = {};
     for (const k of dirtyKeys(keys)) {
-      const value = k === "min_grade_requirement" || k === "max_scholarships_per_student" || k === "max_upload_mb"
+      const value = k === "min_grade_requirement" || k === "max_upload_mb"
         ? Number(draft[k]) : draft[k];
       const err = validateSetting(k, value);
       if (err) errs[k] = err; else (next as Record<string, unknown>)[k] = value;
@@ -115,11 +99,6 @@ export default function SettingsPanel({ rows, auditLogs, onSave, readOnly = fals
     setDraft((d) => ({ ...d, payment_methods: methods, default_payment_method: methods.includes(d.default_payment_method) ? d.default_payment_method : (methods[0] ?? d.default_payment_method) }));
   };
 
-  const history = useMemo(
-    () => auditLogs.filter((l) => l.action === "update_setting" || l.action === "reset_settings").slice(0, 15),
-    [auditLogs]
-  );
-
   return (
     <div className="space-y-4 animate-fade-in max-w-2xl">
       <div className="flex items-center justify-between gap-3">
@@ -144,7 +123,7 @@ export default function SettingsPanel({ rows, auditLogs, onSave, readOnly = fals
       {readOnly && (
         <div className="flex items-start gap-3 rounded-lg border bg-muted/50 p-3 text-sm">
           <Lock className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
-          <p>Only the Mayor Office can change these settings. You can view them, and every change is listed under Recent Changes.</p>
+          <p>Only the Mayor Office can change these settings. You can view them, and every change is recorded in the <button type="button" onClick={onShowHistory} className="font-medium text-primary hover:underline">Audit Logs</button>.</p>
         </div>
       )}
 
@@ -326,27 +305,10 @@ export default function SettingsPanel({ rows, auditLogs, onSave, readOnly = fals
 
       </fieldset>
 
-      <Card>
-        <CardHeader><CardTitle className="text-base">Recent Changes</CardTitle></CardHeader>
-        <CardContent>
-          {history.length === 0 ? <p className="text-sm text-muted-foreground">No setting changes recorded yet.</p> : (
-            <ul className="divide-y">
-              {history.map((l) => {
-                const prev = l.previous_value as { key?: string; value?: Json } | null;
-                const next = l.new_value as { key?: string; value?: Json } | null;
-                return (
-                  <li key={l.id} className="py-2 text-sm">
-                    {l.action === "reset_settings" ? <span className="font-medium">Reset all settings to defaults</span> : (
-                      <><span className="font-medium">{LABELS[(next?.key ?? "") as SettingKey] ?? next?.key}</span>: {fmt(prev?.value)} → {fmt(next?.value)}</>
-                    )}
-                    <div className="text-xs text-muted-foreground">{l.user_email ?? "Unknown"} · {new Date(l.created_at).toLocaleString()}</div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      <p className="text-sm text-muted-foreground">
+        Every change is recorded with who made it.{" "}
+        <button type="button" onClick={onShowHistory} className="font-medium text-primary hover:underline">See setting changes in the Audit Logs</button>
+      </p>
     </div>
   );
 }

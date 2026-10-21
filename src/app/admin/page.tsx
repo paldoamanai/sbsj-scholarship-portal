@@ -21,9 +21,6 @@ import {
   FileDown, Receipt, Loader2, User, Upload, ArrowRight,
    ChevronRight, ChevronLeft, ExternalLink, Printer, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2,
 } from "lucide-react";
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-} from "recharts";
 import { createClient } from "@/lib/supabase/client";
 import { scholarshipSchema } from "@/validations/scholarship";
 import ProfileImage from "@/components/ProfileImage";
@@ -35,20 +32,22 @@ import NotificationInbox, { NOTIFICATION_PAGE } from "@/components/notifications
 import AnnouncementsPanel from "@/components/admin/AnnouncementsPanel";
 import ReminderJobsCard from "@/components/admin/ReminderJobsCard";
 import { useUnreadTitle } from "@/hooks/use-unread-title";
+import { useAuditLogQuery } from "@/hooks/use-audit-log-query";
 import { showDesktopAlert } from "@/lib/desktop-alerts";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
 import OverviewPanel from "@/components/admin/OverviewPanel";
 import AdminProfilePanel from "@/components/admin/AdminProfilePanel";
 import SettingsPanel from "@/components/admin/SettingsPanel";
 import StaffPanel from "@/components/admin/StaffPanel";
+import StudentAccountActions from "@/components/admin/StudentAccountActions";
 import ReportsPanel from "@/components/admin/ReportsPanel";
 import {
-  ALL_FILTERS, buildReport, getRange, logsToSection, personName, renderExcel, renderPDF,
+  getRange, logsToSection, personName, renderExcel, renderPDF,
   type DocSummary, type ReportData, type ReportDef, type StaffMember,
 } from "@/lib/reports";
 import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
 import { asMonths, asSchedule, isMonthTerm, openTerms, secondSemesterGradeWarning, termAmount, termLabel, termsFor, type PaymentTerm } from "@/lib/release-schedule";
-import { OFFICE_FULL_NAME, OFFICE_LABEL, isOffice, officeLogo, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
+import { OFFICE_FULL_NAME, OFFICE_LABEL, STAFF_OFFICES, isOffice, officeLogo, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 import { printReceiptSlip } from "@/lib/receipt-slip";
 import { LETTER_OF_INTENT } from "@/lib/documents";
 import { peso, pesoFixed as formatPHP } from "@/lib/format";
@@ -174,7 +173,7 @@ export default function AdminDashboardPage() {
   const [dataReqs, setDataReqs] = useState<Tables<"data_requests">[]>([]);
   const [disapproveGrade, setDisapproveGrade] = useState<Tables<"grade_updates"> | null>(null);
   const [gradeNote, setGradeNote] = useState("");
-  const [handleReq, setHandleReq] = useState<{ req: Tables<"data_requests">; status: "Completed" | "Declined" } | null>(null);
+  const [handleReq, setHandleReq] = useState<Tables<"data_requests"> | null>(null);
   const [reqResponse, setReqResponse] = useState("");
   const [studentSearch, setStudentSearch] = useState("");
   const [studentFilter, setStudentFilter] = useState("all");
@@ -192,10 +191,10 @@ export default function AdminDashboardPage() {
   const [studentDocs, setStudentDocs] = useState<AdminDoc[]>([]);
   const [studentDocsLoading, setStudentDocsLoading] = useState(false);
 
-  const [applications, setApplications] = useState<(Tables<"applications"> & { scholarships: { name: string } | null, profiles?: Tables<"profiles"> | null })[]>([]);
-  const [scholarships, setScholarships] = useState<Tables<"scholarships">[]>([]);
+  const [allApplications, setApplications] = useState<(Tables<"applications"> & { scholarships: { name: string } | null, profiles?: Tables<"profiles"> | null })[]>([]);
+  const [allScholarships, setScholarships] = useState<Tables<"scholarships">[]>([]);
   const [profiles, setProfiles] = useState<Tables<"profiles">[]>([]);
-  const [payments, setPayments] = useState<Tables<"payments">[]>([]);
+  const [allPayments, setPayments] = useState<Tables<"payments">[]>([]);
   const [viewApp, setViewApp] = useState<typeof applications[0] | null>(null);
   const [remarks, setRemarks] = useState("");
   const [appPage, setAppPage] = useState(1);
@@ -249,9 +248,49 @@ export default function AdminDashboardPage() {
   // Office staff only see their office's programs (enforced by migration 061); null = all offices.
   const myOffice = roleCanHaveOffice(adminRole) && isOffice(adminOffice) ? adminOffice : null;
   // Programs carry an office once migration 061 has run; until then the program form doesn't offer one.
-  const officesReady = scholarships.some((sch) => "office" in sch);
+  const officesReady = allScholarships.some((sch) => "office" in sch);
   // An Admin of an office manages that office's Reviewer and Finance staff (migration 065).
   const managedOffice = adminRole === "admin" ? myOffice : null;
+  // Staff without an office (the Mayor Office) can narrow every page to one office's programs, or to the
+  // programs that belong to no office ("municipal"). Office staff only ever load their own office's data.
+  const [officeView, setOfficeView] = useState<string>("all");
+  const viewingOffice = !myOffice && officesReady && officeView !== "all";
+  const scholarships = useMemo(
+    () => (viewingOffice ? allScholarships.filter((sch) => (sch.office ?? "municipal") === officeView) : allScholarships),
+    [allScholarships, viewingOffice, officeView]);
+  const applications = useMemo(() => {
+    if (!viewingOffice) return allApplications;
+    const ids = new Set(scholarships.map((sch) => sch.id));
+    return allApplications.filter((a) => !!a.scholarship_id && ids.has(a.scholarship_id));
+  }, [allApplications, scholarships, viewingOffice]);
+  const payments = useMemo(() => {
+    if (!viewingOffice) return allPayments;
+    const ids = new Set(applications.map((a) => a.id));
+    return allPayments.filter((p) => p.application_id && ids.has(p.application_id));
+  }, [allPayments, applications, viewingOffice]);
+  // Exports made while viewing one office say so in the file name.
+  const fileOffice = viewingOffice ? `-${officeView.replace(/_/g, "-")}` : "";
+  // Programs, applicants, approvals and money per office, for the Mayor Office's dashboard.
+  const officeBreakdown = useMemo(() => {
+    if (myOffice || !officesReady) return [];
+    const keys = [...STAFF_OFFICES, "municipal"] as const;
+    return keys.map((key) => {
+      const progs = allScholarships.filter((sch) => (sch.office ?? "municipal") === key);
+      const ids = new Set(progs.map((sch) => sch.id));
+      const apps = allApplications.filter((a) => !!a.scholarship_id && ids.has(a.scholarship_id));
+      const appIds = new Set(apps.map((a) => a.id));
+      const pays = allPayments.filter((p) => p.application_id && appIds.has(p.application_id));
+      return {
+        key, name: key === "municipal" ? "Mayor Office programs" : OFFICE_LABEL[key],
+        programs: progs.length,
+        applications: apps.length,
+        pending: apps.filter((a) => a.status === "Pending").length,
+        approved: apps.filter((a) => a.status === "Approved").length,
+        budget: progs.filter((sch) => sch.is_active).reduce((t, sch) => t + Number(sch.total_budget || 0), 0),
+        disbursed: pays.filter((p) => p.status === "Disbursed").reduce((t, p) => t + Number(p.amount || 0), 0),
+      };
+    }).filter((r) => r.programs > 0);
+  }, [myOffice, officesReady, allScholarships, allApplications, allPayments]);
   const canSee = (key: string) => (key === "staff" ? can.super || !!managedOffice : !(hiddenSections[adminRole] ?? []).includes(key));
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -801,10 +840,10 @@ export default function AdminDashboardPage() {
   const respondToRequest = async () => {
     if (!handleReq) return;
     setPayBusy(true);
-    const { error } = await supabase.rpc("handle_data_request", { _id: handleReq.req.id, _status: handleReq.status, _response: reqResponse });
+    const { error } = await supabase.rpc("handle_data_request", { _id: handleReq.id, _status: "Declined", _response: reqResponse });
     setPayBusy(false);
     if (error) { toast.error(error.message); return; }
-    toast.success(handleReq.status === "Completed" ? "Marked as completed" : "Request declined");
+    toast.success("Request declined");
     setHandleReq(null); setReqResponse("");
     loadData();
   };
@@ -866,29 +905,39 @@ export default function AdminDashboardPage() {
 
   // ── Audit log browsing ──
   const AUDIT_PAGE_SIZE = 15;
-  const auditActions = useMemo(() => [...new Set(auditLogs.map((l) => l.action))].sort(), [auditLogs]);
-  const auditEntities = useMemo(() => [...new Set(auditLogs.map((l) => l.entity_type))].sort(), [auditLogs]);
-  const filteredLogs = useMemo(() => {
-    const q = auditSearch.trim().toLowerCase();
-    const from = auditFrom ? new Date(`${auditFrom}T00:00:00`) : null;
-    const to = auditTo ? new Date(`${auditTo}T23:59:59.999`) : null;
-    return auditLogs.filter((l) => {
-      if (auditAction !== "all" && l.action !== auditAction) return false;
-      if (auditEntity !== "all" && l.entity_type !== auditEntity) return false;
-      if (auditUser !== "all" && l.user_id !== auditUser) return false;
-      const t = new Date(l.created_at);
-      if ((from && t < from) || (to && t > to)) return false;
-      return !q || `${l.user_email || ""} ${l.action} ${l.entity_type} ${l.entity_id || ""}`.toLowerCase().includes(q);
-    });
-  }, [auditLogs, auditSearch, auditAction, auditEntity, auditUser, auditFrom, auditTo]);
-  const auditPages = Math.max(1, Math.ceil(filteredLogs.length / AUDIT_PAGE_SIZE));
+  // Choices come from the recent entries; a chosen one stays listed even if it's only in older history.
+  const auditActions = useMemo(() => [...new Set([...auditLogs.map((l) => l.action), ...(auditAction !== "all" ? [auditAction] : [])])].sort(), [auditLogs, auditAction]);
+  const auditEntities = useMemo(() => [...new Set([...auditLogs.map((l) => l.entity_type), "system_settings", ...(auditEntity !== "all" ? [auditEntity] : [])])].sort(), [auditLogs, auditEntity]);
+  // Searched and paged in the database, so the whole history is reachable, not just the entries loaded above.
+  const auditQuery = useAuditLogQuery(supabase,
+    { search: auditSearch, action: auditAction, entity: auditEntity, user: auditUser, from: auditFrom, to: auditTo },
+    auditPage, AUDIT_PAGE_SIZE, activeSection === "audit-logs");
+  const auditPages = Math.max(1, Math.ceil(auditQuery.count / AUDIT_PAGE_SIZE));
   const currentAuditPage = Math.min(auditPage, auditPages);
-  const pagedLogs = filteredLogs.slice((currentAuditPage - 1) * AUDIT_PAGE_SIZE, currentAuditPage * AUDIT_PAGE_SIZE);
-  const auditDef = (): ReportDef => ({
-    title: "Audit Log", count: filteredLogs.length, countLabel: "entries",
-    filters: [`${filteredLogs.length} of ${auditLogs.length} loaded entries`, ...(auditAction !== "all" ? [`Action: ${auditAction}`] : []), ...(auditEntity !== "all" ? [`Entity: ${auditEntity}`] : []), ...(auditUser !== "all" ? [`Staff: ${staff.find((m) => m.id === auditUser)?.name ?? auditUser}`] : []), ...(auditFrom || auditTo ? [`Dates: ${auditFrom || "…"} to ${auditTo || "…"}`] : [])],
-    sections: [logsToSection(filteredLogs, reportData())],
-  });
+  const pagedLogs = auditQuery.rows;
+  const [exportingAudit, setExportingAudit] = useState(false);
+  const exportAudit = async (kind: "pdf" | "xlsx") => {
+    setExportingAudit(true);
+    try {
+      const { rows, truncated } = await auditQuery.fetchAll();
+      const def: ReportDef = {
+        title: "Audit Log", count: rows.length, countLabel: "entries",
+        filters: [truncated ? `First ${rows.length.toLocaleString()} of ${auditQuery.count.toLocaleString()} matching entries` : `${rows.length.toLocaleString()} matching entries`, ...(auditSearch.trim() ? [`Search: ${auditSearch.trim()}`] : []), ...(auditAction !== "all" ? [`Action: ${auditAction}`] : []), ...(auditEntity !== "all" ? [`Entity: ${auditEntity}`] : []), ...(auditUser !== "all" ? [`Staff: ${staff.find((m) => m.id === auditUser)?.name ?? auditUser}`] : []), ...(auditFrom || auditTo ? [`Dates: ${auditFrom || "…"} to ${auditTo || "…"}`] : [])],
+        sections: [logsToSection(rows, reportData())],
+      };
+      await exportDef(def, "audit-log", kind, kind === "pdf");
+    } catch (e) {
+      toast.error("Export failed", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setExportingAudit(false);
+    }
+  };
+
+  // Account deletion requests waiting for the Mayor Office, oldest first. The student may not be a scholar,
+  // so these are listed on their own rather than only as a badge in the Students table.
+  const pendingDeletions = dataReqs.filter((r) => r.status === "Pending")
+    .sort((x, y) => x.created_at.localeCompare(y.created_at))
+    .map((r) => ({ req: r, profile: profiles.find((p) => p.id === r.user_id) ?? null }));
 
   const STUDENT_PAGE_SIZE = 10;
   // The Students section lists scholars only: accounts with at least one approved application.
@@ -937,9 +986,13 @@ export default function AdminDashboardPage() {
 
   const toggleStudentActive = async (p: Tables<"profiles">) => {
     const next = !p.is_active;
-    const { error } = await supabase.rpc("set_student_active", { _user_id: p.id, _active: next });
-    if (error) { toast.error(error.message); return; }
-    await logAudit(next ? "activate_student" : "deactivate_student", "profiles", p.id, { is_active: p.is_active }, { is_active: next });
+    // The server also blocks (or restores) their sign-in and ends their sessions, and writes the audit entry.
+    const res = await fetch("/api/admin/students", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set_active", userId: p.id, active: next }),
+    }).catch(() => null);
+    const body = await res?.json().catch(() => null);
+    if (!res?.ok) { toast.error((body?.error as string) ?? "Request failed"); if (res) loadData(); return; }
     toast.success(`${p.first_name || "Student"} ${next ? "activated" : "deactivated"}`);
     setViewStudent((cur) => (cur && cur.id === p.id ? { ...cur, is_active: next } : cur));
     loadData();
@@ -1008,7 +1061,7 @@ export default function AdminDashboardPage() {
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Students");
-    XLSX.writeFile(wb, "students.xlsx");
+    XLSX.writeFile(wb, `students${fileOffice}.xlsx`);
     toast.success("Excel downloaded");
   };
 
@@ -1245,7 +1298,6 @@ export default function AdminDashboardPage() {
       toast.error("Export failed", { description: e instanceof Error ? e.message : String(e) });
     }
   };
-  const fundsDef = () => buildReport("funds", reportData(), { ...ALL_FILTERS, period: fundPeriod, from: fromDate, to: toDate });
 
 
   const statusBadge = (status: string) => <StatusBadge status={status} />;
@@ -1279,10 +1331,12 @@ export default function AdminDashboardPage() {
   const APP_PAGE_SIZE = 10;
   // Registered students who haven't submitted an application yet. They count as applicants so
   // admins can see who is stuck (usually on the required documents) and follow up.
+  // Students who haven't applied anywhere belong to no office, so they're left out of an office view.
   const notApplied = useMemo(() => {
-    const applied = new Set(applications.map((a) => a.user_id));
+    if (viewingOffice) return [];
+    const applied = new Set(allApplications.map((a) => a.user_id));
     return profiles.filter((p) => !applied.has(p.id));
-  }, [profiles, applications]);
+  }, [profiles, allApplications, viewingOffice]);
   // Required documents uploaded (and not disapproved) by a student who hasn't applied yet.
   const docsReady = (userId: string) => {
     const required = parseSettings(systemSettings).required_documents;
@@ -1357,7 +1411,7 @@ export default function AdminDashboardPage() {
   const pagedApps = filteredApps.slice((currentAppPage - 1) * APP_PAGE_SIZE, currentAppPage * APP_PAGE_SIZE);
   // Bulk selection covers applications that can still be decided (Pending / Waitlisted).
   const isOpenApp = (a: AppRow) => a.status === "Pending" || a.status === "Waitlisted";
-  const selectablePaged = pagedApps.flatMap((r) => (r.kind === "app" && isOpenApp(r.app) ? [r.app.id] : []));
+  const selectablePaged = pagedApps.flatMap((r) => (r.kind === "app" && isOpenApp(r.app) && can.review ? [r.app.id] : []));
   // Students who haven't applied can be selected too, for a bulk reminder.
   const selectableStudentsPaged = pagedApps.flatMap((r) => (r.kind === "none" ? [r.profile.id] : []));
   const allPagedSelected = selectablePaged.length + selectableStudentsPaged.length > 0
@@ -1463,7 +1517,7 @@ export default function AdminDashboardPage() {
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Applicants");
-    XLSX.writeFile(wb, "applicants.xlsx");
+    XLSX.writeFile(wb, `applicants${fileOffice}.xlsx`);
     toast.success("Excel downloaded");
   };
 
@@ -1509,19 +1563,11 @@ export default function AdminDashboardPage() {
     const byMethod = [...methods.entries()].map(([method, v]) => ({ method, ...v, share: disbursedTotal ? Math.round((v.amount / disbursedTotal) * 100) : 0 }))
       .sort((x, y) => y.amount - x.amount);
 
-    const monthMap = new Map<string, number>();
-    inRange.filter((p) => p.status === "Disbursed").forEach((p) => {
-      const d = new Date(payDate(p));
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      monthMap.set(key, (monthMap.get(key) ?? 0) + Number(p.amount || 0));
-    });
-    const monthly = [...monthMap.entries()].sort(([x], [y]) => x.localeCompare(y))
-      .map(([key, amount]) => ({ month: new Date(`${key}-01`).toLocaleDateString("en-PH", { month: "short", year: "2-digit" }), Disbursed: amount }));
 
     const recent = [...inRange].sort((x, y) => new Date(payDate(y)).getTime() - new Date(payDate(x)).getTime()).slice(0, 8);
 
 
-    return { pipeline, byProgram, byMethod, monthly, recent, disbursedTotal };
+    return { pipeline, byProgram, byMethod, recent, disbursedTotal };
   }, [payments, applications, scholarships, fundPeriod, fromDate, toDate]);
   // Approved applications with a term that has no payment yet (a per-semester award has two).
   const awaitingPayment = applications.filter((a) => a.status === "Approved" && openTermsOf(a).length > 0);
@@ -1541,6 +1587,19 @@ export default function AdminDashboardPage() {
           </div>
           <button className="lg:hidden" onClick={() => setSidebarOpen(false)}><X className="h-5 w-5" /></button>
         </div>
+        {!myOffice && officesReady && (
+          <div className="px-3 pt-3">
+            <Select value={officeView} onValueChange={setOfficeView}>
+              <SelectTrigger aria-label="Office shown" className={officeView !== "all" ? "border-primary text-primary" : undefined}><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All offices</SelectItem>
+                {STAFF_OFFICES.map((o) => <SelectItem key={o} value={o}>{OFFICE_LABEL[o]}</SelectItem>)}
+                <SelectItem value="municipal">Mayor Office programs</SelectItem>
+              </SelectContent>
+            </Select>
+            {officeView !== "all" && <p className="mt-1 px-1 text-[11px] text-muted-foreground">Every page shows only this office&apos;s programs, applicants and payments.</p>}
+          </div>
+        )}
         <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
           {sidebarItems.filter((item) => canSee(item.key)).map((item, i, items) => {
             const unread = item.key === "notifications" ? unreadTotal : 0;
@@ -1603,6 +1662,9 @@ export default function AdminDashboardPage() {
               loadError={loadError}
               onRefresh={() => loadData(true)}
               onViewApp={setViewApp}
+              deletionRequests={can.super ? pendingDeletions.length : 0}
+              officeBreakdown={officeView === "all" ? officeBreakdown : []}
+              onViewOffice={setOfficeView}
               onNavigate={(section, opts) => {
                 setActiveSection(section);
                 if (opts?.status !== undefined) { setStatusFilter(opts.status); setAppPage(1); }
@@ -1655,7 +1717,7 @@ export default function AdminDashboardPage() {
                   <Button size="sm" variant="ghost" disabled={messaging} onClick={() => setSelectedStudents(new Set())}>Clear</Button>
                 </div>
               )}
-              {selectedApps.size > 0 && (
+              {selectedApps.size > 0 && can.review && (
                 <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-accent px-3 py-2 text-sm">
                   <span className="font-medium">{selectedApps.size} application{selectedApps.size === 1 ? "" : "s"} selected</span>
                   <Button size="sm" disabled={bulkBusy} onClick={() => bulkDecide("Approved")}>
@@ -1729,7 +1791,7 @@ export default function AdminDashboardPage() {
                       return (
                         <TableRow key={a.id} data-state={selectedApps.has(a.id) ? "selected" : undefined}>
                           <TableCell>
-                            {isOpenApp(a) && (
+                            {isOpenApp(a) && can.review && (
                               <Checkbox aria-label={`Select ${name}`} checked={selectedApps.has(a.id)} onCheckedChange={(on) => toggleSelected(a.id, on === true)} />
                             )}
                           </TableCell>
@@ -1752,7 +1814,7 @@ export default function AdminDashboardPage() {
                           <TableCell>{statusBadge(a.status)}</TableCell>
                           <TableCell className="text-right space-x-1">
                             <Button size="icon" variant="ghost" onClick={() => setViewApp(a)} title="View"><Eye className="h-4 w-4" /></Button>
-                            {isOpenApp(a) && (<>
+                            {isOpenApp(a) && can.review && (<>
                               <Button size="icon" variant="ghost" disabled={!!blocker} title={blocker ?? "Approve"} onClick={async () => {
                                 if (await decideApplication(a, "Approved", null)) { toast.success(`${name} approved!`); loadData(true); }
                               }}><CheckCircle className="h-4 w-4 text-success" /></Button>
@@ -1765,7 +1827,7 @@ export default function AdminDashboardPage() {
                                 <XCircle className="h-4 w-4 text-destructive" />
                               </Button>
                             </>)}
-                            {a.status === "Disapproved" && (
+                            {a.status === "Disapproved" && can.review && (
                               <Button size="icon" variant="ghost" title="Reopen" onClick={async () => {
                                 if (await decideApplication(a, "Pending", null)) { toast.success(`${name} reopened`); loadData(true); }
                               }}><RotateCcw className="h-4 w-4" /></Button>
@@ -1775,7 +1837,7 @@ export default function AdminDashboardPage() {
                             ) : (
                               <Button size="icon" variant="ghost" title="Schedule payment" onClick={() => scheduleFor(a)}><Banknote className="h-4 w-4 text-success" /></Button>
                             ))}
-                            {a.status === "Approved" && (
+                            {a.status === "Approved" && can.review && (
                               <Button size="icon" variant="ghost" disabled={hasLivePayment(a.id)}
                                 title={hasLivePayment(a.id) ? "This application has payments. Cancel them before revoking the approval" : "Revoke approval"}
                                 onClick={() => { setRevokeNote(""); setRevokeApp(a); }}><Undo2 className="h-4 w-4 text-destructive" /></Button>
@@ -1812,7 +1874,7 @@ export default function AdminDashboardPage() {
                   <AppDialog open={!!va} onOpenChange={(o) => !o && close()} size="lg"
                     title="Application Details"
                     description={va ? <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">{personName(va.profiles)} · {va.scholarships?.name || "—"} {statusBadge(va.status)}</span> : undefined}
-                    footer={va && (open ? <>
+                    footer={va && (!can.review ? <Button variant="outline" onClick={close}>Close</Button> : open ? <>
                       <Button variant="ghost" className="sm:mr-auto" onClick={() => { setChangesText(""); setChangesFor(va); }}>
                         <Pencil className="mr-1 h-4 w-4" /> Request changes
                       </Button>
@@ -1932,6 +1994,12 @@ export default function AdminDashboardPage() {
                         </div>
                       )}
 
+                      {!can.review ? (viewApp.notes && (
+                        <div>
+                          <h3 className="mb-1.5 text-sm font-semibold">{viewApp.status === "Disapproved" ? "Reason (shown to the student)" : "Message to the student"}</h3>
+                          <p className="whitespace-pre-wrap rounded-md border bg-muted/40 px-3 py-2 text-sm">{viewApp.notes}</p>
+                        </div>
+                      )) : (
                       <div>
                         <h3 className="mb-1.5 text-sm font-semibold">{viewApp.status === "Disapproved" ? "Reason (shown to the student)" : "Message to the student"}</h3>
                         <Textarea value={remarks} onChange={(e) => setRemarks(e.target.value)}
@@ -1956,6 +2024,7 @@ export default function AdminDashboardPage() {
                           }}>{viewApp.status === "Disapproved" ? "Save reason" : "Save message"}</Button>
                         )}
                       </div>
+                      )}
 
                       <div>
                         <h3 className="mb-1.5 text-sm font-semibold">Internal notes (staff only — never shown to the student)</h3>
@@ -2181,6 +2250,31 @@ export default function AdminDashboardPage() {
                   <Button variant="outline" onClick={exportStudents}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
                 </div>
               </div>
+              {can.super && pendingDeletions.length > 0 && (
+                <Card className="border-destructive/30">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Account deletion requests ({pendingDeletions.length})</CardTitle>
+                    <CardDescription>Open each student to delete their account, or decline with a reason.</CardDescription>
+                  </CardHeader>
+                  <Table>
+                    <TableBody>
+                      {pendingDeletions.map(({ req, profile }) => (
+                        <TableRow key={req.id}>
+                          <TableCell>
+                            <p className="font-medium">{profile ? personName(profile) : "Unknown student"}</p>
+                            <p className="text-xs text-muted-foreground">{profile?.email ?? req.user_id}</p>
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground max-w-[320px]">{req.reason ? <span className="line-clamp-2" title={req.reason}>{req.reason}</span> : "No reason given"}</TableCell>
+                          <TableCell className="text-xs whitespace-nowrap">Requested {new Date(req.created_at).toLocaleDateString()}</TableCell>
+                          <TableCell className="text-right">
+                            <Button size="sm" variant="outline" disabled={!profile} onClick={() => profile && setViewStudent(profile)}><Eye className="mr-1 h-4 w-4" /> Open</Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Card>
+              )}
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
@@ -2249,11 +2343,11 @@ export default function AdminDashboardPage() {
                       <SelectItem value="year">This year</SelectItem>
                       <SelectItem value="6m">Last 6 months</SelectItem>
                       <SelectItem value="30d">Last 30 days</SelectItem>
-                      <SelectItem value="custom">Custom range (Reports)</SelectItem>
+                      <SelectItem value="custom">Custom range (set in Reports)</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Button variant="outline" onClick={() => exportDef(fundsDef(), "funds-report", "pdf")}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
-                  <Button variant="outline" onClick={() => exportDef(fundsDef(), "funds-report", "xlsx")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
+                  {/* Charts and the Fund Utilization export live in Reports; this page is the day-to-day view. */}
+                  <Button variant="outline" onClick={() => setActiveSection("reports")}><BarChart3 className="mr-1 h-4 w-4" /> Charts &amp; exports</Button>
                 </div>
               </div>
 
@@ -2267,22 +2361,6 @@ export default function AdminDashboardPage() {
                 ))}
               </div>
 
-              <Card>
-                <CardHeader><CardTitle className="text-base">Disbursed per Month</CardTitle></CardHeader>
-                <CardContent>
-                  {fundData.monthly.length === 0 ? <p className="text-sm text-muted-foreground py-8 text-center">No disbursements in this period</p> : (
-                    <ResponsiveContainer width="100%" height={240}>
-                      <BarChart data={fundData.monthly}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                        <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                        <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                        <Tooltip formatter={(v: number) => formatPHP(v)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
-                        <Bar dataKey="Disbursed" fill="hsl(var(--primary))" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </CardContent>
-              </Card>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <Card>
@@ -2336,7 +2414,7 @@ export default function AdminDashboardPage() {
                 <Card>
                   <CardHeader className="flex-row items-center justify-between space-y-0">
                     <CardTitle className="text-base">Awaiting Payment ({awaitingPayment.length})</CardTitle>
-                    <Button size="sm" variant="ghost" onClick={() => { openNewPayment(); setActiveSection("disbursement"); }}>Schedule payment <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>
+                    {can.finance && <Button size="sm" variant="ghost" onClick={() => { openNewPayment(); setActiveSection("disbursement"); }}>Schedule payment <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>}
                   </CardHeader>
                   <Table>
                     <TableBody>
@@ -2344,7 +2422,7 @@ export default function AdminDashboardPage() {
                       {awaitingPayment.map((a) => (
                         <TableRow key={a.id}>
                           <TableCell><p className="font-medium">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"}</p><p className="text-xs text-muted-foreground">{a.scholarships?.name || "—"}{scheduleOf(a) === "semester" && ` · ${openTermsOf(a).join(", ")}`}{scheduleOf(a) === "monthly" && openTermsOf(a).length > 0 && ` · next ${openTermsOf(a)[0]} (${openTermsOf(a).length} of ${monthsOf(a)} left)`}</p></TableCell>
-                          <TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => { openNewPayment(a.id); setActiveSection("disbursement"); }}>Schedule payment</Button></TableCell>
+                          <TableCell className="text-right">{can.finance && <Button size="sm" variant="outline" onClick={() => { openNewPayment(a.id); setActiveSection("disbursement"); }}>Schedule payment</Button>}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -2376,6 +2454,7 @@ export default function AdminDashboardPage() {
                       <SelectItem value="issues">Open problems</SelectItem>
                     </SelectContent>
                   </Select>
+                  {can.finance && <>
                   <Button variant="outline" onClick={() => {
                     // Start on the current semester, or the first month someone still needs when only monthly programs have scholars waiting.
                     const sem = parseSettings(systemSettings).current_semester;
@@ -2384,6 +2463,7 @@ export default function AdminDashboardPage() {
                     setBulkTerm(term); setBulkDate(defaultScheduledDate); setBulkPicked(new Set(bulkCandidates(term).filter((c) => !c.warning).map((c) => c.app.id))); setBulkOpen(true);
                   }}>Schedule payments in bulk</Button>
                   <Button className="bg-gradient-primary shadow-primary" onClick={() => openNewPayment()}><Plus className="mr-1 h-4 w-4" /> Schedule Payment</Button>
+                  </>}
                 </div>
               </div>
               <Card className="border-warning/30 bg-warning/5">
@@ -2456,10 +2536,10 @@ export default function AdminDashboardPage() {
                                     <Badge variant={p.receipt_review_status === "Accepted" ? "default" : "secondary"} className={p.receipt_review_status === "Disapproved" ? "text-destructive" : undefined}>
                                       {p.receipt_review_status === "Pending" ? "To review" : p.receipt_review_status}
                                     </Badge>
-                                    {p.receipt_review_status !== "Accepted" && (
+                                    {p.receipt_review_status !== "Accepted" && can.finance && (
                                       <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={payBusy} onClick={() => reviewReceipt(p, "Accepted")}>Accept</Button>
                                     )}
-                                    {p.receipt_review_status !== "Disapproved" && (
+                                    {p.receipt_review_status !== "Disapproved" && can.finance && (
                                       <Button size="sm" variant="outline" className="h-6 px-2 text-xs text-destructive" disabled={payBusy} onClick={() => { setReceiptNote(""); setDisapproveReceipt(p); }}>Disapprove</Button>
                                     )}
                                   </div>
@@ -2478,13 +2558,13 @@ export default function AdminDashboardPage() {
                                 <AlertTriangle className={`h-4 w-4 ${openIssueFor(p.id) ? "text-warning" : "text-muted-foreground"}`} />
                               </Button>
                             )}
-                            {p.status !== "Cancelled" && receiptNos[p.id] && (
+                            {p.status !== "Cancelled" && receiptNos[p.id] && can.finance && (
                               <Button size="icon" variant="ghost" title={`Print acknowledgment slip (${receiptNos[p.id]})`} onClick={() => printSlip(p)}><Printer className="h-4 w-4" /></Button>
                             )}
                             {p.status === "Disbursed" && (
                               <Button size="icon" variant="ghost" title="View receipt" onClick={() => viewReceipt(p)}><Receipt className="h-4 w-4" /></Button>
                             )}
-                            {open && (<>
+                            {open && can.finance && (<>
                               <Button size="icon" variant="ghost" title="Edit" onClick={() => { setPayMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash"); setPayTerm((p.term as PaymentTerm | null) ?? null); setPayDialog(p); }}><Pencil className="h-4 w-4" /></Button>
                               {p.status === "Pending" && (
                                 <Button size="sm" variant="outline" onClick={() => setPaymentStatus(p, "Processing")}>Process</Button>
@@ -2678,6 +2758,7 @@ export default function AdminDashboardPage() {
               data={{ applications, scholarships, profiles, staff, payments, payIssues, gradeUpdates: gradeReviews, dataRequests: dataReqs, documents: allDocs }}
               settings={parseSettings(systemSettings)} adminEmail={adminEmail}
               period={fundPeriod} setPeriod={setFundPeriod} fromDate={fromDate} setFromDate={setFromDate} toDate={toDate} setToDate={setToDate}
+              office={myOffice ? OFFICE_LABEL[myOffice] : viewingOffice ? (isOffice(officeView) ? OFFICE_LABEL[officeView] : "Mayor Office programs") : null}
             />
           )}
 
@@ -2707,8 +2788,8 @@ export default function AdminDashboardPage() {
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <h2 className="text-xl font-display font-bold">Audit Logs</h2>
                 <div className="flex gap-2 flex-wrap">
-                  <Button variant="outline" onClick={() => exportDef(auditDef(), "audit-log", "pdf", true)}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
-                  <Button variant="outline" onClick={() => exportDef(auditDef(), "audit-log", "xlsx")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
+                  <Button variant="outline" disabled={exportingAudit || auditQuery.count === 0} onClick={() => exportAudit("pdf")}>{exportingAudit ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <FileDown className="mr-1 h-4 w-4" />} PDF</Button>
+                  <Button variant="outline" disabled={exportingAudit || auditQuery.count === 0} onClick={() => exportAudit("xlsx")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
                 </div>
               </div>
               <div className="flex gap-2 flex-wrap items-center">
@@ -2749,7 +2830,9 @@ export default function AdminDashboardPage() {
                     <TableHead>Date</TableHead><TableHead>User</TableHead><TableHead>Action</TableHead><TableHead>Entity</TableHead><TableHead>Changed</TableHead><TableHead className="text-right">Details</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {pagedLogs.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No audit logs found</TableCell></TableRow>}
+                    {pagedLogs.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      {auditQuery.loading ? <Loader2 className="mx-auto h-5 w-5 animate-spin" /> : auditQuery.error ? `Couldn't load the audit log: ${auditQuery.error}` : "No audit logs found"}
+                    </TableCell></TableRow>}
                     {pagedLogs.map((log) => (
                       <TableRow key={log.id}>
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{new Date(log.created_at).toLocaleString()}</TableCell>
@@ -2764,7 +2847,7 @@ export default function AdminDashboardPage() {
                 </Table>
               </Card>
               <div className="flex items-center justify-between text-sm text-muted-foreground">
-                <span>{filteredLogs.length === 0 ? "0 entries" : `Showing ${(currentAuditPage - 1) * AUDIT_PAGE_SIZE + 1}–${Math.min(currentAuditPage * AUDIT_PAGE_SIZE, filteredLogs.length)} of ${filteredLogs.length}`}{auditLogs.length >= 1000 && " (latest 1,000 loaded)"}</span>
+                <span>{auditQuery.count === 0 ? "0 entries" : `Showing ${((currentAuditPage - 1) * AUDIT_PAGE_SIZE + 1).toLocaleString()}–${Math.min(currentAuditPage * AUDIT_PAGE_SIZE, auditQuery.count).toLocaleString()} of ${auditQuery.count.toLocaleString()}`}{auditQuery.loading && pagedLogs.length > 0 && " · updating…"}</span>
                 <div className="flex items-center gap-2">
                   <Button size="sm" variant="outline" disabled={currentAuditPage <= 1} onClick={() => setAuditPage(currentAuditPage - 1)}><ChevronLeft className="h-4 w-4" /></Button>
                   <span>Page {currentAuditPage} of {auditPages}</span>
@@ -2835,7 +2918,8 @@ export default function AdminDashboardPage() {
           {/* SETTINGS */}
           {activeSection === "settings" && (
             <div className="space-y-4">
-              <SettingsPanel rows={systemSettings} auditLogs={auditLogs} onSave={saveSettings} readOnly={!canManageSettings} />
+              <SettingsPanel rows={systemSettings} onSave={saveSettings} readOnly={!canManageSettings}
+                onShowHistory={() => { setAuditSearch(""); setAuditAction("all"); setAuditUser("all"); setAuditFrom(""); setAuditTo(""); setAuditEntity("system_settings"); setAuditPage(1); setActiveSection("audit-logs"); }} />
               {can.manage && <ReminderJobsCard />}
             </div>
           )}
@@ -2967,9 +3051,17 @@ export default function AdminDashboardPage() {
         description={viewStudent ? `${`${viewStudent.first_name || ""} ${viewStudent.last_name || ""}`.trim() || viewStudent.email}${viewStudent.student_id_number ? ` · ${viewStudent.student_id_number}` : ""}` : undefined}
         footer={viewStudent && <>
           {can.manage && (
-            <Button variant={viewStudent.is_active ? "outline" : "default"} className={`sm:mr-auto ${viewStudent.is_active ? "text-destructive" : ""}`} onClick={() => toggleStudentActive(viewStudent)}>
-              <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
-            </Button>
+            <div className="flex gap-2 sm:mr-auto">
+              <Button variant={viewStudent.is_active ? "outline" : "default"} className={viewStudent.is_active ? "text-destructive" : ""} onClick={() => toggleStudentActive(viewStudent)}>
+                <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
+              </Button>
+              <StudentAccountActions
+                student={{ id: viewStudent.id, name: `${viewStudent.first_name || ""} ${viewStudent.last_name || ""}`.trim() || viewStudent.email || "this student", email: viewStudent.email }}
+                canDelete={can.super}
+                disbursedPayments={studentPayments(viewStudent.id).filter((pm) => pm.status === "Disbursed").length}
+                requestId={dataReqs.find((r) => r.user_id === viewStudent.id && r.status === "Pending")?.id}
+                onDeleted={() => { setViewStudent(null); loadData(); }} />
+            </div>
           )}
           <Button variant="outline" onClick={() => setViewStudent(null)}>Close</Button>
         </>}>
@@ -3090,8 +3182,7 @@ export default function AdminDashboardPage() {
                               {r.status === "Pending" && !can.super && <span className="text-xs text-muted-foreground">The Mayor Office handles this</span>}
                               {r.status === "Pending" && can.super && (
                                 <span className="flex gap-1.5">
-                                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setReqResponse(""); setHandleReq({ req: r, status: "Declined" }); }}>Decline</Button>
-                                  <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => { setReqResponse("Your account and data have been deleted."); setHandleReq({ req: r, status: "Completed" }); }}>Mark completed</Button>
+                                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setReqResponse(""); setHandleReq(r); }}>Decline</Button>
                                 </span>
                               )}
                             </div>
@@ -3101,7 +3192,7 @@ export default function AdminDashboardPage() {
                         ))}
                       </ul>
                       {reqs.some((r) => r.status === "Pending") && (
-                        <p className="mt-1 text-xs text-muted-foreground">Deleting the account itself is done in the Supabase dashboard (Authentication → Users), then remove their files from Storage. Mark it completed afterwards.</p>
+                        <p className="mt-1 text-xs text-muted-foreground">To honour it, use Account → Delete account below. That removes their login, records and files, and the request with them.</p>
                       )}
                     </div>
                   );
@@ -3124,13 +3215,13 @@ export default function AdminDashboardPage() {
         onConfirm={async () => { if (disapproveGrade && await reviewGrade(disapproveGrade, "Disapproved", gradeNote)) setDisapproveGrade(null); }} />
 
       <ReasonDialog open={!!handleReq} onClose={() => setHandleReq(null)}
-        title={handleReq?.status === "Completed" ? "Complete deletion request" : "Decline deletion request"}
-        description={handleReq?.status === "Completed" ? "Only mark it completed after the account and its files are deleted." : "The student's account and data are kept."}
+        title="Decline deletion request"
+        description="The student's account and data are kept."
         label="Message to the student"
-        placeholder={handleReq?.status === "Declined" ? "Explain why, e.g. payment records must be kept for audit." : ""}
+        placeholder="Explain why, e.g. payment records must be kept for audit."
         value={reqResponse} onChange={setReqResponse} busy={payBusy}
-        confirmLabel={handleReq?.status === "Completed" ? "Mark completed" : "Decline request"}
-        confirmVariant={handleReq?.status === "Declined" ? "default" : "destructive"}
+        confirmLabel="Decline request"
+        confirmVariant="default"
         onConfirm={respondToRequest} />
 
       <ReasonDialog open={!!disapproveReceipt} onClose={() => setDisapproveReceipt(null)}
@@ -3155,7 +3246,7 @@ export default function AdminDashboardPage() {
             <p className="mt-1 whitespace-pre-wrap">{i.message}</p>
             <p className="mt-1 text-xs text-muted-foreground">Reported {new Date(i.created_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })}</p>
             {i.response && <p className="mt-3 whitespace-pre-wrap border-t pt-3"><span className="font-medium">Response: </span>{i.response}</p>}
-            {i.status === "Open" && (
+            {i.status === "Open" && can.finance && (
               <div className="mt-4 space-y-2 border-t pt-4">
                 <DialogField label="Response to the student" htmlFor={`issue-${i.id}`}>
                   <Textarea id={`issue-${i.id}`} rows={3} value={issueResponse} onChange={(e) => setIssueResponse(e.target.value)} placeholder="Explain what you found or what happens next." />

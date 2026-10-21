@@ -6,7 +6,7 @@ import { isAdminRole } from "@/lib/settings";
 const protectedRoutes = ["/student-dashboard", "/admin"];
 const authRoutes = ["/login", "/register", "/forgot-password"];
 // Endpoints that return or change the signed-in person's data.
-const protectedApis = ["/api/applications", "/api/notifications", "/api/payments", "/api/admin"];
+const protectedApis = ["/api/applications", "/api/admin"];
 
 export async function updateSession(request: NextRequest) {
   const path = request.nextUrl.pathname;
@@ -69,18 +69,42 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && !needsSecondStep && authRoutes.some((route) => path.startsWith(route))) {
-    const url = request.nextUrl.clone();
-    const { data: roleData } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", user.id)
-      .single();
+  const onAuthRoute = authRoutes.some((route) => path.startsWith(route));
+  const onAdmin = path.startsWith("/admin");
+  const onStudent = path.startsWith("/student-dashboard");
+  const onStudentApi = protectedApis.some((route) => path.startsWith(route)) && !path.startsWith("/api/admin");
+  if (user && !needsSecondStep && (onAuthRoute || onAdmin || onStudent || onStudentApi)) {
+    const [{ data: roleData }, { data: profile }] = await Promise.all([
+      supabase.from("user_roles").select("role").eq("user_id", user.id).single(),
+      supabase.from("profiles").select("is_active").eq("id", user.id).maybeSingle(),
+    ]);
 
     const userRole = (roleData as { role?: string } | null)?.role || "student";
-    url.pathname =
-      isAdminRole(userRole) ? "/admin" : "/student-dashboard";
-    return NextResponse.redirect(url);
+    const home = isAdminRole(userRole) ? "/admin" : "/student-dashboard";
+
+    // A deactivated student is signed out wherever they are. New sign-ins are refused by Supabase Auth
+    // (/api/admin/students bans the login); this catches sessions from before, and older deactivations.
+    if (!isAdminRole(userRole) && (profile as { is_active?: boolean } | null)?.is_active === false) {
+      await supabase.auth.signOut();
+      if (onStudentApi) {
+        const res = NextResponse.json({ error: "This account has been deactivated" }, { status: 403 });
+        supabaseResponse.cookies.getAll().forEach((c) => res.cookies.set(c));
+        return res;
+      }
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
+      url.search = "?error=inactive";
+      const res = NextResponse.redirect(url);
+      supabaseResponse.cookies.getAll().forEach((c) => res.cookies.set(c));
+      return res;
+    }
+
+    // Signed-in people skip the login pages, and each role stays on its own dashboard.
+    if (onAuthRoute || (onAdmin && home !== "/admin") || (onStudent && home !== "/student-dashboard")) {
+      const url = request.nextUrl.clone();
+      url.pathname = home;
+      return NextResponse.redirect(url);
+    }
   }
 
   return supabaseResponse;

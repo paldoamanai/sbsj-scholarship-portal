@@ -13,6 +13,7 @@ import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Tables } from "@/integrations/supabase/types";
 import { pesoFixed as formatPHP } from "@/lib/format";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export type OverviewApp = Tables<"applications"> & { scholarships: { name: string } | null; profiles?: Tables<"profiles"> | null };
 
@@ -31,6 +32,15 @@ type Props = {
   onRefresh: () => void;
   onNavigate: (section: string, opts?: { status?: string }) => void;
   onViewApp: (a: OverviewApp) => void;
+  /** Pending account deletion requests, shown to whoever handles them (the Mayor Office). */
+  deletionRequests?: number;
+  /** One row per office, for staff who see every office; empty hides the table. */
+  officeBreakdown?: OfficeRow[];
+  onViewOffice?: (office: string) => void;
+};
+
+export type OfficeRow = {
+  key: string; name: string; programs: number; applications: number; pending: number; approved: number; budget: number; disbursed: number;
 };
 
 const initials = (first?: string | null, last?: string | null) => `${(first || "?")[0] || ""}${(last || "")[0] || ""}`.toUpperCase();
@@ -159,6 +169,7 @@ function Trend({ current, previous }: { current: number; previous: number | null
 export default function OverviewPanel({
   applications, scholarships, profiles, notApplied = [], payments, auditLogs,
   firstName, refreshing, lastUpdated, loadError, onRefresh, onNavigate, onViewApp,
+  deletionRequests = 0, officeBreakdown = [], onViewOffice,
 }: Props) {
   const [period, setPeriod] = useState("all");
 
@@ -271,6 +282,7 @@ export default function OverviewPanel({
     ...data.closingSoon.map((s) => ({ show: true, icon: CalendarClock, tone: "text-warning", text: `${s.name} closes ${new Date(`${s.deadline}T00:00:00`).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}`, cta: "View", go: () => onNavigate("scholarships") })),
     ...data.pastDeadline.map((s) => ({ show: true, icon: AlertTriangle, tone: "text-destructive", text: `${s.name} is active but past its deadline`, cta: "Fix", go: () => onNavigate("scholarships") })),
     ...data.fullPrograms.map((s) => ({ show: true, icon: GraduationCap, tone: "text-warning", text: `${s.name} has filled all ${s.slots} slots`, cta: "View", go: () => onNavigate("scholarships") })),
+    { show: deletionRequests > 0, icon: UserX, tone: "text-destructive", text: `${deletionRequests} account deletion request${deletionRequests === 1 ? "" : "s"} waiting`, cta: "Handle", go: () => onNavigate("students") },
   ].filter((x) => x.show);
 
   return (
@@ -389,6 +401,37 @@ export default function OverviewPanel({
           </CardContent>
         </Card>
       </div>
+
+      {officeBreakdown.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">By Office</CardTitle></CardHeader>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
+                <TableHead>Office</TableHead><TableHead className="text-right">Programs</TableHead><TableHead className="text-right">Applications</TableHead>
+                <TableHead className="text-right">Pending</TableHead><TableHead className="text-right">Approved</TableHead>
+                <TableHead className="text-right">Budget</TableHead><TableHead className="text-right">Disbursed</TableHead><TableHead />
+              </TableRow></TableHeader>
+              <TableBody>
+                {officeBreakdown.map((r) => (
+                  <TableRow key={r.key}>
+                    <TableCell className="font-medium">{r.name}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.programs}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.applications}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.pending}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.approved}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.budget ? formatPHP(r.budget) : "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatPHP(r.disbursed)}</TableCell>
+                    <TableCell className="text-right">
+                      {onViewOffice && <Button size="sm" variant="ghost" onClick={() => onViewOffice(r.key)}>View <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
+      )}
 
       {/* Trends + status */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

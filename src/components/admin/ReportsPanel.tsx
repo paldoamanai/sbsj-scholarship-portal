@@ -48,6 +48,8 @@ type Props = {
   period: string; setPeriod: (v: string) => void;
   fromDate: string; setFromDate: (v: string) => void;
   toDate: string; setToDate: (v: string) => void;
+  /** The office the data is limited to, named on every report; null when it covers every office. */
+  office?: string | null;
 };
 
 function MoneyTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number }[]; label?: string }) {
@@ -95,7 +97,7 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
   );
 }
 
-export default function ReportsPanel({ data, settings, adminEmail, period, setPeriod, fromDate, setFromDate, toDate, setToDate }: Props) {
+export default function ReportsPanel({ data, settings, adminEmail, period, setPeriod, fromDate, setFromDate, toDate, setToDate, office = null }: Props) {
   const supabase = useMemo(() => createClient(), []);
   const [program, setProgram] = useState("all");
   const [payStatus, setPayStatus] = useState("all");
@@ -144,9 +146,13 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
   }), [data, auditLogs, auditTruncated, settings.required_documents, settings.min_grade_requirement]);
   const filters: ReportFilters = { ...ALL_FILTERS, period, from: fromDate, to: toDate, program, payStatus, academicYear, semester, student, auditAction, auditEntity, auditUser };
 
-  const defs = useMemo(() => Object.fromEntries(REPORTS.map((r) => [r.key, buildReport(r.key, reportData, filters)])) as Record<ReportKey, ReturnType<typeof buildReport>>,
+  const defs = useMemo(() => Object.fromEntries(REPORTS.map((r) => {
+    const def = buildReport(r.key, reportData, filters);
+    // The audit trail isn't limited to an office, so only the other reports say which office they cover.
+    return [r.key, office && r.key !== "audit" ? { ...def, filters: [`Office: ${office}`, ...def.filters] } : def];
+  })) as Record<ReportKey, ReturnType<typeof buildReport>>,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [reportData, period, fromDate, toDate, program, payStatus, academicYear, semester, student, auditAction, auditEntity, auditUser]);
+    [reportData, period, fromDate, toDate, program, payStatus, academicYear, semester, student, auditAction, auditEntity, auditUser, office]);
 
   // Choices for the audit filters, from the entries loaded for the period.
   const auditChoices = useMemo(() => {
@@ -204,7 +210,7 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
   };
 
   const cell = (sec: ReportSection, c: string | number, i: number) => (sec.money?.includes(sec.head[i]) && typeof c === "number" ? formatPHP(c) : String(c));
-  const scopeText = `${periodLabel(filters)}${program === "all" ? "" : ` · ${data.scholarships.find((s) => s.id === program)?.name ?? ""}`}${academicYear === "all" ? "" : ` · AY ${academicYear}`}${semester === "all" ? "" : ` · ${semester}`}`;
+  const scopeText = `${office ? `${office} · ` : ""}${periodLabel(filters)}${program === "all" ? "" : ` · ${data.scholarships.find((s) => s.id === program)?.name ?? ""}`}${academicYear === "all" ? "" : ` · AY ${academicYear}`}${semester === "all" ? "" : ` · ${semester}`}`;
   const noSignatories = !settings.report_prepared_by && !settings.report_approved_by;
   const remaining = analytics.totalBudget - analytics.disbursed - analytics.queued;
 
