@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build",
+    "build": "node scripts/migrate.mjs && next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "migrate": "node scripts/migrate.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -73,6 +74,7 @@
     "autoprefixer": "^10.4.21",
     "eslint": "^9.32.0",
     "eslint-config-next": "^15.3.2",
+    "pg": "^8.23.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.3"
