@@ -1362,7 +1362,7 @@ export default function AdminDashboardPage() {
   const pagedApps = filteredApps.slice((currentAppPage - 1) * APP_PAGE_SIZE, currentAppPage * APP_PAGE_SIZE);
   // Bulk selection covers applications that can still be decided (Pending / Waitlisted).
   const isOpenApp = (a: AppRow) => a.status === "Pending" || a.status === "Waitlisted";
-  const selectablePaged = pagedApps.flatMap((r) => (r.kind === "app" && isOpenApp(r.app) ? [r.app.id] : []));
+  const selectablePaged = pagedApps.flatMap((r) => (r.kind === "app" && isOpenApp(r.app) && can.review ? [r.app.id] : []));
   // Students who haven't applied can be selected too, for a bulk reminder.
   const selectableStudentsPaged = pagedApps.flatMap((r) => (r.kind === "none" ? [r.profile.id] : []));
   const allPagedSelected = selectablePaged.length + selectableStudentsPaged.length > 0
@@ -1660,7 +1660,7 @@ export default function AdminDashboardPage() {
                   <Button size="sm" variant="ghost" disabled={messaging} onClick={() => setSelectedStudents(new Set())}>Clear</Button>
                 </div>
               )}
-              {selectedApps.size > 0 && (
+              {selectedApps.size > 0 && can.review && (
                 <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-accent px-3 py-2 text-sm">
                   <span className="font-medium">{selectedApps.size} application{selectedApps.size === 1 ? "" : "s"} selected</span>
                   <Button size="sm" disabled={bulkBusy} onClick={() => bulkDecide("Approved")}>
@@ -1734,7 +1734,7 @@ export default function AdminDashboardPage() {
                       return (
                         <TableRow key={a.id} data-state={selectedApps.has(a.id) ? "selected" : undefined}>
                           <TableCell>
-                            {isOpenApp(a) && (
+                            {isOpenApp(a) && can.review && (
                               <Checkbox aria-label={`Select ${name}`} checked={selectedApps.has(a.id)} onCheckedChange={(on) => toggleSelected(a.id, on === true)} />
                             )}
                           </TableCell>
@@ -1757,7 +1757,7 @@ export default function AdminDashboardPage() {
                           <TableCell>{statusBadge(a.status)}</TableCell>
                           <TableCell className="text-right space-x-1">
                             <Button size="icon" variant="ghost" onClick={() => setViewApp(a)} title="View"><Eye className="h-4 w-4" /></Button>
-                            {isOpenApp(a) && (<>
+                            {isOpenApp(a) && can.review && (<>
                               <Button size="icon" variant="ghost" disabled={!!blocker} title={blocker ?? "Approve"} onClick={async () => {
                                 if (await decideApplication(a, "Approved", null)) { toast.success(`${name} approved!`); loadData(true); }
                               }}><CheckCircle className="h-4 w-4 text-success" /></Button>
@@ -1770,7 +1770,7 @@ export default function AdminDashboardPage() {
                                 <XCircle className="h-4 w-4 text-destructive" />
                               </Button>
                             </>)}
-                            {a.status === "Disapproved" && (
+                            {a.status === "Disapproved" && can.review && (
                               <Button size="icon" variant="ghost" title="Reopen" onClick={async () => {
                                 if (await decideApplication(a, "Pending", null)) { toast.success(`${name} reopened`); loadData(true); }
                               }}><RotateCcw className="h-4 w-4" /></Button>
@@ -1780,7 +1780,7 @@ export default function AdminDashboardPage() {
                             ) : (
                               <Button size="icon" variant="ghost" title="Schedule payment" onClick={() => scheduleFor(a)}><Banknote className="h-4 w-4 text-success" /></Button>
                             ))}
-                            {a.status === "Approved" && (
+                            {a.status === "Approved" && can.review && (
                               <Button size="icon" variant="ghost" disabled={hasLivePayment(a.id)}
                                 title={hasLivePayment(a.id) ? "This application has payments. Cancel them before revoking the approval" : "Revoke approval"}
                                 onClick={() => { setRevokeNote(""); setRevokeApp(a); }}><Undo2 className="h-4 w-4 text-destructive" /></Button>
@@ -1817,7 +1817,7 @@ export default function AdminDashboardPage() {
                   <AppDialog open={!!va} onOpenChange={(o) => !o && close()} size="lg"
                     title="Application Details"
                     description={va ? <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">{personName(va.profiles)} · {va.scholarships?.name || "—"} {statusBadge(va.status)}</span> : undefined}
-                    footer={va && (open ? <>
+                    footer={va && (!can.review ? <Button variant="outline" onClick={close}>Close</Button> : open ? <>
                       <Button variant="ghost" className="sm:mr-auto" onClick={() => { setChangesText(""); setChangesFor(va); }}>
                         <Pencil className="mr-1 h-4 w-4" /> Request changes
                       </Button>
@@ -1937,6 +1937,12 @@ export default function AdminDashboardPage() {
                         </div>
                       )}
 
+                      {!can.review ? (viewApp.notes && (
+                        <div>
+                          <h3 className="mb-1.5 text-sm font-semibold">{viewApp.status === "Disapproved" ? "Reason (shown to the student)" : "Message to the student"}</h3>
+                          <p className="whitespace-pre-wrap rounded-md border bg-muted/40 px-3 py-2 text-sm">{viewApp.notes}</p>
+                        </div>
+                      )) : (
                       <div>
                         <h3 className="mb-1.5 text-sm font-semibold">{viewApp.status === "Disapproved" ? "Reason (shown to the student)" : "Message to the student"}</h3>
                         <Textarea value={remarks} onChange={(e) => setRemarks(e.target.value)}
@@ -1961,6 +1967,7 @@ export default function AdminDashboardPage() {
                           }}>{viewApp.status === "Disapproved" ? "Save reason" : "Save message"}</Button>
                         )}
                       </div>
+                      )}
 
                       <div>
                         <h3 className="mb-1.5 text-sm font-semibold">Internal notes (staff only — never shown to the student)</h3>
@@ -2381,6 +2388,7 @@ export default function AdminDashboardPage() {
                       <SelectItem value="issues">Open problems</SelectItem>
                     </SelectContent>
                   </Select>
+                  {can.finance && <>
                   <Button variant="outline" onClick={() => {
                     // Start on the current semester, or the first month someone still needs when only monthly programs have scholars waiting.
                     const sem = parseSettings(systemSettings).current_semester;
@@ -2389,6 +2397,7 @@ export default function AdminDashboardPage() {
                     setBulkTerm(term); setBulkDate(defaultScheduledDate); setBulkPicked(new Set(bulkCandidates(term).filter((c) => !c.warning).map((c) => c.app.id))); setBulkOpen(true);
                   }}>Schedule payments in bulk</Button>
                   <Button className="bg-gradient-primary shadow-primary" onClick={() => openNewPayment()}><Plus className="mr-1 h-4 w-4" /> Schedule Payment</Button>
+                  </>}
                 </div>
               </div>
               <Card className="border-warning/30 bg-warning/5">
@@ -2461,10 +2470,10 @@ export default function AdminDashboardPage() {
                                     <Badge variant={p.receipt_review_status === "Accepted" ? "default" : "secondary"} className={p.receipt_review_status === "Disapproved" ? "text-destructive" : undefined}>
                                       {p.receipt_review_status === "Pending" ? "To review" : p.receipt_review_status}
                                     </Badge>
-                                    {p.receipt_review_status !== "Accepted" && (
+                                    {p.receipt_review_status !== "Accepted" && can.finance && (
                                       <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={payBusy} onClick={() => reviewReceipt(p, "Accepted")}>Accept</Button>
                                     )}
-                                    {p.receipt_review_status !== "Disapproved" && (
+                                    {p.receipt_review_status !== "Disapproved" && can.finance && (
                                       <Button size="sm" variant="outline" className="h-6 px-2 text-xs text-destructive" disabled={payBusy} onClick={() => { setReceiptNote(""); setDisapproveReceipt(p); }}>Disapprove</Button>
                                     )}
                                   </div>
@@ -2483,13 +2492,13 @@ export default function AdminDashboardPage() {
                                 <AlertTriangle className={`h-4 w-4 ${openIssueFor(p.id) ? "text-warning" : "text-muted-foreground"}`} />
                               </Button>
                             )}
-                            {p.status !== "Cancelled" && receiptNos[p.id] && (
+                            {p.status !== "Cancelled" && receiptNos[p.id] && can.finance && (
                               <Button size="icon" variant="ghost" title={`Print acknowledgment slip (${receiptNos[p.id]})`} onClick={() => printSlip(p)}><Printer className="h-4 w-4" /></Button>
                             )}
                             {p.status === "Disbursed" && (
                               <Button size="icon" variant="ghost" title="View receipt" onClick={() => viewReceipt(p)}><Receipt className="h-4 w-4" /></Button>
                             )}
-                            {open && (<>
+                            {open && can.finance && (<>
                               <Button size="icon" variant="ghost" title="Edit" onClick={() => { setPayMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash"); setPayTerm((p.term as PaymentTerm | null) ?? null); setPayDialog(p); }}><Pencil className="h-4 w-4" /></Button>
                               {p.status === "Pending" && (
                                 <Button size="sm" variant="outline" onClick={() => setPaymentStatus(p, "Processing")}>Process</Button>
@@ -3167,7 +3176,7 @@ export default function AdminDashboardPage() {
             <p className="mt-1 whitespace-pre-wrap">{i.message}</p>
             <p className="mt-1 text-xs text-muted-foreground">Reported {new Date(i.created_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })}</p>
             {i.response && <p className="mt-3 whitespace-pre-wrap border-t pt-3"><span className="font-medium">Response: </span>{i.response}</p>}
-            {i.status === "Open" && (
+            {i.status === "Open" && can.finance && (
               <div className="mt-4 space-y-2 border-t pt-4">
                 <DialogField label="Response to the student" htmlFor={`issue-${i.id}`}>
                   <Textarea id={`issue-${i.id}`} rows={3} value={issueResponse} onChange={(e) => setIssueResponse(e.target.value)} placeholder="Explain what you found or what happens next." />

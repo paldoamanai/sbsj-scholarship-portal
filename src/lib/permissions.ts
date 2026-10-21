@@ -9,7 +9,7 @@ export const ROLE_LABEL: Record<string, string> = {
 };
 
 export const ROLE_DESCRIPTION: Record<StaffRole, string> = {
-  super_admin: "Everything, plus staff, settings, deleting programs and account deletion requests.",
+  super_admin: "Oversight: sees every office, runs programs, staff, settings, student accounts and deletion requests. Applicant decisions and payments are left to the other roles.",
   admin: "Runs the office: programs, applicants, students, payments and announcements.",
   reviewer: "Applicants only: documents, grades, approving or disapproving, notes and messages.",
   finance_admin: "Money only: creating and disbursing payments, receipts and payment problems.",
@@ -21,9 +21,9 @@ export const isStaffRole = (role: string | null | undefined): role is StaffRole 
 export type Permissions = {
   /** Programs, announcements, student accounts, award changes after approval, reminder jobs. */
   manage: boolean;
-  /** Applicants: status changes, documents, grades, notes, messages. */
+  /** Applicants: status changes, documents, grades, messages. Not the Mayor Office (oversight only). */
   review: boolean;
-  /** Payments, receipts and payment problems. */
+  /** Payments, receipts and payment problems. Not the Mayor Office (oversight only). */
   finance: boolean;
   /** Staff, settings, deleting programs, account deletion requests. */
   super: boolean;
@@ -32,10 +32,12 @@ export type Permissions = {
 /** `canManageSettings` comes from can_manage_settings(): true for a super admin, or any admin while none exists. */
 export function permissionsFor(role: string | null | undefined, canManageSettings: boolean): Permissions {
   const admin = role === "super_admin" || role === "admin";
+  // The Mayor Office oversees: it sees everything but leaves applicant decisions and payments to the
+  // Admin, Reviewer and Finance accounts. Only its screens change; the database would still allow them.
   return {
     manage: admin,
-    review: admin || role === "reviewer",
-    finance: admin || role === "finance_admin",
+    review: role === "admin" || role === "reviewer",
+    finance: role === "admin" || role === "finance_admin",
     super: canManageSettings,
   };
 }
