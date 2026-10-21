@@ -140,6 +140,23 @@ export default function LoginPage() {
       return;
     }
 
+    // Staff sign in through Admin Login and students through Student Login, never the other way.
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data: roleData } = user
+      ? await supabase.from("user_roles").select("role").eq("user_id", user.id).single()
+      : { data: null };
+    const accountIsAdmin = isAdminRole((roleData as { role?: string } | null)?.role || "student");
+    if (accountIsAdmin !== isAdmin) {
+      await supabase.auth.signOut();
+      toast.error("Login failed", {
+        description: accountIsAdmin
+          ? "This is an admin account. Use Login as Admin instead."
+          : "This is a student account. Use Login as Student instead.",
+      });
+      setLoading(false);
+      return;
+    }
+
     // Credentials are confirmed valid at this point (before any 2FA step, which
     // doesn't involve the password), so update/save them now.
     rememberCredential(email, password);

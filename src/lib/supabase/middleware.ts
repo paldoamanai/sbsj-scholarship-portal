@@ -69,8 +69,10 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && !needsSecondStep && authRoutes.some((route) => path.startsWith(route))) {
-    const url = request.nextUrl.clone();
+  const onAuthRoute = authRoutes.some((route) => path.startsWith(route));
+  const onAdmin = path.startsWith("/admin");
+  const onStudent = path.startsWith("/student-dashboard");
+  if (user && !needsSecondStep && (onAuthRoute || onAdmin || onStudent)) {
     const { data: roleData } = await supabase
       .from("user_roles")
       .select("role")
@@ -78,9 +80,13 @@ export async function updateSession(request: NextRequest) {
       .single();
 
     const userRole = (roleData as { role?: string } | null)?.role || "student";
-    url.pathname =
-      isAdminRole(userRole) ? "/admin" : "/student-dashboard";
-    return NextResponse.redirect(url);
+    const home = isAdminRole(userRole) ? "/admin" : "/student-dashboard";
+    // Signed-in people skip the login pages, and each role stays on its own dashboard.
+    if (onAuthRoute || (onAdmin && home !== "/admin") || (onStudent && home !== "/student-dashboard")) {
+      const url = request.nextUrl.clone();
+      url.pathname = home;
+      return NextResponse.redirect(url);
+    }
   }
 
   return supabaseResponse;
