@@ -47,7 +47,7 @@ import {
 } from "@/lib/reports";
 import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
 import { asMonths, asSchedule, isMonthTerm, openTerms, secondSemesterGradeWarning, termAmount, termLabel, termsFor, type PaymentTerm } from "@/lib/release-schedule";
-import { OFFICE_FULL_NAME, OFFICE_LABEL, isOffice, officeLogo, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
+import { OFFICE_FULL_NAME, OFFICE_LABEL, STAFF_OFFICES, isOffice, officeLogo, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 import { printReceiptSlip } from "@/lib/receipt-slip";
 import { LETTER_OF_INTENT } from "@/lib/documents";
 import { peso, pesoFixed as formatPHP } from "@/lib/format";
@@ -191,10 +191,10 @@ export default function AdminDashboardPage() {
   const [studentDocs, setStudentDocs] = useState<AdminDoc[]>([]);
   const [studentDocsLoading, setStudentDocsLoading] = useState(false);
 
-  const [applications, setApplications] = useState<(Tables<"applications"> & { scholarships: { name: string } | null, profiles?: Tables<"profiles"> | null })[]>([]);
-  const [scholarships, setScholarships] = useState<Tables<"scholarships">[]>([]);
+  const [allApplications, setApplications] = useState<(Tables<"applications"> & { scholarships: { name: string } | null, profiles?: Tables<"profiles"> | null })[]>([]);
+  const [allScholarships, setScholarships] = useState<Tables<"scholarships">[]>([]);
   const [profiles, setProfiles] = useState<Tables<"profiles">[]>([]);
-  const [payments, setPayments] = useState<Tables<"payments">[]>([]);
+  const [allPayments, setPayments] = useState<Tables<"payments">[]>([]);
   const [viewApp, setViewApp] = useState<typeof applications[0] | null>(null);
   const [remarks, setRemarks] = useState("");
   const [appPage, setAppPage] = useState(1);
@@ -248,9 +248,49 @@ export default function AdminDashboardPage() {
   // Office staff only see their office's programs (enforced by migration 061); null = all offices.
   const myOffice = roleCanHaveOffice(adminRole) && isOffice(adminOffice) ? adminOffice : null;
   // Programs carry an office once migration 061 has run; until then the program form doesn't offer one.
-  const officesReady = scholarships.some((sch) => "office" in sch);
+  const officesReady = allScholarships.some((sch) => "office" in sch);
   // An Admin of an office manages that office's Reviewer and Finance staff (migration 065).
   const managedOffice = adminRole === "admin" ? myOffice : null;
+  // Staff without an office (the Mayor Office) can narrow every page to one office's programs, or to the
+  // programs that belong to no office ("municipal"). Office staff only ever load their own office's data.
+  const [officeView, setOfficeView] = useState<string>("all");
+  const viewingOffice = !myOffice && officesReady && officeView !== "all";
+  const scholarships = useMemo(
+    () => (viewingOffice ? allScholarships.filter((sch) => (sch.office ?? "municipal") === officeView) : allScholarships),
+    [allScholarships, viewingOffice, officeView]);
+  const applications = useMemo(() => {
+    if (!viewingOffice) return allApplications;
+    const ids = new Set(scholarships.map((sch) => sch.id));
+    return allApplications.filter((a) => !!a.scholarship_id && ids.has(a.scholarship_id));
+  }, [allApplications, scholarships, viewingOffice]);
+  const payments = useMemo(() => {
+    if (!viewingOffice) return allPayments;
+    const ids = new Set(applications.map((a) => a.id));
+    return allPayments.filter((p) => p.application_id && ids.has(p.application_id));
+  }, [allPayments, applications, viewingOffice]);
+  // Exports made while viewing one office say so in the file name.
+  const fileOffice = viewingOffice ? `-${officeView.replace(/_/g, "-")}` : "";
+  // Programs, applicants, approvals and money per office, for the Mayor Office's dashboard.
+  const officeBreakdown = useMemo(() => {
+    if (myOffice || !officesReady) return [];
+    const keys = [...STAFF_OFFICES, "municipal"] as const;
+    return keys.map((key) => {
+      const progs = allScholarships.filter((sch) => (sch.office ?? "municipal") === key);
+      const ids = new Set(progs.map((sch) => sch.id));
+      const apps = allApplications.filter((a) => !!a.scholarship_id && ids.has(a.scholarship_id));
+      const appIds = new Set(apps.map((a) => a.id));
+      const pays = allPayments.filter((p) => p.application_id && appIds.has(p.application_id));
+      return {
+        key, name: key === "municipal" ? "Mayor Office programs" : OFFICE_LABEL[key],
+        programs: progs.length,
+        applications: apps.length,
+        pending: apps.filter((a) => a.status === "Pending").length,
+        approved: apps.filter((a) => a.status === "Approved").length,
+        budget: progs.filter((sch) => sch.is_active).reduce((t, sch) => t + Number(sch.total_budget || 0), 0),
+        disbursed: pays.filter((p) => p.status === "Disbursed").reduce((t, p) => t + Number(p.amount || 0), 0),
+      };
+    }).filter((r) => r.programs > 0);
+  }, [myOffice, officesReady, allScholarships, allApplications, allPayments]);
   const canSee = (key: string) => (key === "staff" ? can.super || !!managedOffice : !(hiddenSections[adminRole] ?? []).includes(key));
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -1021,7 +1061,7 @@ export default function AdminDashboardPage() {
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Students");
-    XLSX.writeFile(wb, "students.xlsx");
+    XLSX.writeFile(wb, `students${fileOffice}.xlsx`);
     toast.success("Excel downloaded");
   };
 
@@ -1291,10 +1331,12 @@ export default function AdminDashboardPage() {
   const APP_PAGE_SIZE = 10;
   // Registered students who haven't submitted an application yet. They count as applicants so
   // admins can see who is stuck (usually on the required documents) and follow up.
+  // Students who haven't applied anywhere belong to no office, so they're left out of an office view.
   const notApplied = useMemo(() => {
-    const applied = new Set(applications.map((a) => a.user_id));
+    if (viewingOffice) return [];
+    const applied = new Set(allApplications.map((a) => a.user_id));
     return profiles.filter((p) => !applied.has(p.id));
-  }, [profiles, applications]);
+  }, [profiles, allApplications, viewingOffice]);
   // Required documents uploaded (and not disapproved) by a student who hasn't applied yet.
   const docsReady = (userId: string) => {
     const required = parseSettings(systemSettings).required_documents;
@@ -1475,7 +1517,7 @@ export default function AdminDashboardPage() {
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Applicants");
-    XLSX.writeFile(wb, "applicants.xlsx");
+    XLSX.writeFile(wb, `applicants${fileOffice}.xlsx`);
     toast.success("Excel downloaded");
   };
 
@@ -1545,6 +1587,19 @@ export default function AdminDashboardPage() {
           </div>
           <button className="lg:hidden" onClick={() => setSidebarOpen(false)}><X className="h-5 w-5" /></button>
         </div>
+        {!myOffice && officesReady && (
+          <div className="px-3 pt-3">
+            <Select value={officeView} onValueChange={setOfficeView}>
+              <SelectTrigger aria-label="Office shown" className={officeView !== "all" ? "border-primary text-primary" : undefined}><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All offices</SelectItem>
+                {STAFF_OFFICES.map((o) => <SelectItem key={o} value={o}>{OFFICE_LABEL[o]}</SelectItem>)}
+                <SelectItem value="municipal">Mayor Office programs</SelectItem>
+              </SelectContent>
+            </Select>
+            {officeView !== "all" && <p className="mt-1 px-1 text-[11px] text-muted-foreground">Every page shows only this office&apos;s programs, applicants and payments.</p>}
+          </div>
+        )}
         <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
           {sidebarItems.filter((item) => canSee(item.key)).map((item, i, items) => {
             const unread = item.key === "notifications" ? unreadTotal : 0;
@@ -1608,6 +1663,8 @@ export default function AdminDashboardPage() {
               onRefresh={() => loadData(true)}
               onViewApp={setViewApp}
               deletionRequests={can.super ? pendingDeletions.length : 0}
+              officeBreakdown={officeView === "all" ? officeBreakdown : []}
+              onViewOffice={setOfficeView}
               onNavigate={(section, opts) => {
                 setActiveSection(section);
                 if (opts?.status !== undefined) { setStatusFilter(opts.status); setAppPage(1); }
@@ -2701,6 +2758,7 @@ export default function AdminDashboardPage() {
               data={{ applications, scholarships, profiles, staff, payments, payIssues, gradeUpdates: gradeReviews, dataRequests: dataReqs, documents: allDocs }}
               settings={parseSettings(systemSettings)} adminEmail={adminEmail}
               period={fundPeriod} setPeriod={setFundPeriod} fromDate={fromDate} setFromDate={setFromDate} toDate={toDate} setToDate={setToDate}
+              office={myOffice ? OFFICE_LABEL[myOffice] : viewingOffice ? (isOffice(officeView) ? OFFICE_LABEL[officeView] : "Mayor Office programs") : null}
             />
           )}
 
