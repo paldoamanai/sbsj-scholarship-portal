@@ -21,9 +21,6 @@ import {
   FileDown, Receipt, Loader2, User, Upload, ArrowRight,
    ChevronRight, ChevronLeft, ExternalLink, Printer, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2,
 } from "lucide-react";
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-} from "recharts";
 import { createClient } from "@/lib/supabase/client";
 import { scholarshipSchema } from "@/validations/scholarship";
 import ProfileImage from "@/components/ProfileImage";
@@ -44,7 +41,7 @@ import StaffPanel from "@/components/admin/StaffPanel";
 import StudentAccountActions from "@/components/admin/StudentAccountActions";
 import ReportsPanel from "@/components/admin/ReportsPanel";
 import {
-  ALL_FILTERS, buildReport, getRange, logsToSection, personName, renderExcel, renderPDF,
+  getRange, logsToSection, personName, renderExcel, renderPDF,
   type DocSummary, type ReportData, type ReportDef, type StaffMember,
 } from "@/lib/reports";
 import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
@@ -1250,7 +1247,6 @@ export default function AdminDashboardPage() {
       toast.error("Export failed", { description: e instanceof Error ? e.message : String(e) });
     }
   };
-  const fundsDef = () => buildReport("funds", reportData(), { ...ALL_FILTERS, period: fundPeriod, from: fromDate, to: toDate });
 
 
   const statusBadge = (status: string) => <StatusBadge status={status} />;
@@ -1514,19 +1510,11 @@ export default function AdminDashboardPage() {
     const byMethod = [...methods.entries()].map(([method, v]) => ({ method, ...v, share: disbursedTotal ? Math.round((v.amount / disbursedTotal) * 100) : 0 }))
       .sort((x, y) => y.amount - x.amount);
 
-    const monthMap = new Map<string, number>();
-    inRange.filter((p) => p.status === "Disbursed").forEach((p) => {
-      const d = new Date(payDate(p));
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      monthMap.set(key, (monthMap.get(key) ?? 0) + Number(p.amount || 0));
-    });
-    const monthly = [...monthMap.entries()].sort(([x], [y]) => x.localeCompare(y))
-      .map(([key, amount]) => ({ month: new Date(`${key}-01`).toLocaleDateString("en-PH", { month: "short", year: "2-digit" }), Disbursed: amount }));
 
     const recent = [...inRange].sort((x, y) => new Date(payDate(y)).getTime() - new Date(payDate(x)).getTime()).slice(0, 8);
 
 
-    return { pipeline, byProgram, byMethod, monthly, recent, disbursedTotal };
+    return { pipeline, byProgram, byMethod, recent, disbursedTotal };
   }, [payments, applications, scholarships, fundPeriod, fromDate, toDate]);
   // Approved applications with a term that has no payment yet (a per-semester award has two).
   const awaitingPayment = applications.filter((a) => a.status === "Approved" && openTermsOf(a).length > 0);
@@ -2261,11 +2249,11 @@ export default function AdminDashboardPage() {
                       <SelectItem value="year">This year</SelectItem>
                       <SelectItem value="6m">Last 6 months</SelectItem>
                       <SelectItem value="30d">Last 30 days</SelectItem>
-                      <SelectItem value="custom">Custom range (Reports)</SelectItem>
+                      <SelectItem value="custom">Custom range (set in Reports)</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Button variant="outline" onClick={() => exportDef(fundsDef(), "funds-report", "pdf")}><FileDown className="mr-1 h-4 w-4" /> PDF</Button>
-                  <Button variant="outline" onClick={() => exportDef(fundsDef(), "funds-report", "xlsx")}><FileDown className="mr-1 h-4 w-4" /> Excel</Button>
+                  {/* Charts and the Fund Utilization export live in Reports; this page is the day-to-day view. */}
+                  <Button variant="outline" onClick={() => setActiveSection("reports")}><BarChart3 className="mr-1 h-4 w-4" /> Charts &amp; exports</Button>
                 </div>
               </div>
 
@@ -2279,22 +2267,6 @@ export default function AdminDashboardPage() {
                 ))}
               </div>
 
-              <Card>
-                <CardHeader><CardTitle className="text-base">Disbursed per Month</CardTitle></CardHeader>
-                <CardContent>
-                  {fundData.monthly.length === 0 ? <p className="text-sm text-muted-foreground py-8 text-center">No disbursements in this period</p> : (
-                    <ResponsiveContainer width="100%" height={240}>
-                      <BarChart data={fundData.monthly}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                        <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                        <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                        <Tooltip formatter={(v: number) => formatPHP(v)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
-                        <Bar dataKey="Disbursed" fill="hsl(var(--primary))" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </CardContent>
-              </Card>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <Card>
@@ -2348,7 +2320,7 @@ export default function AdminDashboardPage() {
                 <Card>
                   <CardHeader className="flex-row items-center justify-between space-y-0">
                     <CardTitle className="text-base">Awaiting Payment ({awaitingPayment.length})</CardTitle>
-                    <Button size="sm" variant="ghost" onClick={() => { openNewPayment(); setActiveSection("disbursement"); }}>Schedule payment <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>
+                    {can.finance && <Button size="sm" variant="ghost" onClick={() => { openNewPayment(); setActiveSection("disbursement"); }}>Schedule payment <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>}
                   </CardHeader>
                   <Table>
                     <TableBody>
@@ -2356,7 +2328,7 @@ export default function AdminDashboardPage() {
                       {awaitingPayment.map((a) => (
                         <TableRow key={a.id}>
                           <TableCell><p className="font-medium">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"}</p><p className="text-xs text-muted-foreground">{a.scholarships?.name || "—"}{scheduleOf(a) === "semester" && ` · ${openTermsOf(a).join(", ")}`}{scheduleOf(a) === "monthly" && openTermsOf(a).length > 0 && ` · next ${openTermsOf(a)[0]} (${openTermsOf(a).length} of ${monthsOf(a)} left)`}</p></TableCell>
-                          <TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => { openNewPayment(a.id); setActiveSection("disbursement"); }}>Schedule payment</Button></TableCell>
+                          <TableCell className="text-right">{can.finance && <Button size="sm" variant="outline" onClick={() => { openNewPayment(a.id); setActiveSection("disbursement"); }}>Schedule payment</Button>}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
