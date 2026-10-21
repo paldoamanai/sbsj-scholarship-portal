@@ -56,10 +56,6 @@ export default function ScholarshipsPage() {
       {/* Hero */}
       <section className="bg-orange-50/60 border-b py-16 lg:py-20">
         <div className="container text-center max-w-2xl mx-auto space-y-5">
-          <div className="inline-flex items-center gap-2 rounded-full bg-orange-100 px-4 py-1.5 text-sm font-semibold text-orange-700">
-            <GraduationCap className="h-4 w-4" />
-            Sangguniang Bayan ng San Jose
-          </div>
           <h1 className="text-4xl md:text-5xl font-display font-bold text-foreground leading-tight">
             Available Scholarships
           </h1>

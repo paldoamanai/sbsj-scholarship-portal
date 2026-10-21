@@ -3,6 +3,10 @@ import type { Tables } from "@/integrations/supabase/types";
 
 export const DOC_MIME = ["application/pdf", "image/jpeg", "image/png"];
 
+/** Filed with each application on its own, not shared like the required documents (migration 063). */
+export const LETTER_OF_INTENT = "Letter of Intent";
+export const PHOTO_MIME = ["image/jpeg", "image/png"];
+
 // Storage keys reject many characters (accents, #, etc.), so keep file and folder names plain.
 const plain = (v: string) =>
   v.normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/-+/g, "-").replace(/^[-.]+|[-.]+$/g, "");
@@ -35,7 +39,9 @@ export async function uploadUserDocument(
   opts: { userId: string; docType: string; file: File; applicationId?: string | null }
 ): Promise<{ row: Tables<"documents"> } | { error: string }> {
   const { userId, docType, file, applicationId } = opts;
-  const path = `${userId}/documents/${docFolder(docType)}/${Date.now()}-${safeFileName(file.name)}`;
+  const path = docType === LETTER_OF_INTENT
+    ? letterPath(userId, file)
+    : `${userId}/documents/${docFolder(docType)}/${Date.now()}-${safeFileName(file.name)}`;
 
   const { error: uploadError } = await supabase.storage.from("documents").upload(path, file, { contentType: file.type });
   if (uploadError) return { error: uploadError.message };
@@ -49,4 +55,39 @@ export async function uploadUserDocument(
     return { error: error?.message ?? "Could not save the document" };
   }
   return { row: data };
+}
+
+const letterPath = (userId: string, file: File) => `${userId}/letters/${Date.now()}-${safeFileName(file.name)}`;
+
+/** Uploads a letter of intent photo for an application that is about to be submitted. Returns its path. */
+export async function uploadLetterPhoto(supabase: ReturnType<typeof createClient>, userId: string, file: File) {
+  const path = letterPath(userId, file);
+  const { error } = await supabase.storage.from("documents").upload(path, file, { contentType: file.type });
+  return error ? { error: error.message } : { path };
+}
+
+/**
+ * Phone photos are often larger than the upload limit. Shrinks one that is (or is very large) to a
+ * JPEG of at most 2400px on its long side, which keeps a letter readable. Other files pass through.
+ */
+export async function shrinkPhoto(file: File, maxBytes: number): Promise<File> {
+  if (!PHOTO_MIME.includes(file.type) || file.size <= Math.min(maxBytes, 2 * 1024 * 1024)) return file;
+  try {
+    const img = await createImageBitmap(file);
+    const scale = Math.min(1, 2400 / Math.max(img.width, img.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    ctx.fillStyle = "#fff"; // a transparent PNG would turn black as a JPEG
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    img.close();
+    const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/jpeg", 0.85));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+  } catch {
+    return file;
+  }
 }

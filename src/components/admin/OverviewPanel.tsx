@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Tables } from "@/integrations/supabase/types";
+import { pesoFixed as formatPHP } from "@/lib/format";
 
 export type OverviewApp = Tables<"applications"> & { scholarships: { name: string } | null; profiles?: Tables<"profiles"> | null };
 
@@ -32,7 +33,6 @@ type Props = {
   onViewApp: (a: OverviewApp) => void;
 };
 
-const formatPHP = (n: number) => `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const initials = (first?: string | null, last?: string | null) => `${(first || "?")[0] || ""}${(last || "")[0] || ""}`.toUpperCase();
 const DAY = 86400000;
 const PERIODS: Record<string, string> = { all: "All time", "30d": "Last 30 days", "6m": "Last 6 months", year: "This year" };

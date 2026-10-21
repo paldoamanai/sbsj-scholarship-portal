@@ -2,7 +2,7 @@ import Link from "next/link";
 import Layout from "@/components/Layout";
 import LandingFooter from "@/components/LandingFooter";
 
-export const metadata = { title: "Privacy Policy | SB San Jose Scholarship Portal" };
+export const metadata = { title: "Privacy Policy | San Jose Scholarship Portal" };
 
 const sections = [
   {
@@ -25,7 +25,7 @@ const sections = [
   {
     title: "Who can see it",
     body: [
-      "Authorized staff of the Sangguniang Bayan ng San Jose who administer the scholarship program.",
+      "Authorized staff who administer the scholarship program.",
       "Service providers that host the portal and send its emails, only as needed to run it.",
       "Public pages show only totals, such as the number of scholars and amounts disbursed. They never show personal information.",
     ],
@@ -51,7 +51,7 @@ export default function PrivacyPage() {
       <section className="bg-orange-50/60 border-b py-14">
         <div className="container text-center max-w-2xl mx-auto">
           <h1 className="text-3xl md:text-4xl font-display font-bold text-foreground mb-3">Privacy Policy</h1>
-          <p className="text-muted-foreground">How the SB San Jose Scholarship Portal handles your personal information.</p>
+          <p className="text-muted-foreground">How the San Jose Scholarship Portal handles your personal information.</p>
         </div>
       </section>
 

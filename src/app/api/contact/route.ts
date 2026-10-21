@@ -71,7 +71,7 @@ export async function POST(request: Request) {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      from: process.env.EMAIL_FROM || "SBSJ Scholarship <onboarding@resend.dev>",
+      from: process.env.EMAIL_FROM || "San Jose Scholarship <onboarding@resend.dev>",
       to,
       reply_to: email,
       subject: `[Contact form] ${subject}`,

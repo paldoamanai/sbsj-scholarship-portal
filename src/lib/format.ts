@@ -1,12 +1,11 @@
 // One place for money and date formatting (the student pages used to define their own copies).
 
-/** ₱1,234.5 (up to two decimals), or "—" when there is no amount. */
-export const peso = (n: number | null | undefined) =>
-  n == null ? "—" : `₱${Number(n).toLocaleString("en-PH", { maximumFractionDigits: 2 })}`;
-
-/** ₱1,234.50 (always two decimals), for payments. */
+/** ₱1,234.50: thousands separators and always two decimals. */
 export const pesoFixed = (n: number) =>
   `₱${Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** Like pesoFixed, but "—" when there is no amount. */
+export const peso = (n: number | null | undefined) => (n == null ? "—" : pesoFixed(n));
 
 /** "Mar 3, 2026" from a date ("2026-03-03") or a timestamp; `fallback` when empty. */
 export function formatDate(d: string | null | undefined, fallback = "—"): string {

@@ -2,6 +2,8 @@
 // The student prints it or saves it as a PDF. The reference is the application id, so the office can look
 // it up in Applicants to confirm it.
 
+import { pesoFixed as peso } from "@/lib/format";
+
 export type AwardNotice = {
   applicationId: string;
   studentName: string;
@@ -18,7 +20,6 @@ export type AwardNotice = {
 };
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
-const peso = (n: number) => `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const longDate = (d: string | Date) => new Date(d).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" });
 
 export function printAwardNotice(n: AwardNotice) {

@@ -5,7 +5,7 @@ export const STAFF_ROLES = ["super_admin", "admin", "reviewer", "finance_admin"]
 export type StaffRole = (typeof STAFF_ROLES)[number];
 
 export const ROLE_LABEL: Record<string, string> = {
-  super_admin: "Super Admin", admin: "Admin", reviewer: "Reviewer", finance_admin: "Finance", student: "Student",
+  super_admin: "Mayor Office", admin: "Admin", reviewer: "Reviewer", finance_admin: "Finance", student: "Student",
 };
 
 export const ROLE_DESCRIPTION: Record<StaffRole, string> = {
@@ -39,3 +39,27 @@ export function permissionsFor(role: string | null | undefined, canManageSetting
     super: canManageSettings,
   };
 }
+
+// Offices (migrations 060 and 061): an Admin, Reviewer or Finance account can belong to Barangay
+// Affairs or MSWDO. It keeps its role's permissions but only sees its office's programs and what's
+// filed under them. No office means municipality-wide, like the Mayor Office.
+export const STAFF_OFFICES = ["barangay_affairs", "mswdo"] as const;
+export type StaffOffice = (typeof STAFF_OFFICES)[number];
+
+export const OFFICE_LABEL: Record<StaffOffice, string> = {
+  barangay_affairs: "Barangay Affairs",
+  mswdo: "MSWDO",
+};
+export const OFFICE_FULL_NAME: Record<StaffOffice, string> = {
+  barangay_affairs: "Barangay Affairs",
+  mswdo: "Municipal Social Welfare and Development Office",
+};
+
+export const isOffice = (o: string | null | undefined): o is StaffOffice => (STAFF_OFFICES as readonly string[]).includes(o ?? "");
+/** The Mayor Office works across every office, so it can't belong to one. */
+export const roleCanHaveOffice = (role: string) => role === "admin" || role === "reviewer" || role === "finance_admin";
+export const officeLabel = (office: string | null | undefined) => (isOffice(office) ? OFFICE_LABEL[office] : "All offices");
+
+/** The name to show for a staff account, e.g. "MSWDO · Reviewer". */
+export const staffLabel = (role: string, office?: string | null): string =>
+  isOffice(office) && roleCanHaveOffice(role) ? `${OFFICE_LABEL[office]} · ${ROLE_LABEL[role] ?? role}` : ROLE_LABEL[role] ?? role;

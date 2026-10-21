@@ -66,7 +66,7 @@ export default function ResetPasswordPage() {
             <CardTitle className="font-display text-2xl">{invite ? "Set your password" : "Set a new password"}</CardTitle>
             {ready === "ok" && invite && <CardDescription>Welcome to the scholarship office. Choose a password for your staff account.</CardDescription>}
             {ready === "expired" && <CardDescription>{invite
-              ? "This invite link is invalid or has expired. Ask your super admin to send the invite again."
+              ? "This invite link is invalid or has expired. Ask the Mayor Office to send the invite again."
               : "This reset link is invalid or has expired."}</CardDescription>}
           </CardHeader>
           <CardContent>

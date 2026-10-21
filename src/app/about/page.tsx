@@ -21,7 +21,7 @@ export default function AboutPage() {
             Serving the Youth of San Jose
           </h1>
           <p className="text-muted-foreground leading-relaxed max-w-xl mx-auto">
-            The Sangguniang Bayan ng San Jose Scholarship Management System is a digital platform designed to streamline the scholarship application, evaluation, and management process for the students of San Jose, Occidental Mindoro.
+            The San Jose Scholarship Management System is a digital platform designed to streamline the scholarship application, evaluation, and management process for the students of San Jose, Occidental Mindoro.
           </p>
         </div>
       </section>

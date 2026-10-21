@@ -2,13 +2,13 @@ import Link from "next/link";
 import Layout from "@/components/Layout";
 import LandingFooter from "@/components/LandingFooter";
 
-export const metadata = { title: "Terms of Use | SB San Jose Scholarship Portal" };
+export const metadata = { title: "Terms of Use | San Jose Scholarship Portal" };
 
 const sections = [
   {
     title: "Using the portal",
     body: [
-      "The portal is for students applying to, or receiving, scholarships from the Sangguniang Bayan ng San Jose, and for the staff who administer them.",
+      "The portal is for students applying to, or receiving, scholarships through this portal, and for the staff who administer them.",
       "You must give accurate information and upload genuine documents. Each person may keep one account.",
       "Keep your password private. You are responsible for activity under your account.",
     ],
@@ -41,7 +41,7 @@ export default function TermsPage() {
       <section className="bg-orange-50/60 border-b py-14">
         <div className="container text-center max-w-2xl mx-auto">
           <h1 className="text-3xl md:text-4xl font-display font-bold text-foreground mb-3">Terms of Use</h1>
-          <p className="text-muted-foreground">The rules for using the SB San Jose Scholarship Portal.</p>
+          <p className="text-muted-foreground">The rules for using the San Jose Scholarship Portal.</p>
         </div>
       </section>
 

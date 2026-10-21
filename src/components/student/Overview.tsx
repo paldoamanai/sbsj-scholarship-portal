@@ -222,7 +222,7 @@ export default function Overview(p: OverviewProps) {
               <div className="flex flex-wrap items-center gap-4 mt-3 text-xs text-muted-foreground">
                 {s.deadline && <span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {short(s.deadline)} ({deadlineLabel(s.deadline)})</span>}
                 <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" /> {slotsLabel(s)}</span>
-                {Number(s.amount) > 0 && <span>{awardText(s.amount, s.release_schedule)}</span>}
+                {Number(s.amount) > 0 && <span>{awardText(s.amount, s.release_schedule, s.release_months)}</span>}
                 {!av.canApply && <span className="font-semibold text-destructive">{av.label}</span>}
               </div>
             </div>
@@ -401,7 +401,7 @@ export default function Overview(p: OverviewProps) {
         {program && (
           <>
             <DetailGrid className="rounded-xl">
-              <Detail label="Award">{Number(program.amount) > 0 ? awardText(program.amount, program.release_schedule) : "To be announced"}</Detail>
+              <Detail label="Award">{Number(program.amount) > 0 ? awardText(program.amount, program.release_schedule, program.release_months) : "To be announced"}</Detail>
               <Detail label="Slots">{slotsLabel(program)}</Detail>
               <Detail label="Opens">{program.open_date ? short(program.open_date) : "Now"}</Detail>
               <Detail label="Deadline">{program.deadline ? short(program.deadline) : "No closing date"}</Detail>

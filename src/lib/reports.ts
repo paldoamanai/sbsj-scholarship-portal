@@ -1,5 +1,6 @@
 import type { Tables, Json } from "@/integrations/supabase/types";
-import { ROLE_LABEL } from "@/lib/permissions";
+import { staffLabel } from "@/lib/permissions";
+import { pesoFixed } from "@/lib/format";
 import { termLabel } from "@/lib/release-schedule";
 
 // ── Shapes ──
@@ -10,7 +11,7 @@ export type ReportDef = { title: string; filters: string[]; sections: ReportSect
 export type ReportApp = Tables<"applications"> & { scholarships: { name: string } | null; profiles?: Tables<"profiles"> | null };
 export type DocSummary = { id: string; user_id: string; application_id: string | null; document_type: string; status: string; uploaded_at: string };
 /** Admin / super admin accounts, kept apart from student profiles. */
-export type StaffMember = { id: string; name: string; email: string | null; role: string };
+export type StaffMember = { id: string; name: string; email: string | null; role: string; office?: string | null };
 
 export type ReportData = {
   applications: ReportApp[];
@@ -62,7 +63,7 @@ export const REPORT_FILTERS: Record<ReportKey, ReportFilterKey[]> = {
 export const LANDSCAPE: ReportKey[] = ["scholars", "budget", "disbursements", "grades", "operations", "history", "audit"];
 
 // ── Small helpers ──
-export const formatPHP = (n: number) => `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const formatPHP = pesoFixed;
 const DAY = 86400000;
 const fmtDate = (d: string | null | undefined) => (d ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T00:00:00` : d).toLocaleDateString("en-PH") : "—");
 const fmtDateTime = (d: string) => new Date(d).toLocaleString("en-PH", { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short" });
@@ -177,7 +178,7 @@ export function auditContext(data?: Partial<Pick<ReportData, "applications" | "p
   const role = (l: Tables<"audit_logs">) => {
     if (!l.user_id) return "System";
     const st = staff.get(l.user_id);
-    return st ? ROLE_LABEL[st.role] ?? st.role : profs.has(l.user_id) ? "Student" : "—";
+    return st ? staffLabel(st.role, st.office) : profs.has(l.user_id) ? "Student" : "—";
   };
   return { record, user, role };
 }
@@ -635,7 +636,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
       filters: [...filters, `Action: ${f.auditAction === "all" ? "All" : f.auditAction}`, `Record type: ${f.auditEntity === "all" ? "All" : f.auditEntity}`, `User: ${userLabel}`],
       notes: [
         `Times are shown in ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Long Before/After values are shortened in the PDF; the Excel export has them in full.`,
-        ...(data.auditTruncated ? [`Only the newest ${data.auditLogs.length.toLocaleString()} entries of the period were loaded. Narrow the period to export the rest.`] : []),
+        ...(data.auditTruncated ? [`Only the newest ${data.auditLogs.length.toLocaleString("en-PH")} entries of the period were loaded. Narrow the period to export the rest.`] : []),
       ],
       sections: [
         { name: "Entries by Action", head: ["Action", "Record Type", "Entries", "Users"], rows: count((l) => `${l.action}\u0000${l.entity_type}`).map(([k, l]) => { const [a, e] = k.split("\u0000"); return [a, e, l.length, new Set(l.map((x) => x.user_id ?? "system")).size]; }), totals: ["Entries"] },
@@ -740,7 +741,7 @@ export async function renderPDF(def: ReportDef, file: string, opts: ExportOpts =
   const pageH = doc.internal.pageSize.getHeight();
   const clean = (t: string) => t.replace(/₱/g, "PHP ");
   doc.setFontSize(16);
-  doc.text(opts.programName || "SB San Jose Scholarship Portal", 14, 15);
+  doc.text(opts.programName || "San Jose Scholarship Portal", 14, 15);
   doc.setFontSize(12);
   doc.text(clean(def.title), 14, 22);
   doc.setFontSize(9);
@@ -799,7 +800,7 @@ export async function renderPDF(def: ReportDef, file: string, opts: ExportOpts =
 export async function renderExcel(def: ReportDef, file: string, opts: Pick<ExportOpts, "generatedBy" | "programName"> = {}) {
   const XLSX = await import("xlsx");
   const wb = XLSX.utils.book_new();
-  const about = [[opts.programName || "SB San Jose Scholarship Portal"], [def.title], [`Generated ${new Date().toLocaleString()}${opts.generatedBy ? ` by ${opts.generatedBy}` : ""}`], ...def.filters.map((f) => [f]), ...(def.notes ?? []).map((n) => [n])];
+  const about = [[opts.programName || "San Jose Scholarship Portal"], [def.title], [`Generated ${new Date().toLocaleString()}${opts.generatedBy ? ` by ${opts.generatedBy}` : ""}`], ...def.filters.map((f) => [f]), ...(def.notes ?? []).map((n) => [n])];
   const aboutSheet = XLSX.utils.aoa_to_sheet(about);
   aboutSheet["!cols"] = [{ wch: 90 }];
   XLSX.utils.book_append_sheet(wb, aboutSheet, "About");

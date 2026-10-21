@@ -9,7 +9,7 @@ import ScholarshipCard from "@/components/ScholarshipCard";
 import { applyHref, type PublicScholarship } from "@/lib/scholarships";
 import { formatDate } from "@/lib/format";
 import { applicationsBlock, type AppSettings } from "@/lib/settings";
-import { landingCopy, LANDING_LANGS, type LandingLang } from "@/lib/landing-copy";
+import { landingCopy } from "@/lib/landing-copy";
 import FloatingActions from "@/components/FloatingActions";
 import ContactForm from "@/components/ContactForm";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -22,9 +22,9 @@ import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import {
   GraduationCap, ArrowRight, Zap, BarChart3, Wallet, Bell,
-  UserPlus, FileText, Search, CheckCircle2, Mail, Phone, MapPin, ChevronDown, Clock,
+  UserPlus, FileText, Search, CheckCircle2, Mail, Phone, MapPin, Clock,
   CalendarDays, Users, Layers, ClipboardCheck, ShieldCheck, Megaphone, AlertCircle, RefreshCw,
-  LayoutDashboard, Languages, ExternalLink,
+  LayoutDashboard, ExternalLink,
 } from "lucide-react";
 
 export type PublicStats = { scholars: number; active_programs: number; applications_received: number };
@@ -108,25 +108,6 @@ function SectionHeading({ parts }: { parts: string[] }) {
   );
 }
 
-// ─── Language (remembered per browser) ────────────────────────────────────────
-
-const LANG_KEY = "landing-lang";
-
-function useLandingLang(): [LandingLang, (l: LandingLang) => void] {
-  const [lang, setLang] = useState<LandingLang>("en");
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(LANG_KEY);
-      if (saved === "en" || saved === "fil") setLang(saved);
-    } catch { /* storage unavailable */ }
-  }, []);
-  const choose = useCallback((l: LandingLang) => {
-    setLang(l);
-    try { localStorage.setItem(LANG_KEY, l); } catch { /* storage unavailable */ }
-  }, []);
-  return [lang, choose];
-}
-
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
 const featureIcons = [Zap, BarChart3, Wallet, Bell];
@@ -142,7 +123,6 @@ export default function HomePage({ initial }: { initial: HomePageData }) {
   const { signedIn, dashboardHref } = useAccountLink();
   const { settings: liveSettings, loaded: settingsLoaded } = useSystemSettings();
   const settings = settingsLoaded ? liveSettings : initial.settings;
-  const [lang, setLang] = useLandingLang();
 
   const [scholarships, setScholarships] = useState<PublicScholarship[]>(initial.scholarships ?? []);
   const [scholarshipsLoading, setScholarshipsLoading] = useState(initial.scholarships === null);
@@ -202,7 +182,7 @@ export default function HomePage({ initial }: { initial: HomePageData }) {
   const openCount = scholarships.filter((x) => x.availability === "open").length;
 
   const block = applicationsBlock(settings);
-  const t = landingCopy(lang, settings, block);
+  const t = landingCopy(settings, block);
 
   const contactItems = [
     { icon: Mail,   label: t.contact.email,  value: settings.contact_email,   href: settings.contact_email ? `mailto:${settings.contact_email}` : undefined },
@@ -219,9 +199,9 @@ export default function HomePage({ initial }: { initial: HomePageData }) {
 
   const statItems = stats && stats.applications_received > 0
     ? [
-        { icon: ClipboardCheck, value: stats.applications_received.toLocaleString(), label: t.stats.applications },
-        { icon: Users,    value: stats.scholars.toLocaleString(), label: t.stats.scholars },
-        { icon: Layers,   value: stats.active_programs.toLocaleString(), label: t.stats.programs },
+        { icon: ClipboardCheck, value: stats.applications_received.toLocaleString("en-PH"), label: t.stats.applications },
+        { icon: Users,    value: stats.scholars.toLocaleString("en-PH"), label: t.stats.scholars },
+        { icon: Layers,   value: stats.active_programs.toLocaleString("en-PH"), label: t.stats.programs },
       ]
     : [];
 
@@ -229,129 +209,78 @@ export default function HomePage({ initial }: { initial: HomePageData }) {
   const history = initial.scholarsByYear.length >= 2 ? initial.scholarsByYear : [];
   const historyMax = Math.max(1, ...history.map((h) => h.scholars));
 
-  const docs = settings.required_documents;
+  // Plus a letter of intent with each application, which isn't one of the shared documents.
+  const docs = [...settings.required_documents, "Letter of intent (a photo), for each program you apply to"];
 
   return (
     <Layout>
-      <div lang={lang === "fil" ? "fil" : "en"}>
+      <div>
 
       {/* ── Hero ──────────────────────────────────────── */}
-      <section className="relative min-h-[100svh] flex items-center overflow-hidden pt-28 pb-16">
-        <div className="absolute inset-0">
-          <Image src="/hero-bg.jpg" alt="San Jose, Occidental Mindoro" fill className="object-cover" priority />
-          <div className="absolute inset-0 bg-gradient-to-tr from-black/80 via-black/50 to-black/10" />
-        </div>
+      <section className="relative overflow-hidden border-b bg-gradient-to-b from-orange-50 via-orange-50/60 to-background pt-14 pb-24 md:pt-20 lg:pb-28">
+        {/* Soft warm glow behind the seal */}
+        <div className="pointer-events-none absolute -right-24 top-0 h-[28rem] w-[28rem] rounded-full bg-orange-200/40 blur-3xl" aria-hidden />
 
-        {/* Decorative ambient glow */}
-        <div
-          className="absolute right-1/3 top-1/3 h-72 w-72 rounded-full bg-primary/20 blur-3xl pointer-events-none animate-pulse-glow"
-          aria-hidden
-        />
-
-        <div className="container relative z-10">
-          <div className="max-w-3xl space-y-7 animate-fade-in-up">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-sm text-white backdrop-blur-md">
-                <GraduationCap className="h-4 w-4 text-orange-400" />
-                Sangguniang Bayan ng San Jose
-              </div>
-              <div
-                role="group"
-                aria-label={t.languageLabel}
-                className="inline-flex items-center gap-1 rounded-full border border-white/20 bg-black/20 p-1 text-xs text-white backdrop-blur-md"
-              >
-                <Languages className="ml-1.5 h-3.5 w-3.5 text-white/70" aria-hidden />
-                {LANDING_LANGS.map((l) => (
-                  <button
-                    key={l.code}
-                    type="button"
-                    lang={l.code}
-                    aria-pressed={lang === l.code}
-                    onClick={() => setLang(l.code)}
-                    className={cn(
-                      "rounded-full px-3 py-1 font-medium transition-colors cursor-pointer",
-                      lang === l.code ? "bg-white text-foreground" : "text-white/80 hover:bg-white/15"
-                    )}
-                  >
-                    {l.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-display font-bold text-white leading-[1.05] tracking-tight drop-shadow-xl text-balance">
+        <div className="container relative grid grid-cols-1 items-center gap-10 lg:grid-cols-[minmax(0,1fr)_auto] lg:gap-16">
+          <div className="max-w-2xl space-y-6 animate-fade-in-up">
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-display font-bold text-foreground leading-[1.05] tracking-tight text-balance">
               {t.hero.title[0]}<br />
-              <span className="text-orange-400">{t.hero.title[1]}</span>
+              <span className="text-gradient-primary">{t.hero.title[1]}</span>
             </h1>
-            <p className="text-lg md:text-xl text-white/80 max-w-xl leading-relaxed">
+            <p className="text-lg md:text-xl text-muted-foreground max-w-xl leading-relaxed">
               {t.hero.subtitle}
             </p>
             <div className="flex flex-wrap gap-3 pt-1">
               {signedIn ? (
-                <Button
-                  size="lg"
-                  onClick={() => router.push(dashboardHref)}
-                  className="h-12 px-7 text-base bg-primary hover:bg-primary/90 text-white font-semibold shadow-primary cursor-pointer"
-                >
+                <Button size="lg" onClick={() => router.push(dashboardHref)} className="h-12 px-7 text-base font-semibold shadow-primary cursor-pointer">
                   <LayoutDashboard className="mr-2 h-4 w-4" />{t.hero.dashboard}
                 </Button>
               ) : (
                 <>
-                  <Button
-                    size="lg"
-                    onClick={() => router.push("/register")}
-                    className="h-12 px-7 text-base bg-primary hover:bg-primary/90 text-white font-semibold shadow-primary cursor-pointer"
-                  >
+                  <Button size="lg" onClick={() => router.push("/register")} className="h-12 px-7 text-base font-semibold shadow-primary cursor-pointer">
                     {block ? t.hero.registerClosed : t.hero.register} <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
-                  <Button
-                    size="lg"
-                    variant="outline"
-                    onClick={() => router.push("/login")}
-                    className="h-12 px-7 text-base border-white/30 bg-white/10 text-white hover:bg-white/20 backdrop-blur-sm cursor-pointer"
-                  >
+                  <Button size="lg" variant="outline" onClick={() => router.push("/login")} className="h-12 px-7 text-base bg-card cursor-pointer">
                     {t.hero.signIn}
                   </Button>
                 </>
               )}
             </div>
             {block ? (
-              <div className="flex max-w-xl items-start gap-2.5 rounded-xl border border-amber-300/40 bg-amber-500/15 px-4 py-3 text-sm text-white backdrop-blur-md">
-                <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+              <div className="flex max-w-xl items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
                 <p>
                   <span className="font-semibold">{t.dates.period}</span>
-                  {!signedIn && <span className="text-white/80"> {t.hero.closedNote}</span>}
+                  {!signedIn && <span className="text-amber-800"> {t.hero.closedNote}</span>}
                 </p>
               </div>
             ) : openCount > 0 && (
               <a
                 href="#scholarships"
-                className="inline-flex items-center gap-2 rounded-full border border-emerald-300/40 bg-emerald-500/15 px-4 py-1.5 text-sm font-medium text-white backdrop-blur-md hover:bg-emerald-500/25 transition-colors"
+                className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100 transition-colors"
               >
                 <span className="relative flex h-2 w-2">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
                 </span>
                 {t.hero.openNow(openCount)}
                 <ArrowRight className="h-3.5 w-3.5" />
               </a>
             )}
           </div>
-        </div>
 
-        {/* Fade to next section */}
-        <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-background to-transparent" />
-
-        {/* Scroll hint */}
-        <div
-          className="absolute bottom-10 left-1/2 z-10 -translate-x-1/2 animate-scroll-bounce"
-        >
-          <a
-            href="#scholarships"
-            aria-label={t.hero.scroll}
-            className="flex h-10 w-10 items-center justify-center rounded-full border border-white/40 bg-black/30 text-white backdrop-blur-sm hover:bg-black/50 transition-colors"
-          >
-            <ChevronDown className="h-5 w-5" />
-          </a>
+          <div className="hidden justify-center md:flex animate-fade-in-up">
+            <div className="rounded-full bg-card p-3 shadow-xl ring-1 ring-orange-100">
+              <Image
+                src="/municipal-logo.png"
+                alt="Municipality of San Jose seal"
+                width={320}
+                height={320}
+                priority
+                className="h-56 w-56 lg:h-80 lg:w-80"
+              />
+            </div>
+          </div>
         </div>
       </section>
 
@@ -665,8 +594,7 @@ export default function HomePage({ initial }: { initial: HomePageData }) {
               <Image src="/municipal-logo.png" alt="Municipality of San Jose seal" width={56} height={56} className="h-14 w-14" />
               <div>
                 <p className="text-xs font-bold tracking-[0.2em] uppercase text-primary">{t.offeredBy.label}</p>
-                <p className="font-display font-bold text-foreground">Sangguniang Bayan ng San Jose</p>
-                <p className="text-sm text-muted-foreground">{t.offeredBy.sub}</p>
+                <p className="font-display font-bold text-foreground">{t.offeredBy.sub}</p>
               </div>
             </div>
           </Reveal>

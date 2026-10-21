@@ -6,14 +6,18 @@ import { useState, type ReactNode } from "react";
 import { Check } from "lucide-react";
 import type { Tables } from "@/integrations/supabase/types";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/MoneyInput";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { YEAR_LEVELS } from "@/lib/scholarships";
 import { BARANGAYS, HOME_MUNICIPALITY } from "@/lib/barangays";
-import { RELEASE_SCHEDULES, asSchedule } from "@/lib/release-schedule";
+import { RELEASE_SCHEDULES, asMonths, asSchedule, termAmount } from "@/lib/release-schedule";
+import { pesoFixed } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { OFFICE_FULL_NAME, STAFF_OFFICES, isOffice } from "@/lib/permissions";
 
 type Props = {
   cur: Tables<"scholarships"> | null;
@@ -27,6 +31,11 @@ type Props = {
   setActive: (v: boolean) => void;
   /** e.g. "₱40,000.00 of ₱100,000.00 committed in 2026-2027", for a program with a budget. */
   committedNote?: string | null;
+  /**
+   * Which office the program belongs to. "choose": the signer works across offices and picks one;
+   * an office: the signer belongs to it, so the program does too; undefined: offices aren't set up.
+   */
+  office?: "choose" | string;
 };
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
@@ -52,18 +61,41 @@ function Field({ label, htmlFor, hint, children, className }: { label: string; h
 }
 
 export function ScholarshipFormFields({
-  cur, yearLevels, setYearLevels, barangays, setBarangays, barangaySearch, setBarangaySearch, active, setActive, committedNote,
+  cur, yearLevels, setYearLevels, barangays, setBarangays, barangaySearch, setBarangaySearch, active, setActive, committedNote, office,
 }: Props) {
+  const [programOffice, setProgramOffice] = useState<string>(cur?.office ?? "");
   // The form remounts per program (it's keyed by id), so this starts from the program's schedule.
   const [schedule, setSchedule] = useState(asSchedule(cur?.release_schedule));
+  const [months, setMonths] = useState(String(asMonths(cur?.release_months)));
+  // Followed only to show what each monthly release comes to.
+  const [award, setAward] = useState(String(cur?.amount ?? 0));
   const shownBarangays = BARANGAYS.filter((b) => b.toLowerCase().includes(barangaySearch.trim().toLowerCase()));
 
   return (
     <div className="space-y-7">
       <Section title="Program">
-        <Field label="Name" htmlFor="sch-name">
-          <Input id="sch-name" name="name" required defaultValue={cur?.name ?? ""} placeholder="e.g. Academic Excellence Scholarship" />
-        </Field>
+        <div className={cn("grid gap-4", office && "sm:grid-cols-[minmax(0,1fr)_16rem]")}>
+          <Field label="Name" htmlFor="sch-name">
+            <Input id="sch-name" name="name" required defaultValue={cur?.name ?? ""} placeholder="e.g. Academic Excellence Scholarship" />
+          </Field>
+          {office === "choose" && (
+            <Field label="Office" hint="Its staff handle the program's applicants and payments">
+              <input type="hidden" name="office" value={programOffice} />
+              <Select value={programOffice || "none"} onValueChange={(v) => setProgramOffice(v === "none" ? "" : v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Mayor Office</SelectItem>
+                  {STAFF_OFFICES.map((o) => <SelectItem key={o} value={o}>{OFFICE_FULL_NAME[o]}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+          )}
+          {isOffice(office) && (
+            <Field label="Office">
+              <p className="flex h-10 items-center rounded-md border border-input bg-muted/40 px-3 text-sm">{OFFICE_FULL_NAME[office]}</p>
+            </Field>
+          )}
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Description" htmlFor="sch-description">
             <Textarea id="sch-description" name="description" rows={3} defaultValue={cur?.description ?? ""} placeholder="What the program offers" />
@@ -77,10 +109,10 @@ export function ScholarshipFormFields({
       <Section title="Award and capacity" hint="Slots and budget refill when a new academic year starts.">
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Award per scholar (₱)" htmlFor="sch-amount" hint="The yearly total">
-            <Input id="sch-amount" name="amount" type="number" min={0} step="0.01" defaultValue={cur?.amount ?? 0} />
+            <MoneyInput id="sch-amount" name="amount" min={0} defaultValue={cur?.amount ?? 0} onValueChange={setAward} />
           </Field>
           <Field label="Budget (₱)" htmlFor="sch-budget" hint="Per academic year · 0 = no cap">
-            <Input id="sch-budget" name="total_budget" type="number" min={0} step="0.01" defaultValue={cur?.total_budget ?? 0} />
+            <MoneyInput id="sch-budget" name="total_budget" min={0} defaultValue={cur?.total_budget ?? 0} />
           </Field>
           <Field label="Slots" htmlFor="sch-slots" hint="Per academic year · 0 = unlimited">
             <Input id="sch-slots" name="slots" type="number" min={0} step={1} defaultValue={cur?.slots ?? ""} placeholder="50" />
@@ -90,7 +122,7 @@ export function ScholarshipFormFields({
         <div className="space-y-1.5">
           <Label id="sch-schedule-label">Release schedule</Label>
           <input type="hidden" name="release_schedule" value={schedule} />
-          <div role="radiogroup" aria-labelledby="sch-schedule-label" className="grid gap-3 sm:grid-cols-2">
+          <div role="radiogroup" aria-labelledby="sch-schedule-label" className="grid gap-3 sm:grid-cols-3">
             {RELEASE_SCHEDULES.map((r) => {
               const on = schedule === r.value;
               return (
@@ -110,6 +142,23 @@ export function ScholarshipFormFields({
               );
             })}
           </div>
+          <input type="hidden" name="release_months" value={months} />
+          {schedule === "monthly" && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
+              <Label htmlFor="sch-months" className="font-normal">Released over</Label>
+              <Select value={months} onValueChange={setMonths}>
+                <SelectTrigger id="sch-months" className="w-32"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 12 }, (_, i) => String(i + 1)).map((m) => <SelectItem key={m} value={m}>{m} {m === "1" ? "month" : "months"}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {Number(award) > 0 && (
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {pesoFixed(termAmount(Number(award), "monthly", Number(months)))} a month (Month 1 to Month {months})
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </Section>
 

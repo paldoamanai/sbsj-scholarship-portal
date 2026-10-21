@@ -47,7 +47,7 @@ const LandingFooter = () => {
             <Link href="/" className="flex items-center gap-3 group w-fit">
               <Image
                 src="/municipal-logo.png"
-                alt="SB San Jose Logo"
+                alt="Municipality of San Jose seal"
                 width={48}
                 height={48}
                 className="h-12 w-12 drop-shadow-md"
@@ -137,14 +137,14 @@ const LandingFooter = () => {
         <div className="border-t border-white/10 bg-[#0A1C42]">
           <div className="container py-4 flex flex-col sm:flex-row items-center justify-between gap-2">
             <p className="text-xs text-white/75">
-              &copy; {new Date().getFullYear()} Sangguniang Bayan ng San Jose Scholarship Portal. All rights reserved.
+              &copy; {new Date().getFullYear()} San Jose Scholarship Portal. All rights reserved.
             </p>
             <div className="flex items-center gap-4 text-xs text-white/75">
               <Link href="/privacy" className="hover:text-orange-300 transition-colors">Privacy Policy</Link>
               <Link href="/terms" className="hover:text-orange-300 transition-colors">Terms of Use</Link>
               <span className="hidden sm:flex items-center gap-1.5 text-orange-300 font-medium">
                 <GraduationCap className="h-3.5 w-3.5" />
-                LGU SB San Jose
+                Mayor Office, LGU San Jose
               </span>
             </div>
           </div>

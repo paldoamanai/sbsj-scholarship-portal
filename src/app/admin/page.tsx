@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -47,9 +47,12 @@ import {
   type DocSummary, type ReportData, type ReportDef, type StaffMember,
 } from "@/lib/reports";
 import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
-import { asSchedule, openTerms, secondSemesterGradeWarning, termAmount, termLabel, termsFor, type PaymentTerm } from "@/lib/release-schedule";
-import { permissionsFor, ROLE_LABEL } from "@/lib/permissions";
+import { asMonths, asSchedule, isMonthTerm, openTerms, secondSemesterGradeWarning, termAmount, termLabel, termsFor, type PaymentTerm } from "@/lib/release-schedule";
+import { OFFICE_FULL_NAME, OFFICE_LABEL, isOffice, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 import { printReceiptSlip } from "@/lib/receipt-slip";
+import { LETTER_OF_INTENT } from "@/lib/documents";
+import { peso, pesoFixed as formatPHP } from "@/lib/format";
+import { MoneyInput } from "@/components/MoneyInput";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
 // Ordered by the scholarship process: set up a program, review applicants, manage scholars,
@@ -75,7 +78,6 @@ const hiddenSections: Record<string, string[]> = {
   finance_admin: ["applications", "audit-logs"],
 };
 
-const formatPHP = (n: number) => `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // ── Status badge (pastel pill + icon, mirrors student-dashboard's pattern) ──────
 function StatusBadge({ status }: { status: string | null | undefined }) {
@@ -134,6 +136,7 @@ export default function AdminDashboardPage() {
   const [deleteSch, setDeleteSch] = useState<Tables<"scholarships"> | null>(null);
   // Deleting a program is permanent, so the super admin types its name to confirm.
   const [deleteSchText, setDeleteSchText] = useState("");
+  const [deletingSch, setDeletingSch] = useState(false);
   const [fundPeriod, setFundPeriod] = useState("all"); // shared by Fund Management and Reports
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -238,10 +241,15 @@ export default function AdminDashboardPage() {
   const [adminEmail, setAdminEmail] = useState("");
   const [adminUserId, setAdminUserId] = useState("");
   const [adminRole, setAdminRole] = useState("admin");
+  const [adminOffice, setAdminOffice] = useState<string | null>(null);
   // A super admin, or any admin while no super admin exists (migration 020). Gates Settings edits and Staff.
   const [canManageSettings, setCanManageSettings] = useState(false);
   // What the signed-in staff member may do; buttons they can't use are hidden (the database refuses them anyway).
   const can = permissionsFor(adminRole, canManageSettings);
+  // Office staff only see their office's programs (enforced by migration 061); null = all offices.
+  const myOffice = roleCanHaveOffice(adminRole) && isOffice(adminOffice) ? adminOffice : null;
+  // Programs carry an office once migration 061 has run; until then the program form doesn't offer one.
+  const officesReady = scholarships.some((sch) => "office" in sch);
   const canSee = (key: string) => (key === "staff" ? can.super : !(hiddenSections[adminRole] ?? []).includes(key));
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -272,11 +280,13 @@ export default function AdminDashboardPage() {
 
   // Profiles of students only — staff accounts (anyone with a non-student role) are excluded.
   // Staff are kept aside (with their role) so reports can name who disbursed, reviewed or changed something.
-  const staffRoles = () => supabase.from("user_roles").select("user_id, role").neq("role", "student");
-  const withoutStaff = async (rows: Tables<"profiles">[], roleRows?: { user_id: string; role: string }[] | null) => {
+  // "*" rather than naming office, so this still works on a database without migration 060.
+  const staffRoles = () => supabase.from("user_roles").select("*").neq("role", "student");
+  type StaffRoleRow = { user_id: string; role: string; office: string | null };
+  const withoutStaff = async (rows: Tables<"profiles">[], roleRows?: StaffRoleRow[] | null) => {
     const data = roleRows ?? (await staffRoles()).data;
-    const roles = new Map((data ?? []).map((r: { user_id: string; role: string }) => [r.user_id, r.role]));
-    setStaff(rows.filter((p) => roles.has(p.id)).map((p) => ({ id: p.id, name: personName(p), email: p.email, role: roles.get(p.id)! })));
+    const roles = new Map((data ?? []).map((r: StaffRoleRow) => [r.user_id, r]));
+    setStaff(rows.filter((p) => roles.has(p.id)).map((p) => ({ id: p.id, name: personName(p), email: p.email, role: roles.get(p.id)!.role, office: roles.get(p.id)!.office ?? null })));
     return rows.filter((p) => !roles.has(p.id));
   };
 
@@ -299,7 +309,7 @@ export default function AdminDashboardPage() {
     // Everything is fetched in one parallel batch: each query is a full round trip to Supabase,
     // so running them one after another made the dashboard several seconds slower to open.
     const [roleRes, canManageRes, staffRolesRes, appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes, receiptNosRes] = await Promise.all([
-      supabase.from("user_roles").select("role").eq("user_id", user.id).single(),
+      supabase.from("user_roles").select("*").eq("user_id", user.id).single(),
       supabase.rpc("can_manage_settings", { _user_id: user.id }),
       staffRoles(),
       supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
@@ -321,6 +331,7 @@ export default function AdminDashboardPage() {
     const role = (roleRes.data as { role?: string } | null)?.role;
     if (!isAdminRole(role)) { router.push("/student-dashboard"); return; }
     setAdminRole(role as string);
+    setAdminOffice((roleRes.data as { office?: string | null } | null)?.office ?? null);
     setCanManageSettings(canManageRes.data === true);
 
     const failed = [appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes].find((r) => r.error);
@@ -538,16 +549,19 @@ export default function AdminDashboardPage() {
       .reduce((t, a) => t + Number(a.amount_approved ?? sch.amount ?? 0), 0);
   // How an application's award is released, and which of its terms have no payment yet.
   const scheduleOf = (a: { scholarship_id: string | null }) => asSchedule(scholarships.find((x) => x.id === a.scholarship_id)?.release_schedule);
+  const monthsOf = (a: { scholarship_id: string | null }) => asMonths(scholarships.find((x) => x.id === a.scholarship_id)?.release_months);
+  const termsOf = (a: { scholarship_id: string | null }) => termsFor(scheduleOf(a), monthsOf(a));
   const awardOf = (a: { scholarship_id: string | null; amount_approved: number | null }) =>
     Number(a.amount_approved ?? scholarships.find((x) => x.id === a.scholarship_id)?.amount ?? 0);
   const paymentsOf = (appId: string) => payments.filter((p) => p.application_id === appId);
   const openTermsOf = (a: { id: string; scholarship_id: string | null; amount_approved: number | null }) =>
-    openTerms(scheduleOf(a), awardOf(a), paymentsOf(a.id));
-  // A term's default amount: its share of the award, but never more than what's left of it.
+    openTerms(scheduleOf(a), awardOf(a), paymentsOf(a.id), monthsOf(a));
+  // A term's default amount: its share of the award, but never more than what's left of it. The last
+  // open term gets whatever is left, so centavos lost to rounding (₱10,000 over 3 months) aren't.
   const termDefaultAmount = (a: { id: string; scholarship_id: string | null; amount_approved: number | null }) => {
     const award = awardOf(a);
-    const left = award - paymentsOf(a.id).filter((p) => p.status !== "Cancelled").reduce((t, p) => t + Number(p.amount), 0);
-    const v = Math.min(termAmount(award, scheduleOf(a)), left);
+    const left = Math.round((award - paymentsOf(a.id).filter((p) => p.status !== "Cancelled").reduce((t, p) => t + Number(p.amount), 0)) * 100) / 100;
+    const v = openTermsOf(a).length === 1 ? left : Math.min(termAmount(award, scheduleOf(a), monthsOf(a)), left);
     return v > 0 ? v : "";
   };
   // Before a 2nd-semester payment: a verified 1st-semester grade that meets the application's minimum.
@@ -564,11 +578,13 @@ export default function AdminDashboardPage() {
     if (!a) return null;
     const open = openTermsOf(a);
     const sem = parseSettings(systemSettings).current_semester as PaymentTerm;
-    return open.includes(sem) ? sem : open[0] ?? termsFor(scheduleOf(a))[0];
+    return open.includes(sem) ? sem : open[0] ?? termsOf(a)[0];
   };
-  // Scholars of per-semester programs in the current academic year who still need this term's payment.
+  // Periods the bulk dialog offers: both semesters, then every month a monthly program pays.
+  const bulkTerms: PaymentTerm[] = [...termsFor("semester"), ...termsFor("monthly", 12)];
+  // Scholars in the current academic year whose program pays by this kind of term and who still need its payment.
   const bulkCandidates = (term: PaymentTerm) => applications
-    .filter((a) => a.status === "Approved" && a.academic_year === currentAY && scheduleOf(a) === "semester" && openTermsOf(a).includes(term))
+    .filter((a) => a.status === "Approved" && a.academic_year === currentAY && scheduleOf(a) === (isMonthTerm(term) ? "monthly" : "semester") && openTermsOf(a).includes(term))
     .map((a) => ({ app: a, amount: Number(termDefaultAmount(a) || 0), warning: gradeWarningFor(a, term) }))
     .filter((c) => c.amount > 0);
   const scheduleBulk = async () => {
@@ -609,10 +625,12 @@ export default function AdminDashboardPage() {
       min_grade: text("min_grade").trim() === "" ? null : Number(text("min_grade")),
       year_levels: schYearLevels, municipality: HOME_MUNICIPALITY, barangays: schBarangays, is_active: schActive,
       release_schedule: text("release_schedule") || "yearly",
+      release_months: text("release_months").trim() === "" ? 10 : Number(text("release_months")),
     });
     if (!parsed.success) { toast.error(parsed.error.issues[0]?.message ?? "Check the form"); return; }
-    const payload = parsed.data;
     const editing = schDialog && schDialog !== "new" ? schDialog : null;
+    // Office staff's programs always belong to their office (the database sets it); the rest pick one.
+    const payload = { ...parsed.data, ...(fd.has("office") ? { office: text("office") || null } : {}) };
 
     const today = new Date().toISOString().slice(0, 10);
     if (payload.deadline && payload.deadline < today && (!editing || payload.deadline !== editing.deadline)) {
@@ -647,7 +665,8 @@ export default function AdminDashboardPage() {
       name: `${sch.name} (copy)`, description: sch.description, eligibility: sch.eligibility,
       amount: sch.amount, total_budget: sch.total_budget, slots: sch.slots, min_grade: sch.min_grade,
       year_levels: sch.year_levels, municipality: sch.municipality, barangays: sch.barangays, open_date: null, deadline: null, is_active: false,
-      release_schedule: sch.release_schedule,
+      release_schedule: sch.release_schedule, release_months: sch.release_months,
+      ...("office" in sch ? { office: sch.office } : {}),
     };
     const { data, error } = await supabase.from("scholarships").insert(copy).select().single();
     if (error) { toast.error(error.message); return; }
@@ -663,17 +682,23 @@ export default function AdminDashboardPage() {
     toast.success(`${sch.name} ${sch.is_active ? "disabled" : "enabled"}`); loadData();
   };
 
+  // Typing the name to confirm ignores case and extra spaces, so a name like "SBSJ  Merit " still matches.
+  const sameName = (a: string, b: string) => a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
   const confirmDeleteScholarship = async () => {
-    if (!deleteSch) return;
-    const { error } = await supabase.from("scholarships").delete().eq("id", deleteSch.id);
+    if (!deleteSch || deletingSch) return;
+    setDeletingSch(true);
+    // Removes the program with its applications, documents, notes and payments in one transaction.
+    const { data, error } = await supabase.rpc("delete_scholarship_cascade", { _scholarship_id: deleteSch.id });
+    setDeletingSch(false);
     if (error) {
       toast.error("Could not delete", {
-        description: error.code === "23503" ? "This program has applications, so it can't be deleted. Disable it instead." : error.message,
+        description: error.code === "PGRST202" ? "The database is missing delete_scholarship_cascade. Run migration 059 in Supabase." : error.message,
       });
       return;
     }
-    await logAudit("delete_scholarship", "scholarships", deleteSch.id, { name: deleteSch.name }, null);
-    toast.success("Scholarship deleted");
+    const removed = (data ?? {}) as { applications?: number; payments?: number };
+    await logAudit("delete_scholarship", "scholarships", deleteSch.id, { name: deleteSch.name, applications: removed.applications ?? 0, payments: removed.payments ?? 0 }, null);
+    toast.success("Scholarship deleted", removed.applications ? { description: `Also removed ${removed.applications} application${removed.applications === 1 ? "" : "s"} and ${removed.payments ?? 0} payment${removed.payments === 1 ? "" : "s"}.` } : undefined);
     setDeleteSch(null); setDeleteSchText(""); loadData();
   };
 
@@ -992,6 +1017,12 @@ export default function AdminDashboardPage() {
     const program = scholarships.find((sc) => sc.id === a.scholarship_id);
     const profile = profiles.find((pr) => pr.id === a.user_id);
     const sameYearIds = new Set(applications.filter((x) => x.user_id === a.user_id && x.academic_year === a.academic_year).map((x) => x.id));
+    // Each application has its own letter of intent. Applications from before letters were asked for have none.
+    const letter = allDocs.filter((d) => d.application_id === a.id && d.document_type === LETTER_OF_INTENT)
+      .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
+    const letterCheck: RequirementCheck[] = letter
+      ? [{ key: "doc-letter", label: "Letter of intent verified", ok: letter.status === "Verified", detail: letter.status }]
+      : [];
     const docs = settings.required_documents.map((type): RequirementCheck => {
       // Latest copy wins.
       const latest = allDocs
@@ -1003,7 +1034,7 @@ export default function AdminDashboardPage() {
       globalMinGrade: settings.min_grade_requirement, renewalMinGrade: settings.renewal_min_grade,
       renewalEnabled: settings.renewal_enabled, isRenewal: a.is_renewal,
     }) : [];
-    return [...rules, ...docs];
+    return [...rules, ...letterCheck, ...docs];
   };
 
   // Slots and budget left in the application's program for its academic year. The database enforces the same limits.
@@ -1128,7 +1159,8 @@ export default function AdminDashboardPage() {
   // applications from the same academic year (the database's in_document_set()).
   const countsForApp = (a: AppRow) => {
     const ids = new Set(applications.filter((x) => x.user_id === a.user_id && x.academic_year === a.academic_year).map((x) => x.id));
-    return (d: AdminDoc) => d.applicationId === null || ids.has(d.applicationId);
+    // A letter of intent counts only for its own application; the other documents are shared by the year's applications.
+    return (d: AdminDoc) => d.type === LETTER_OF_INTENT ? d.applicationId === a.id : d.applicationId === null || ids.has(d.applicationId);
   };
   const logAudit = async (action: string, entityType: string, entityId?: string, prev?: Json | null, next?: Json | null) => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -1502,7 +1534,7 @@ export default function AdminDashboardPage() {
         <div className="flex items-center gap-3 p-4 border-b">
           <Image src="/municipal-logo.png" alt="Logo" width={32} height={32} className="h-8 w-8" />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold truncate">SB San Jose Admin</p>
+            <p className="text-sm font-semibold truncate" title={myOffice ? OFFICE_FULL_NAME[myOffice] : undefined}>{myOffice ? OFFICE_LABEL[myOffice] : "Mayor Office"}</p>
             <p className="text-xs text-muted-foreground truncate">Scholarship System</p>
           </div>
           <button className="lg:hidden" onClick={() => setSidebarOpen(false)}><X className="h-5 w-5" /></button>
@@ -1771,7 +1803,7 @@ export default function AdminDashboardPage() {
                 const cap = va ? capacityFor(va, awardOverride) : null;
                 const counts = va ? countsForApp(va) : null;
                 const currentDocs = counts ? viewDocs.filter(counts) : [];
-                const olderDocs = counts ? viewDocs.filter((d) => !counts(d)) : [];
+                const olderDocs = counts ? viewDocs.filter((d) => !counts(d) && d.type !== LETTER_OF_INTENT) : [];
                 const livePay = va ? hasLivePayment(va.id) : false;
                 const close = () => setViewApp(null);
                 return (
@@ -1836,7 +1868,7 @@ export default function AdminDashboardPage() {
                         <Detail label="Type">{viewApp.is_renewal ? "Renewal" : "New application"}</Detail>
                         <Detail label="Term">{[viewApp.academic_year, viewApp.semester].filter(Boolean).join(" · ") || "—"}</Detail>
                         <Detail label="Grade when applied">{viewApp.average_grade ?? "—"}</Detail>
-                        <Detail label="Household income">{viewApp.household_income != null ? `₱${Number(viewApp.household_income).toLocaleString("en-PH")}` : "—"}</Detail>
+                        <Detail label="Household income">{peso(viewApp.household_income)}</Detail>
                         <Detail label="Household size">{viewApp.household_size ?? "—"}</Detail>
                         {cap && (
                           <div>
@@ -1881,8 +1913,8 @@ export default function AdminDashboardPage() {
                       {viewApp.status === "Approved" && (
                         <div>
                           <h3 className="mb-1.5 text-sm font-semibold">Award amount (₱)</h3>
-                          <div className="mt-1 flex gap-2">
-                            <Input type="number" min={1} step="0.01" value={awardInput} onChange={(e) => setAwardInput(e.target.value)} disabled={!can.manage || hasDisbursed(viewApp.id)} />
+                          <div className="mt-1 flex items-start gap-2">
+                            <MoneyInput wrapperClassName="flex-1" min={1} value={awardInput} onValueChange={setAwardInput} disabled={!can.manage || hasDisbursed(viewApp.id)} />
                             {can.manage && <Button variant="outline" disabled={hasDisbursed(viewApp.id)} onClick={() => saveAward(viewApp)}>Save award</Button>}
                           </div>
                           <p className="mt-1 text-xs text-muted-foreground">
@@ -1893,7 +1925,7 @@ export default function AdminDashboardPage() {
                       {open && (
                         <div>
                           <h3 className="mb-1.5 text-sm font-semibold">Award amount (₱, optional)</h3>
-                          <Input type="number" min={1} step="0.01" className="mt-1" value={awardInput} onChange={(e) => setAwardInput(e.target.value)}
+                          <MoneyInput wrapperClassName="mt-1" min={1} value={awardInput} onValueChange={setAwardInput}
                             placeholder={cap?.sch.amount ? `Program award: ${formatPHP(Number(cap.sch.amount))}` : "Program award"} />
                         </div>
                       )}
@@ -2010,6 +2042,7 @@ export default function AdminDashboardPage() {
                       barangaySearch={schBarangaySearch} setBarangaySearch={setSchBarangaySearch}
                       active={schActive} setActive={setSchActive}
                       committedNote={cur && cur.total_budget > 0 ? `${formatPHP(committedFor(cur))} of ${formatPHP(cur.total_budget)} committed in ${currentAY}.` : null}
+                      office={myOffice ?? (officesReady ? "choose" : undefined)}
                     />
                   </AppDialog>
                 );
@@ -2020,13 +2053,18 @@ export default function AdminDashboardPage() {
                 description="This permanently removes the program and can't be undone."
                 footer={<>
                   <Button variant="outline" onClick={() => { setDeleteSch(null); setDeleteSchText(""); }}>Cancel</Button>
-                  <Button variant="destructive" disabled={!deleteSch || applicantCount(deleteSch.id) > 0 || deleteSchText.trim() !== deleteSch.name.trim()} onClick={confirmDeleteScholarship}>Delete program</Button>
+                  <Button variant="destructive" disabled={!deleteSch || deletingSch || !sameName(deleteSchText, deleteSch.name)} onClick={confirmDeleteScholarship}>
+                    {deletingSch && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Delete program
+                  </Button>
                 </>}>
-                {deleteSch && applicantCount(deleteSch.id) > 0 ? (
+                {deleteSch && applicantCount(deleteSch.id) > 0 && (
                   <DialogNote tone="warning" icon={<AlertTriangle className="h-3.5 w-3.5" />}>
-                    It has {applicantCount(deleteSch.id)} application{applicantCount(deleteSch.id) === 1 ? "" : "s"}, so it can&apos;t be deleted. Turn off &ldquo;Accepting applications&rdquo; instead.
+                    It has {applicantCount(deleteSch.id)} application{applicantCount(deleteSch.id) === 1 ? "" : "s"}
+                    {payments.some((p) => applications.some((a) => a.id === p.application_id && a.scholarship_id === deleteSch.id)) ? " with payments" : ""}.
+                    {" "}Deleting the program also deletes {applicantCount(deleteSch.id) === 1 ? "it" : "them"} and their documents, notes and payment records. To keep the records, turn off &ldquo;Accepting applications&rdquo; instead.
                   </DialogNote>
-                ) : deleteSch && (
+                )}
+                {deleteSch && (
                   <DialogField label={<>Type <strong>{deleteSch.name}</strong> to confirm</>} htmlFor="delete-sch-name">
                     <Input id="delete-sch-name" value={deleteSchText} onChange={(e) => setDeleteSchText(e.target.value)} autoComplete="off" />
                   </DialogField>
@@ -2047,11 +2085,15 @@ export default function AdminDashboardPage() {
                         <TableRow key={sch.id}>
                           <TableCell className="max-w-[260px]">
                             <p className="font-medium">{sch.name}</p>
+                            {!myOffice && isOffice(sch.office) && <Badge variant="outline" className="my-0.5 text-[10px]">{OFFICE_LABEL[sch.office]}</Badge>}
                             {sch.eligibility && <p className="text-xs text-muted-foreground line-clamp-2" title={sch.eligibility}>{sch.eligibility}</p>}
                           </TableCell>
                           <TableCell className="text-sm">
                             <p>{Number(sch.amount) > 0 ? `${formatPHP(Number(sch.amount))} each` : <span className="text-muted-foreground">No award set</span>}</p>
-                            <p className="text-xs text-muted-foreground">{sch.release_schedule === "semester" ? `Per semester${Number(sch.amount) > 0 ? ` (${formatPHP(termAmount(Number(sch.amount), "semester"))} each)` : ""}` : "Once a year"}</p>
+                            <p className="text-xs text-muted-foreground">{
+                              sch.release_schedule === "semester" ? `Per semester${Number(sch.amount) > 0 ? ` (${formatPHP(termAmount(Number(sch.amount), "semester"))} each)` : ""}`
+                              : sch.release_schedule === "monthly" ? `Monthly for ${asMonths(sch.release_months)} months${Number(sch.amount) > 0 ? ` (${formatPHP(termAmount(Number(sch.amount), "monthly", sch.release_months))} each)` : ""}`
+                              : "Once a year"}</p>
                             {Number(sch.total_budget) > 0 && (() => {
                               const committed = committedFor(sch);
                               const pct = Math.min(100, Math.round((committed / Number(sch.total_budget)) * 100));
@@ -2299,7 +2341,7 @@ export default function AdminDashboardPage() {
                       {awaitingPayment.length === 0 && <TableRow><TableCell className="text-center py-6 text-muted-foreground">Every approved award is fully scheduled</TableCell></TableRow>}
                       {awaitingPayment.map((a) => (
                         <TableRow key={a.id}>
-                          <TableCell><p className="font-medium">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"}</p><p className="text-xs text-muted-foreground">{a.scholarships?.name || "—"}{scheduleOf(a) === "semester" && ` · ${openTermsOf(a).join(", ")}`}</p></TableCell>
+                          <TableCell><p className="font-medium">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"}</p><p className="text-xs text-muted-foreground">{a.scholarships?.name || "—"}{scheduleOf(a) === "semester" && ` · ${openTermsOf(a).join(", ")}`}{scheduleOf(a) === "monthly" && openTermsOf(a).length > 0 && ` · next ${openTermsOf(a)[0]} (${openTermsOf(a).length} of ${monthsOf(a)} left)`}</p></TableCell>
                           <TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => { openNewPayment(a.id); setActiveSection("disbursement"); }}>Schedule payment</Button></TableCell>
                         </TableRow>
                       ))}
@@ -2333,10 +2375,12 @@ export default function AdminDashboardPage() {
                     </SelectContent>
                   </Select>
                   <Button variant="outline" onClick={() => {
+                    // Start on the current semester, or the first month someone still needs when only monthly programs have scholars waiting.
                     const sem = parseSettings(systemSettings).current_semester;
-                    const term: PaymentTerm = sem === "2nd Semester" ? "2nd Semester" : "1st Semester";
+                    const semTerm: PaymentTerm = sem === "2nd Semester" ? "2nd Semester" : "1st Semester";
+                    const term = bulkCandidates(semTerm).length > 0 ? semTerm : bulkTerms.find((t) => isMonthTerm(t) && bulkCandidates(t).length > 0) ?? semTerm;
                     setBulkTerm(term); setBulkDate(defaultScheduledDate); setBulkPicked(new Set(bulkCandidates(term).filter((c) => !c.warning).map((c) => c.app.id))); setBulkOpen(true);
-                  }}>Schedule semester payments</Button>
+                  }}>Schedule payments in bulk</Button>
                   <Button className="bg-gradient-primary shadow-primary" onClick={() => openNewPayment()}><Plus className="mr-1 h-4 w-4" /> Schedule Payment</Button>
                 </div>
               </div>
@@ -2500,8 +2544,8 @@ export default function AdminDashboardPage() {
                     )}
                     {payApp && (
                       <DialogField label="Period">
-                        <div role="radiogroup" aria-label="Period" className="grid grid-cols-2 gap-3">
-                          {termsFor(scheduleOf(payApp)).map((t) => {
+                        <div role="radiogroup" aria-label="Period" className={`grid gap-3 ${scheduleOf(payApp) === "monthly" ? "grid-cols-3 sm:grid-cols-4" : "grid-cols-2"}`}>
+                          {termsOf(payApp).map((t) => {
                             const taken = t !== cur?.term && !openTermsOf(payApp).includes(t);
                             return (
                               <ChoiceButton key={t} selected={payTerm === t} disabled={taken || cur?.status === "Disbursed"} onClick={() => setPayTerm(t)}>
@@ -2517,7 +2561,7 @@ export default function AdminDashboardPage() {
                     )}
                     <div className="grid gap-4 sm:grid-cols-2">
                       <DialogField label="Amount (₱)" htmlFor="pay-amount">
-                        <Input id="pay-amount" key={cur?.id ?? `${payAppId}-${payTerm}`} name="amount" type="number" min={0.01} step="0.01" required defaultValue={cur?.amount ?? (payApp ? termDefaultAmount(payApp) : "")} />
+                        <MoneyInput id="pay-amount" key={cur?.id ?? `${payAppId}-${payTerm}`} name="amount" min={0.01} required defaultValue={cur?.amount ?? (payApp ? termDefaultAmount(payApp) : "")} />
                       </DialogField>
                       <DialogField label="Scheduled date" htmlFor="pay-date">
                         <Input id="pay-date" name="scheduled_date" type="date" defaultValue={cur ? (cur.scheduled_date ?? "") : defaultScheduledDate} />
@@ -2542,15 +2586,17 @@ export default function AdminDashboardPage() {
                 );
               })()}
 
-              {/* Schedule one semester's payments for every eligible scholar */}
+              {/* Schedule one semester's or one month's payments for every eligible scholar */}
               {(() => {
                 const list = bulkOpen ? bulkCandidates(bulkTerm) : [];
                 const picked = list.filter((c) => bulkPicked.has(c.app.id));
                 const pickDefaults = (t: PaymentTerm) => setBulkPicked(new Set(bulkCandidates(t).filter((c) => !c.warning).map((c) => c.app.id)));
                 return (
                   <AppDialog open={bulkOpen} onOpenChange={setBulkOpen} size="lg"
-                    title="Schedule semester payments"
-                    description={`Approved scholars of per-semester programs in A.Y. ${currentAY} who don't have a ${bulkTerm} payment yet. Each gets half of their yearly award.`}
+                    title="Schedule payments in bulk"
+                    description={isMonthTerm(bulkTerm)
+                      ? `Approved scholars of monthly programs in A.Y. ${currentAY} who don't have a ${bulkTerm} payment yet. Each gets their award divided by their program's number of months.`
+                      : `Approved scholars of per-semester programs in A.Y. ${currentAY} who don't have a ${bulkTerm} payment yet. Each gets half of their yearly award.`}
                     footer={<>
                       <p className="w-full self-center text-sm text-muted-foreground sm:mr-auto sm:w-auto">{picked.length} selected · {formatPHP(picked.reduce((t, c) => t + c.amount, 0))}</p>
                       <Button variant="outline" onClick={() => setBulkOpen(false)}>Cancel</Button>
@@ -2559,10 +2605,17 @@ export default function AdminDashboardPage() {
                       </Button>
                     </>}>
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <DialogField label="Semester">
+                      <DialogField label="Period">
                         <Select value={bulkTerm} onValueChange={(v) => { setBulkTerm(v as PaymentTerm); pickDefaults(v as PaymentTerm); }}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>{termsFor("semester").map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+                          <SelectContent>
+                            <SelectGroup><SelectLabel>Per-semester programs</SelectLabel>
+                              {bulkTerms.filter((t) => !isMonthTerm(t)).map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                            </SelectGroup>
+                            <SelectGroup><SelectLabel>Monthly programs</SelectLabel>
+                              {bulkTerms.filter(isMonthTerm).map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                            </SelectGroup>
+                          </SelectContent>
                         </Select>
                       </DialogField>
                       <DialogField label="Scheduled date" htmlFor="bulk-date">
@@ -2679,7 +2732,7 @@ export default function AdminDashboardPage() {
                   <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All staff</SelectItem>
-                    {staff.map((m) => <SelectItem key={m.id} value={m.id}>{m.name} · {ROLE_LABEL[m.role] ?? m.role}</SelectItem>)}
+                    {staff.map((m) => <SelectItem key={m.id} value={m.id}>{m.name} · {staffLabel(m.role, m.office)}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <Input type="date" value={auditFrom} onChange={(e) => { setAuditFrom(e.target.value); setAuditPage(1); }} className="w-40" aria-label="From date" />
@@ -2764,6 +2817,7 @@ export default function AdminDashboardPage() {
               email={adminEmail}
               userId={adminUserId}
               role={adminRole}
+              office={adminOffice}
               auditLogs={auditLogs}
               logAudit={logAudit}
               onChanged={() => loadData(true)}
@@ -3031,7 +3085,7 @@ export default function AdminDashboardPage() {
                           <li key={r.id} className={`rounded-md border px-3 py-2 text-sm ${r.status === "Pending" ? "border-warning/40 bg-warning/5" : ""}`}>
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <span className="font-medium">Account deletion · {r.status} <span className="font-normal text-muted-foreground">· {new Date(r.created_at).toLocaleDateString()}</span></span>
-                              {r.status === "Pending" && !can.super && <span className="text-xs text-muted-foreground">A super admin handles this</span>}
+                              {r.status === "Pending" && !can.super && <span className="text-xs text-muted-foreground">The Mayor Office handles this</span>}
                               {r.status === "Pending" && can.super && (
                                 <span className="flex gap-1.5">
                                   <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setReqResponse(""); setHandleReq({ req: r, status: "Declined" }); }}>Decline</Button>
