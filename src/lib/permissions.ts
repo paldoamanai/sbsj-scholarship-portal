@@ -60,6 +60,7 @@ export const OFFICE_FULL_NAME: Record<StaffOffice, string> = {
 };
 /** An office's own seal, where it has one; the others use the municipal seal. */
 export const OFFICE_LOGO: Partial<Record<StaffOffice, string>> = {
+  mswdo: "/mswdo-logo.png",
   sangguniang_bayan: "/sangguniang-bayan-logo.png",
 };
 export const officeLogo = (office: string | null | undefined) => (isOffice(office) && OFFICE_LOGO[office]) || "/municipal-logo.png";
