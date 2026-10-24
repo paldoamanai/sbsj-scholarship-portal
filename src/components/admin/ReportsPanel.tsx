@@ -32,7 +32,7 @@ const REPORTS: { key: ReportKey; title: string; desc: string; icon: typeof Users
   { key: "scholars", title: "List of Scholars", desc: "Approved scholars by name with school, grades, award, amount disbursed and balance, plus contact, address and guardian details", icon: Users },
   { key: "budget", title: "Budget vs. Utilization", desc: "Each program's budget against committed, disbursed and queued funds, plus slots filled", icon: PiggyBank },
   { key: "funds", title: "Fund Utilization Report", desc: "Budget used and remaining, payment pipeline, funds by program, month, term and method, and cancelled payments with who cancelled them", icon: Wallet },
-  { key: "disbursements", title: "Disbursement Summary", desc: "Every payment with student ID, term, method, who disbursed it, the student's receipt reference number and its review, plus totals by program and status", icon: Banknote },
+  { key: "disbursements", title: "Disbursement Summary", desc: "Every payment with its term, method, who disbursed it, the student's receipt reference number and its review, plus totals by program and status", icon: Banknote },
   { key: "statistics", title: "Applicant Statistics", desc: "Applications, unique applicants and approval rates by program, month, term, type, sex, age, civil status, year level, grade, school, course, location, income and household size", icon: BarChart3 },
   { key: "grades", title: "Grades & Retention", desc: "Grade submissions, average grade per program and scholars below the minimum", icon: GraduationCap },
   { key: "operations", title: "Operations Report", desc: "Decision and payout turnaround, payment problems, receipt confirmations, missing documents and data requests", icon: Activity },
@@ -343,7 +343,7 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
                   <Select value={student} onValueChange={setStudent}>
                     <SelectTrigger><SelectValue placeholder={students.length ? "Choose a student" : "No students have applied yet"} /></SelectTrigger>
                     <SelectContent>
-                      {students.map((p) => <SelectItem key={p.id} value={p.id}>{personName(p)}{p.student_id_number ? ` · ${p.student_id_number}` : ""}</SelectItem>)}
+                      {students.map((p) => <SelectItem key={p.id} value={p.id}>{personName(p)}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 )}

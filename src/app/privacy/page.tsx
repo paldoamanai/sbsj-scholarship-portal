@@ -8,7 +8,7 @@ const sections = [
   {
     title: "What we collect",
     body: [
-      "Account details: your name, email address and Student ID.",
+      "Account details: your name and email address.",
       "Application details: your school, year level, grades, address and the documents you upload (such as ID, grades, certificate of registration, barangay indigency and birth certificate).",
       "Payout details: the payment method, schedule and status of any scholarship funds released to you.",
       "Portal activity: notifications, settings and sign-in records needed to keep your account secure.",

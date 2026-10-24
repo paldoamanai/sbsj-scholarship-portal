@@ -128,7 +128,7 @@ export async function POST(request: Request) {
 
     const [{ data: u }, { data: prof }] = await Promise.all([
       admin.auth.admin.getUserById(userId),
-      admin.from("profiles").select("first_name, last_name, student_id_number").eq("id", userId).maybeSingle(),
+      admin.from("profiles").select("first_name, last_name").eq("id", userId).maybeSingle(),
     ]);
     let filesRemoved = 0;
     for (const bucket of USER_BUCKETS) {
@@ -146,7 +146,6 @@ export async function POST(request: Request) {
     await audit(admin, caller, "delete_student_account", userId, {
       email: u?.user?.email ?? null,
       name: [prof?.first_name, prof?.last_name].filter(Boolean).join(" ") || null,
-      student_id_number: prof?.student_id_number ?? null,
       files_removed: filesRemoved,
       request_id: requestId,
     });

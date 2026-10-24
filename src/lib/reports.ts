@@ -331,12 +331,12 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
       sections: [
         {
           name: "Scholars",
-          head: ["#", "Name", "Student ID", "School", "Course", "Year Level", "Grade at Application", "Current Grade", "Scholarship", "AY / Semester", "Type", "Approved On", "Award", "Disbursed", "Balance", "Payout Status"],
+          head: ["#", "Name", "School", "Course", "Year Level", "Grade at Application", "Current Grade", "Scholarship", "AY / Semester", "Type", "Approved On", "Award", "Disbursed", "Balance", "Payout Status"],
           rows: apps.map((a, i) => {
             const award = s.appAward(a), paid = paidFor(a.id);
             const g = a.profiles?.average_grade;
             const current = g === null || g === undefined ? "—" : Number(g) < minFor(a) ? `${g} (below ${minFor(a)})` : g;
-            return [i + 1, listName(a.profiles), a.profiles?.student_id_number || "—", appSchool(a) || "—", appCourse(a) || "—", appYearLevel(a) || "—", a.average_grade ?? "—", current,
+            return [i + 1, listName(a.profiles), appSchool(a) || "—", appCourse(a) || "—", appYearLevel(a) || "—", a.average_grade ?? "—", current,
               a.scholarships?.name || "—", termText(a), kind(a), fmtDate(appApprovedAt(a)), award, paid, award - paid, a.disbursement_status || "—"];
           }),
           money: ["Award", "Disbursed", "Balance"], totals: ["Award", "Disbursed", "Balance"],
@@ -464,10 +464,10 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
       sections: [
         {
           name: "Payments",
-          head: ["Student", "Student ID", "Barangay", "Program", "Period", "Type", "Reference", "Method", "Preferred", "Status", "Scheduled", "Disbursed", "Disbursed By", "Proof on File", "Notes", "Amount"],
+          head: ["Student", "Barangay", "Program", "Period", "Type", "Reference", "Method", "Preferred", "Status", "Scheduled", "Disbursed", "Disbursed By", "Proof on File", "Notes", "Amount"],
           rows: list.map((p) => {
             const st = s.profById.get(p.user_id), a = s.payApp(p);
-            return [payStudent(p), st?.student_id_number || "—", st?.barangay || "—", payProgram(p), payPeriod(p), a ? kind(a) : "—", p.reference || "—", p.method || "—", p.preferred_method || "—",
+            return [payStudent(p), st?.barangay || "—", payProgram(p), payPeriod(p), a ? kind(a) : "—", p.reference || "—", p.method || "—", p.preferred_method || "—",
               p.status, fmtDate(p.scheduled_date), fmtDate(p.disbursed_at), staffName(p.disbursed_by), p.receipt_path ? "Yes" : "No", clip(p.notes, 80), Number(p.amount)];
           }),
           money: ["Amount"], totals: ["Amount"],
@@ -582,12 +582,12 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
     const grades = data.gradeUpdates.filter((g) => g.user_id === p.id);
     const issues = data.payIssues.filter((i) => i.user_id === p.id);
     return {
-      title: `Scholar History — ${personName(p)}`, filters: [`Student: ${personName(p)}${p.student_id_number ? ` (${p.student_id_number})` : ""}`], count: 1, countLabel: "student",
+      title: `Scholar History — ${personName(p)}`, filters: [`Student: ${personName(p)}`], count: 1, countLabel: "student",
       sections: [
         {
           name: "Profile", head: ["Field", "Value"],
           rows: [
-            ["Name", personName(p)], ["Email", p.email || "—"], ["Phone", p.phone || "—"], ["Student ID", p.student_id_number || "—"],
+            ["Name", personName(p)], ["Email", p.email || "—"], ["Phone", p.phone || "—"],
             ["School", p.school_name || "—"], ["Course", p.course || "—"], ["Year Level", p.year_level || "—"],
             ["Current Grade", p.average_grade ?? "—"], ["Grade Term", p.grade_term || "—"],
             ["Address", [p.barangay, p.municipality, p.province].filter(Boolean).join(", ") || "—"],

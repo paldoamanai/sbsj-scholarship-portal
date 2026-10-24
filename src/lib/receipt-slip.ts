@@ -7,7 +7,6 @@ import { pesoFixed as peso } from "@/lib/format";
 export type ReceiptSlip = {
   receiptNo: string;
   studentName: string;
-  studentId?: string | null;
   program: string;
   /** Which period the payment is for, e.g. "1st Semester 2026-2027". */
   period?: string | null;
@@ -30,7 +29,6 @@ function copy(s: ReceiptSlip, label: string, footer: string) {
     <table>
       ${row("Date", date)}
       ${row("Received by", s.studentName)}
-      ${s.studentId ? row("Student ID", s.studentId) : ""}
       ${row("Program", s.program)}
       ${s.period ? row("Period", s.period) : ""}
       ${row("Amount", peso(s.amount))}
@@ -129,7 +127,6 @@ export async function downloadReceiptSlipPDF(s: StudentReceiptSlip) {
   const rows: [string, string | null | undefined][] = [
     ["Date released", s.disbursedAt ? longDate(s.disbursedAt) : null],
     ["Received by", s.studentName],
-    ["Student ID", s.studentId],
     ["Program", s.program],
     ["Period", s.period],
     ["Amount", pdfPeso(s.amount)],

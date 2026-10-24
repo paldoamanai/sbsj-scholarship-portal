@@ -7,7 +7,6 @@ import { pesoFixed as peso } from "@/lib/format";
 export type AwardNotice = {
   applicationId: string;
   studentName: string;
-  studentId?: string | null;
   school?: string | null;
   courseYear?: string | null;
   program: string;
@@ -58,7 +57,6 @@ export function printAwardNotice(n: AwardNotice) {
 <p>This is to certify that <strong>${esc(n.studentName)}</strong> has been approved for the scholarship program below${n.isRenewal ? " as a renewing scholar" : ""}.</p>
 <table>
   ${row("Scholar", n.studentName)}
-  ${row("Student ID", n.studentId)}
   ${row("School", n.school)}
   ${row("Course · Year", n.courseYear)}
   ${row("Program", n.program)}

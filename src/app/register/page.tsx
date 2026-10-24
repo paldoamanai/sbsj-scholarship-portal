@@ -60,7 +60,6 @@ const STRENGTH = [
 function signupErrorMessage(message: string | undefined): string {
   const m = (message ?? "").toLowerCase();
   if (m.includes("already registered") || m.includes("already been registered")) return "This email is already registered. Log in instead, or use Forgot password.";
-  if (m.includes("database error")) return "This student ID number may already be registered to another account. Check it, or contact the office.";
   if (m.includes("captcha")) return "The bot check failed or expired. Please try again.";
   if (m.includes("rate limit") || m.includes("too many")) return "Too many attempts. Please wait a few minutes and try again.";
   return message || "Something went wrong. Please try again.";
@@ -77,7 +76,6 @@ export default function RegisterPage() {
   // Swipe/browser back and forward move between steps, but only to steps already completed.
   useHistorySync("sbsjStep", step, setStep, (s) => s <= maxStep.current);
   const [loading, setLoading] = useState(false);
-  const [checking, setChecking] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   // Set once the account exists but the email still has to be confirmed.
   const [sentTo, setSentTo] = useState<string | null>(null);
@@ -95,7 +93,6 @@ export default function RegisterPage() {
   const [form, setForm] = useState({
     lastName: "", firstName: "", middleName: "", sex: "", civilStatus: "",
     nationality: "Filipino", phone: "", barangay: "", municipality: HOME_MUNICIPALITY,
-    studentIdNumber: "",
   });
   const [dob, setDob] = useState<Date | undefined>(undefined);
   const [dobOpen, setDobOpen] = useState(false);
@@ -155,7 +152,6 @@ export default function RegisterPage() {
         errs.phone = "Valid PH phone required";
       if (!form.barangay.trim()) errs.barangay = "Required";
       if (!form.municipality.trim()) errs.municipality = "Required";
-      if (!form.studentIdNumber.trim()) errs.studentIdNumber = "Required";
     } else if (step === 2) {
       if (!academic.schoolName.trim()) errs.schoolName = "Required";
       if (!academic.course.trim()) errs.course = "Required";
@@ -176,22 +172,8 @@ export default function RegisterPage() {
     return Object.keys(errs).length === 0;
   };
 
-  // The student ID must not belong to another account (the database enforces this too).
-  const studentIdTaken = async () => {
-    setChecking(true);
-    const { data, error } = await createClient().rpc("student_id_available", { _student_id: form.studentIdNumber });
-    setChecking(false);
-    if (error) return false; // let the database decide at signup
-    if (data === false) {
-      setErrors((p) => ({ ...p, studentIdNumber: "This student ID number is already registered. Log in to your existing account or contact the office." }));
-      return true;
-    }
-    return false;
-  };
-
-  const next = async () => {
+  const next = () => {
     if (!validateStep()) return;
-    if (step === 1 && (await studentIdTaken())) return;
     setStep((s) => s + 1);
   };
   const back = () => { if (step > 0) window.history.back(); };
@@ -214,7 +196,6 @@ export default function RegisterPage() {
       course: academic.course,
       year_level: academic.yearLevel,
       average_grade: parseFloat(academic.averageGrade),
-      student_id_number: form.studentIdNumber,
     };
 
     // 1. Create auth user. Metadata is copied into public.profiles by handle_new_user,
@@ -488,11 +469,6 @@ export default function RegisterPage() {
             {/* STEP 1: Personal */}
             {step === 1 && (
               <>
-                <div>
-                  <Label>Student ID Number *</Label>
-                  <Input autoComplete="off" value={form.studentIdNumber} onChange={(e) => update("studentIdNumber", e.target.value)} />
-                  <FieldError field="studentIdNumber" />
-                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div><Label>Last Name *</Label><Input autoComplete="family-name" value={form.lastName} onChange={(e) => update("lastName", e.target.value)} /><FieldError field="lastName" /></div>
                   <div><Label>First Name *</Label><Input autoComplete="given-name" value={form.firstName} onChange={(e) => update("firstName", e.target.value)} /><FieldError field="firstName" /></div>
@@ -827,8 +803,7 @@ export default function RegisterPage() {
                 <div />
               )}
               {step < LAST_STEP ? (
-                <Button type="button" onClick={next} disabled={checking} className="flex-1 sm:flex-none bg-gradient-primary shadow-primary">
-                  {checking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Button type="button" onClick={next} className="flex-1 sm:flex-none bg-gradient-primary shadow-primary">
                   Next <ChevronRight className="ml-1 h-4 w-4" />
                 </Button>
               ) : (

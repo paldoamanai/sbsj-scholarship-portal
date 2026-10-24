@@ -29,7 +29,6 @@ const toForm = (p: Tables<"profiles"> | null): StudentProfileForm => ({
   province: p?.province ?? "", zip_code: p?.zip_code ?? "",
   guardian_name: p?.guardian_name ?? "", guardian_relationship: p?.guardian_relationship ?? "", guardian_phone: p?.guardian_phone ?? "",
   school_name: p?.school_name ?? "", course: p?.course ?? "", year_level: (p?.year_level as StudentProfileForm["year_level"]) ?? "",
-  student_id_number: p?.student_id_number ?? "",
 });
 
 // Locked once this year's scholarship is approved (the `locked` prop).
@@ -66,11 +65,10 @@ function Field({ label, error, hint, children, className = "" }: {
 
 const inputCls = "rounded-xl border-border focus:border-primary focus:ring-primary/20";
 
-export default function ProfileSection({ profile, userId, userEmail, applications, locked, gradeUpdates, onChanged, onContact }: {
+export default function ProfileSection({ profile, userId, userEmail, locked, gradeUpdates, onChanged, onContact }: {
   profile: Tables<"profiles"> | null;
   userId: string;
   userEmail: string;
-  applications: Pick<Tables<"applications">, "status">[];
   /** This year's scholarship is approved: identity and school details are locked. */
   locked: boolean;
   gradeUpdates: Tables<"grade_updates">[];
@@ -82,7 +80,6 @@ export default function ProfileSection({ profile, userId, userEmail, application
   const { settings } = useSystemSettings();
 
   // ── profile form ──
-  const idsLocked = applications.some((a) => a.status !== "Withdrawn");
   // The saved profile plus any unsaved draft kept on this device; a draft never overrides locked fields.
   const withDraft = (p: Tables<"profiles"> | null): StudentProfileForm => {
     const base = toForm(p);
@@ -91,14 +88,13 @@ export default function ProfileSection({ profile, userId, userEmail, application
     const merged = { ...base } as Record<string, string>;
     for (const k of Object.keys(base)) if (typeof draft[k] === "string") merged[k] = draft[k];
     if (locked) for (const k of LOCKED_KEYS) merged[k] = base[k];
-    if (idsLocked) merged.student_id_number = base.student_id_number;
     return merged as StudentProfileForm;
   };
   const [form, setForm] = useState<StudentProfileForm>(() => withDraft(profile));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { setForm(withDraft(profile)); setErrors({}); }, [profile, userId, locked, idsLocked]);
+  useEffect(() => { setForm(withDraft(profile)); setErrors({}); }, [profile, userId, locked]);
 
   const saved = useMemo(() => toForm(profile), [profile]);
   const dirty = JSON.stringify(form) !== JSON.stringify(saved);
@@ -251,11 +247,6 @@ export default function ProfileSection({ profile, userId, userEmail, application
           </div>
           <h3 className="font-display font-bold text-black">{displayName}</h3>
           <p className="text-sm text-muted-foreground mt-0.5 break-all">{userEmail}</p>
-          {profile?.student_id_number && (
-            <p className="text-xs font-mono text-muted-foreground mt-1 bg-muted rounded-full px-2.5 py-0.5">
-              ID: {profile.student_id_number}
-            </p>
-          )}
           <p className="text-[11px] text-muted-foreground mt-1">JPG, PNG or WebP · up to 2 MB</p>
 
           <div className="w-full mt-5 text-left">
@@ -345,9 +336,6 @@ export default function ProfileSection({ profile, userId, userEmail, application
                   <SelectTrigger className="rounded-xl border-border"><SelectValue placeholder={isCollege(form.year_level) && !form.school_name ? "Select school first" : "Select course / strand"} /></SelectTrigger>
                   <SelectContent>{courses.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
                 </Select>
-              </Field>
-              <Field label="Student ID number" error={errors.student_id_number} hint={idsLocked ? <>Locked once you have applied. <ContactOffice onContact={onContact} /> to correct it.</> : undefined}>
-                <Input className={inputCls} value={form.student_id_number} disabled={idsLocked} onChange={(e) => set("student_id_number", e.target.value)} />
               </Field>
             </div>
           </Panel>

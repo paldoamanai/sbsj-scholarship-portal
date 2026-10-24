@@ -117,7 +117,7 @@ function useReceiptSubmit(onSubmitted: () => void) {
       const slip = data?.[0];
       if (error || !slip) { toast.error("Could not download your slip", { description: error?.message }); return; }
       await downloadReceiptSlipPDF({
-        receiptNo: slip.receipt_no, studentName: slip.student_name, studentId: slip.student_id, program: slip.program, period,
+        receiptNo: slip.receipt_no, studentName: slip.student_name, program: slip.program, period,
         amount: Number(slip.amount), method: slip.method, reference: slip.reference,
         disbursedAt: slip.disbursed_at, confirmedAt: slip.confirmed_at,
       });
@@ -1006,7 +1006,6 @@ export default function StudentDashboardPage() {
     const ok = printAwardNotice({
       applicationId: a.id,
       studentName: name || displayName,
-      studentId: profile?.student_id_number,
       school: a.school_name ?? profile?.school_name,
       courseYear: [a.course, a.year_level].filter(Boolean).join(" · ") || null,
       program: a.scholarships?.name ?? "Scholarship",
@@ -1596,7 +1595,7 @@ export default function StudentDashboardPage() {
       case "disbursement":  return <DisbursementSection payments={payments} issues={issues} disbursementStatus={currentApp?.disbursement_status} approvedTotal={approvedTotal} onChanged={refreshPayments} />;
       case "notifications": return Notifications(); // called, not rendered: the inbox keeps its search and selection
       case "profile":       return (
-        <ProfileSection profile={profile} userId={userId} userEmail={userEmail} applications={applications} locked={locked}
+        <ProfileSection profile={profile} userId={userId} userEmail={userEmail} locked={locked}
           gradeUpdates={gradeUpdates} onChanged={() => refreshProfile(userId)} onContact={() => setActive("help")} />
       );
       case "settings":      return SettingsView(); // called, not rendered: its children keep their state

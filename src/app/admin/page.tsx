@@ -819,8 +819,7 @@ export default function AdminDashboardPage() {
   const printSlip = (p: Tables<"payments">, method = p.method, reference = p.reference) => {
     const receiptNo = receiptNos[p.id];
     if (!receiptNo) { toast.error("This payment has no receipt number"); return; }
-    const prof = profiles.find((x) => x.id === p.user_id);
-    printReceiptSlip({ receiptNo, studentName: payStudent(p), studentId: prof?.student_id_number, program: payProgram(p), period: termLabel(p.term, p.academic_year) || null, amount: p.amount, method, reference });
+    printReceiptSlip({ receiptNo, studentName: payStudent(p), program: payProgram(p), period: termLabel(p.term, p.academic_year) || null, amount: p.amount, method, reference });
   };
 
   // Verify or disapprove a grade a student submitted. Verifying replaces their average grade; the student is notified.
@@ -973,7 +972,7 @@ export default function AdminDashboardPage() {
         if (studentDisb === "none" ? !!pay : pay?.status !== studentDisb) return false;
       }
       if (!q) return true;
-      return [`${p.first_name} ${p.last_name}`, p.email, p.school_name, p.course, p.student_id_number]
+      return [`${p.first_name} ${p.last_name}`, p.email, p.school_name, p.course]
         .some((f) => (f || "").toLowerCase().includes(q));
     });
     return list.sort((x, y) => studentSort === "grade"
@@ -1040,7 +1039,6 @@ export default function AdminDashboardPage() {
       const pay = currentPayment(p.id);
       return {
         Name: `${p.first_name || ""} ${p.middle_name || ""} ${p.last_name || ""}`.replace(/\s+/g, " ").trim(),
-        "Student ID": p.student_id_number || "—",
         Email: p.email || "—",
         Phone: p.phone || "—",
         Address: [p.street_address, p.barangay, p.municipality, p.province, p.zip_code].filter(Boolean).join(", ") || "—",
@@ -1389,8 +1387,8 @@ export default function AdminDashboardPage() {
 
   type ApplicantRow = { kind: "app"; app: typeof applications[number]; at: string } | { kind: "none"; profile: Tables<"profiles">; at: string };
   const q = appSearch.trim().toLowerCase();
-  // Name, email, student ID and school for everyone; the program name for applications too.
-  const personText = (p?: Tables<"profiles"> | null) => `${personName(p)} ${p?.email || ""} ${p?.student_id_number || ""} ${p?.school_name || ""}`.toLowerCase();
+  // Name, email and school for everyone; the program name for applications too.
+  const personText = (p?: Tables<"profiles"> | null) => `${personName(p)} ${p?.email || ""} ${p?.school_name || ""}`.toLowerCase();
   const statusMatches = (st: string) =>
     statusFilter === "all" || (statusFilter === "open" ? st === "Pending" || st === "Waitlisted" : st.toLowerCase() === statusFilter);
   const filteredApps: ApplicantRow[] = [
@@ -1500,14 +1498,14 @@ export default function AdminDashboardPage() {
       if (r.kind === "none") {
         const p = r.profile;
         return {
-          Name: personName(p), Email: p.email || "—", "Student ID": p.student_id_number || "—", School: p.school_name || "—",
+          Name: personName(p), Email: p.email || "—", School: p.school_name || "—",
           Scholarship: "—", Type: "—", Term: "—", "Grade when applied": "—", "Current grade": p.average_grade ?? "—",
           Status: "Not yet applied", "Applied / Registered": date(p.created_at), Decided: "—", "Award (PHP)": "—", "Message to student": "—",
         };
       }
       const a = r.app;
       return {
-        Name: personName(a.profiles), Email: a.profiles?.email || "—", "Student ID": a.profiles?.student_id_number || "—",
+        Name: personName(a.profiles), Email: a.profiles?.email || "—",
         School: a.profiles?.school_name || "—", Scholarship: a.scholarships?.name || "—",
         Type: a.is_renewal ? "Renewal" : "New", Term: [a.academic_year, a.semester].filter(Boolean).join(" · ") || "—",
         "Grade when applied": a.average_grade ?? "—", "Current grade": a.profiles?.average_grade ?? "—",
@@ -2278,10 +2276,10 @@ export default function AdminDashboardPage() {
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Name</TableHead><TableHead>Student ID</TableHead><TableHead>School / Course</TableHead><TableHead>Year</TableHead><TableHead>Grade</TableHead><TableHead title="Approved applications / total applications">Approved / Total</TableHead><TableHead>Program / Award</TableHead><TableHead>Reference No.</TableHead><TableHead>Disbursement</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Name</TableHead><TableHead>School / Course</TableHead><TableHead>Year</TableHead><TableHead>Grade</TableHead><TableHead title="Approved applications / total applications">Approved / Total</TableHead><TableHead>Program / Award</TableHead><TableHead>Reference No.</TableHead><TableHead>Disbursement</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={11} className="text-center py-8 text-muted-foreground">{scholars.length === 0 ? "No scholars yet. Applicants appear here once approved." : "No scholars match your search"}</TableCell></TableRow>}
+                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">{scholars.length === 0 ? "No scholars yet. Applicants appear here once approved." : "No scholars match your search"}</TableCell></TableRow>}
                     {pagedStudents.map((p) => { const pay = currentPayment(p.id); const apps = approvedApps(p.id); return (
                       <TableRow key={p.id}>
                         <TableCell>
@@ -2291,7 +2289,6 @@ export default function AdminDashboardPage() {
                             {dataReqs.some((r) => r.user_id === p.id && r.status === "Pending") && <Badge variant="destructive" className="text-[10px]">Deletion requested</Badge>}
                           </div>
                         </TableCell>
-                        <TableCell className="font-mono text-xs">{p.student_id_number || "—"}</TableCell>
                         <TableCell className="text-xs"><p>{p.school_name || "—"}</p><p className="text-muted-foreground">{p.course || "—"}</p></TableCell>
                         <TableCell>{p.year_level || "—"}</TableCell>
                         <TableCell>{p.average_grade ?? "—"}</TableCell>
@@ -3048,7 +3045,7 @@ export default function AdminDashboardPage() {
 
       <AppDialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)} size="lg"
         title="Student Details"
-        description={viewStudent ? `${`${viewStudent.first_name || ""} ${viewStudent.last_name || ""}`.trim() || viewStudent.email}${viewStudent.student_id_number ? ` · ${viewStudent.student_id_number}` : ""}` : undefined}
+        description={viewStudent ? `${`${viewStudent.first_name || ""} ${viewStudent.last_name || ""}`.trim() || viewStudent.email}` : undefined}
         footer={viewStudent && <>
           {can.manage && (
             <div className="flex gap-2 sm:mr-auto">
@@ -3072,7 +3069,6 @@ export default function AdminDashboardPage() {
               <div className="space-y-5">
                 <DetailGrid>
                   {field("Name", `${viewStudent.first_name || ""} ${viewStudent.middle_name || ""} ${viewStudent.last_name || ""}`.replace(/\s+/g, " ").trim())}
-                  {field("Student ID", <span className="font-mono">{viewStudent.student_id_number || "—"}</span>)}
                   {field("Email", viewStudent.email)}
                   {field("Phone", viewStudent.phone)}
                   {field("Sex · Civil status", [viewStudent.sex, viewStudent.civil_status].filter(Boolean).join(" · "))}

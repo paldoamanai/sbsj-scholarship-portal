@@ -34,7 +34,7 @@ const COPY: Record<Action, { title: (n: string) => string; body: (n: string) => 
   },
   delete_account: {
     title: (n) => `Delete ${n}'s account?`,
-    body: (n) => `Permanently deletes ${n}'s login, profile, applications, documents, uploaded files and notifications. The audit log keeps their name, email and student ID. This can't be undone.`,
+    body: (n) => `Permanently deletes ${n}'s login, profile, applications, documents, uploaded files and notifications. The audit log keeps their name and email. This can't be undone.`,
     done: "Account deleted",
   },
 };
