@@ -393,7 +393,7 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
                     {exporting === `${r.key}-xlsx` ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <FileDown className="mr-1 h-4 w-4" />} Excel
                   </Button>
                   <span className="text-xs text-muted-foreground ml-auto">
-                    {busy ? <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Loading…</span> : r.key === "history" && !student ? "Choose a student" : `${def.count.toLocaleString("en-PH")} ${def.countLabel}`}
+                    {busy ? <span className="inline-block h-3 w-16 animate-pulse rounded-md bg-muted align-middle" aria-label="Loading" /> : r.key === "history" && !student ? "Choose a student" : `${def.count.toLocaleString("en-PH")} ${def.countLabel}`}
                   </span>
                 </div>
               </CardContent>

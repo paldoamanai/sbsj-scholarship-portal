@@ -45,6 +45,7 @@ import HelpSection from "@/components/student/HelpSection";
 import { printAwardNotice } from "@/lib/award-notice";
 import { downloadReceiptSlipPDF } from "@/lib/receipt-slip";
 import { termLabel } from "@/lib/release-schedule";
+import DashboardSkeleton from "@/components/DashboardSkeleton";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Payment = Tables<"payments">;
@@ -839,14 +840,7 @@ export default function StudentDashboardPage() {
   // ── Loading ────────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="min-h-dvh flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-12 w-12 rounded-2xl bg-primary flex items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-white" />
-          </div>
-          <p className="text-sm text-muted-foreground font-medium">Loading your dashboard…</p>
-        </div>
-      </div>
+      <DashboardSkeleton variant="student" />
     );
   }
 

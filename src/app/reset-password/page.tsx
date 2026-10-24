@@ -13,6 +13,7 @@ import { KeyRound, Loader2, ShieldCheck } from "@/components/icons";
 import { createClient } from "@/lib/supabase/client";
 import { OFFICE_FULL_NAME, ROLE_DESCRIPTION, isOffice, isStaffRole, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 import { PASSWORD_HINT, passwordProblem } from "@/validations/auth";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /** Reached from a reset email or a staff invite (?invite=1): the link signs the person in, then sends them here. */
 export default function ResetPasswordPage() {
@@ -81,7 +82,12 @@ export default function ResetPasswordPage() {
               : "This reset link is invalid or has expired."}</CardDescription>}
           </CardHeader>
           <CardContent>
-            {ready === "checking" && <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
+            {ready === "checking" && (
+              <div className="space-y-4" aria-busy aria-label="Checking your link">
+                {[1, 2].map((i) => <div key={i} className="space-y-2"><Skeleton className="h-4 w-28" /><Skeleton className="h-10 w-full" /></div>)}
+                <Skeleton className="h-10 w-full" />
+              </div>
+            )}
             {ready === "expired" && !invite && (
               <Button asChild className="w-full bg-gradient-primary shadow-primary"><Link href="/forgot-password">Send a new link</Link></Button>
             )}
