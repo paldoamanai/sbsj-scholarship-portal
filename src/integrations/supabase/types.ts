@@ -571,8 +571,6 @@ export type Database = {
           grade_verified_at: string | null
           terms_accepted_at: string | null
           grade_term: string | null
-          student_id_number: string | null
-          government_id: string | null
           is_active: boolean
           created_at: string
           updated_at: string
@@ -604,8 +602,6 @@ export type Database = {
           grade_verified_at?: string | null
           terms_accepted_at?: string | null
           grade_term?: string | null
-          student_id_number?: string | null
-          government_id?: string | null
           is_active?: boolean
           created_at?: string
           updated_at?: string
@@ -637,8 +633,6 @@ export type Database = {
           grade_verified_at?: string | null
           terms_accepted_at?: string | null
           grade_term?: string | null
-          student_id_number?: string | null
-          government_id?: string | null
           is_active?: boolean
           created_at?: string
           updated_at?: string
@@ -806,8 +800,6 @@ export type Database = {
           id: string
           application_id: string | null
           user_id: string
-          student_id_number: string | null
-          government_id: string | null
           has_existing_scholarship: boolean
           existing_scholarship_details: string | null
           verification_status: string
@@ -820,8 +812,6 @@ export type Database = {
           id?: string
           application_id?: string | null
           user_id: string
-          student_id_number?: string | null
-          government_id?: string | null
           has_existing_scholarship?: boolean
           existing_scholarship_details?: string | null
           verification_status?: string
@@ -834,8 +824,6 @@ export type Database = {
           id?: string
           application_id?: string | null
           user_id?: string
-          student_id_number?: string | null
-          government_id?: string | null
           has_existing_scholarship?: boolean
           existing_scholarship_details?: string | null
           verification_status?: string
@@ -858,10 +846,6 @@ export type Database = {
           active_programs: number
           applications_received: number
         }[]
-      }
-      student_id_available: {
-        Args: { _student_id: string }
-        Returns: boolean
       }
       scholarships_public: {
         Args: Record<string, never>
@@ -1019,7 +1003,6 @@ export type Database = {
         Returns: {
           receipt_no: string
           student_name: string
-          student_id: string | null
           program: string
           amount: number
           method: string | null
