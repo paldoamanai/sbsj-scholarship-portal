@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AppDialog, DialogSection } from "@/components/AppDialog";
 import { useState } from "react";
-import { availabilityInfo, deadlineLabel, peso, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
+import { availabilityInfo, deadlineLabel, peso, requirementLines, slotsLabel, textLines, type PublicScholarship } from "@/lib/scholarships";
 
 interface ScholarshipCardProps {
   program: PublicScholarship;
@@ -22,7 +22,7 @@ const ScholarshipCard = ({ program, globalMinGrade = 0, onApply, hideAmount = fa
   const { name, description, eligibility } = program;
   const deadline = deadlineLabel(program.deadline);
   const { canApply, label } = availabilityInfo(program);
-  const requirements = requirementLines(program, globalMinGrade);
+  const requirements = [...requirementLines(program, globalMinGrade), ...textLines(eligibility)];
   const hasAmount = !hideAmount && Number(program.amount) > 0;
 
   return (
@@ -54,7 +54,7 @@ const ScholarshipCard = ({ program, globalMinGrade = 0, onApply, hideAmount = fa
           </div>
           <div className="flex items-start gap-2 text-sm">
             <GraduationCap className="h-4 w-4 mt-0.5 text-primary shrink-0" />
-            <span className="text-muted-foreground line-clamp-2">{requirements[0] ?? eligibility ?? "Open to all qualified applicants"}</span>
+            <span className="text-muted-foreground line-clamp-2">{requirements[0] ?? "Open to all qualified applicants"}</span>
           </div>
           <div className="flex flex-col gap-2">
             <Button variant="outline" onClick={() => setOpen(true)} className="w-full">
@@ -87,19 +87,17 @@ const ScholarshipCard = ({ program, globalMinGrade = 0, onApply, hideAmount = fa
         </>}>
         {description && (
           <DialogSection title={<span className="flex items-center gap-2"><Info className="h-4 w-4 text-primary" />About this Scholarship</span>}>
-            <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
+            <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">{description}</p>
           </DialogSection>
         )}
 
         <DialogSection title={<span className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-primary" />Eligibility Requirements</span>}>
           {requirements.length > 0 && (
             <ul className="list-disc pl-5 text-sm text-muted-foreground space-y-0.5">
-              {requirements.map((r) => <li key={r}>{r}</li>)}
+              {requirements.map((r, i) => <li key={i}>{r}</li>)}
             </ul>
           )}
-          {(eligibility || !requirements.length) && (
-            <p className="text-sm text-muted-foreground leading-relaxed">{eligibility ?? "Open to all qualified applicants"}</p>
-          )}
+          {!requirements.length && <p className="text-sm text-muted-foreground leading-relaxed">Open to all qualified applicants</p>}
         </DialogSection>
 
         <DialogSection title={<span className="flex items-center gap-2"><Clock className="h-4 w-4 text-primary" />Application Period</span>}>

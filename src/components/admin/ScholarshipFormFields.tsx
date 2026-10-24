@@ -2,7 +2,7 @@
 
 // The fields of the add / edit scholarship dialog. The admin page owns the form (and reads it with
 // FormData on submit), the year-level / barangay selections and the active switch; this lays them out.
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Check } from "@/components/icons";
 import type { Tables } from "@/integrations/supabase/types";
 import { Input } from "@/components/ui/input";
@@ -60,6 +60,39 @@ function Field({ label, htmlFor, hint, children, className }: { label: string; h
   );
 }
 
+const LONG_TEXT_MAX = 2000; // scholarshipSchema's limit
+
+/** A paragraph box that grows with its text (up to a point, then scrolls) and counts characters. */
+function LongTextField({ id, name, label, hint, placeholder, defaultValue }: {
+  id: string; name: string; label: string; hint: string; placeholder: string; defaultValue: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const [length, setLength] = useState(defaultValue.length);
+  const fit = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + 2}px`;
+  };
+  useLayoutEffect(fit, []);
+  const near = length > LONG_TEXT_MAX * 0.9;
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Textarea ref={ref} id={id} name={name} defaultValue={defaultValue} placeholder={placeholder} maxLength={LONG_TEXT_MAX}
+        aria-describedby={`${id}-hint`}
+        className="min-h-[7.5rem] max-h-80 resize-y leading-relaxed"
+        onInput={(e) => { setLength(e.currentTarget.value.length); fit(); }} />
+      <div className="flex items-start justify-between gap-3 text-xs text-muted-foreground">
+        <p id={`${id}-hint`}>{hint}</p>
+        <span className={cn("shrink-0 tabular-nums", near && "text-amber-600")} aria-live="polite">
+          {length.toLocaleString()} / {LONG_TEXT_MAX.toLocaleString()}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function ScholarshipFormFields({
   cur, yearLevels, setYearLevels, barangays, setBarangays, barangaySearch, setBarangaySearch, active, setActive, committedNote, office,
 }: Props) {
@@ -96,14 +129,12 @@ export function ScholarshipFormFields({
             </Field>
           )}
         </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Description" htmlFor="sch-description">
-            <Textarea id="sch-description" name="description" rows={3} defaultValue={cur?.description ?? ""} placeholder="What the program offers" />
-          </Field>
-          <Field label="Who can apply" htmlFor="sch-eligibility">
-            <Textarea id="sch-eligibility" name="eligibility" rows={3} defaultValue={cur?.eligibility ?? ""} placeholder="Shown to students on the program card" />
-          </Field>
-        </div>
+        <LongTextField id="sch-description" name="description" label="Description" defaultValue={cur?.description ?? ""}
+          placeholder="What the program offers, who funds it and what scholars get."
+          hint="Shown on the program card and its details. Leave a blank line between paragraphs." />
+        <LongTextField id="sch-eligibility" name="eligibility" label="Who can apply" defaultValue={cur?.eligibility ?? ""}
+          placeholder={"e.g.\nEnrolled full-time in a state university or college\nFamily income of ₱250,000 or less a year\nNo other government scholarship"}
+          hint="Put each requirement on its own line: students see them as a bulleted list. Grade, year level and barangay rules below are added automatically." />
       </Section>
 
       <Section title="Award and capacity" hint="Slots and budget refill when a new academic year starts.">
