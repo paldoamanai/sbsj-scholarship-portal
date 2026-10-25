@@ -11,7 +11,7 @@ import ProfileImage from "@/components/ProfileImage";
 import { Panel, SectionTitle, StatCard, StatusBadge } from "@/components/student/ui";
 import ApplicationHistory from "@/components/student/ApplicationHistory";
 import { profileCompleteness } from "@/lib/profile";
-import { availabilityInfo, deadlineLabel, programChecks, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
+import { availabilityInfo, deadlineLabel, programChecks, requirementLines, slotsLabel, textLines, type PublicScholarship } from "@/lib/scholarships";
 import { daysUntil, formatDate, peso } from "@/lib/format";
 import { ayStart, type AppSettings } from "@/lib/settings";
 import { awardText, isOneTime } from "@/lib/release-schedule";
@@ -392,7 +392,7 @@ export default function Overview(p: OverviewProps) {
       {/* Program details */}
       <AppDialog open={!!program} onOpenChange={(o) => { if (!o) setProgram(null); }} size="lg" className="rounded-2xl"
         title={program?.name}
-        description={program?.description && <p className="leading-relaxed">{program.description}</p>}
+        description={program?.description && <p className="leading-relaxed whitespace-pre-line">{program.description}</p>}
         footer={program && <>
           <Button variant="outline" className="rounded-xl" onClick={() => setProgram(null)}>Close</Button>
           <Button className="rounded-xl" disabled={!!programBlock} onClick={() => { const id = program.id; setProgram(null); p.onApply(id); }}>
@@ -411,7 +411,7 @@ export default function Overview(p: OverviewProps) {
               <DialogSection title="Eligibility">
                 <ul className="list-disc pl-5 text-sm text-muted-foreground space-y-0.5">
                   {programGrade.map((l) => <li key={l}>{l}</li>)}
-                  {program.eligibility && <li>{program.eligibility}</li>}
+                  {textLines(program.eligibility).map((l, i) => <li key={i}>{l}</li>)}
                 </ul>
               </DialogSection>
             )}
