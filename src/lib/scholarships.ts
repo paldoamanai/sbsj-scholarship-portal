@@ -46,6 +46,10 @@ export function requirementLines(
   return lines;
 }
 
+/** Free text split into its non-empty lines, e.g. "Who can apply" written one requirement per line. */
+export const textLines = (text: string | null | undefined): string[] =>
+  (text ?? "").split(/\r?\n/).map((l) => l.replace(/^\s*[-•*]\s*/, "").trim()).filter(Boolean);
+
 /**
  * A town name reduced for comparison, so "Labangan", "LABANGAN", "Labangan, Zamboanga del Sur",
  * "Municipality of Labangan" and "Pagadian City" / "Pagadian" match. Same as public.normalize_town().
