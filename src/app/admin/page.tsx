@@ -53,6 +53,8 @@ import { LETTER_OF_INTENT } from "@/lib/documents";
 import { peso, pesoFixed as formatPHP } from "@/lib/format";
 import { MoneyInput } from "@/components/MoneyInput";
 import type { Tables, Json } from "@/integrations/supabase/types";
+import DashboardSkeleton from "@/components/DashboardSkeleton";
+import { Skeleton } from "@/components/ui/skeleton";
 
 // Ordered by the scholarship process: set up a program, review applicants, manage scholars,
 // pay them out, then track and report. Each group gets a heading in the sidebar.
@@ -506,7 +508,7 @@ export default function AdminDashboardPage() {
   };
 
   const docList = (docs: AdminDoc[], loading: boolean) => {
-    if (loading) return <p className="text-sm text-muted-foreground">Loading…</p>;
+    if (loading) return <ul className="mt-1 space-y-2" aria-busy>{[1, 2, 3].map((i) => <li key={i}><Skeleton className="h-14 w-full" /></li>)}</ul>;
     if (docs.length === 0) return <p className="text-sm text-muted-foreground">No documents uploaded</p>;
     const tone = (st: string) => st === "Verified" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : st === "Disapproved" ? "bg-red-50 text-red-700 border-red-200" : "bg-amber-50 text-amber-700 border-amber-200";
     return (
@@ -1571,7 +1573,7 @@ export default function AdminDashboardPage() {
   const awaitingPayment = applications.filter((a) => a.status === "Approved" && openTermsOf(a).length > 0);
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
+    return <DashboardSkeleton variant="admin" />;
   }
 
   return (
@@ -2827,8 +2829,11 @@ export default function AdminDashboardPage() {
                     <TableHead>Date</TableHead><TableHead>User</TableHead><TableHead>Action</TableHead><TableHead>Entity</TableHead><TableHead>Changed</TableHead><TableHead className="text-right">Details</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {pagedLogs.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                      {auditQuery.loading ? <Loader2 className="mx-auto h-5 w-5 animate-spin" /> : auditQuery.error ? `Couldn't load the audit log: ${auditQuery.error}` : "No audit logs found"}
+                    {pagedLogs.length === 0 && auditQuery.loading && Array.from({ length: 6 }, (_, i) => (
+                      <TableRow key={i} className="hover:bg-transparent">{[28, 36, 24, 20, 32, 12].map((w, j) => <TableCell key={j}><Skeleton className={`h-4 ${j === 5 ? "ml-auto " : ""}`} style={{ width: `${w * 4}px` }} /></TableCell>)}</TableRow>
+                    ))}
+                    {pagedLogs.length === 0 && !auditQuery.loading && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      {auditQuery.error ? `Couldn't load the audit log: ${auditQuery.error}` : "No audit logs found"}
                     </TableCell></TableRow>}
                     {pagedLogs.map((log) => (
                       <TableRow key={log.id}>

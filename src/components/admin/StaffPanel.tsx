@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   OFFICE_FULL_NAME, OFFICE_LABEL, ROLE_DESCRIPTION, ROLE_LABEL, STAFF_OFFICES, STAFF_ROLES, isOffice, roleCanHaveOffice, staffLabel, type StaffRole,
 } from "@/lib/permissions";
@@ -333,7 +334,18 @@ export default function StaffPanel({ userId, onChanged, onShowActivity, managerO
         </CardHeader>
         <CardContent>
           {securityError && <p className="mb-3 text-xs text-muted-foreground">Sign-in details unavailable: {securityError}</p>}
-          {loading ? <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div> : (
+          {loading ? (
+            <div className="space-y-3 py-1" aria-busy>
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="flex items-center gap-4">
+                  <div className="flex-1 space-y-1.5"><Skeleton className="h-4 w-40" /><Skeleton className="h-3 w-56" /></div>
+                  <Skeleton className="h-6 w-20 rounded-full" />
+                  <Skeleton className="hidden h-4 w-24 sm:block" />
+                  <Skeleton className="h-8 w-8 rounded-md" />
+                </div>
+              ))}
+            </div>
+          ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
