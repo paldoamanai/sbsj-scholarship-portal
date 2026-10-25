@@ -44,7 +44,7 @@ import ApplicationHistory, { DisapprovalReason } from "@/components/student/Appl
 import HelpSection from "@/components/student/HelpSection";
 import { printAwardNotice } from "@/lib/award-notice";
 import { downloadReceiptSlipPDF } from "@/lib/receipt-slip";
-import { termLabel } from "@/lib/release-schedule";
+import { isOneTime, termLabel } from "@/lib/release-schedule";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Payment = Tables<"payments">;
@@ -781,8 +781,10 @@ export default function StudentDashboardPage() {
   const minGrade = isRenewing ? settings.renewal_min_grade : settings.min_grade_requirement;
   const myGrade = profile?.average_grade ?? null;
   const applyIssues: string[] = [];
-  if (isRenewing && !settings.renewal_enabled) applyIssues.push("Scholarship renewals are not open right now.");
-  if (isRenewing && approvedBefore > settings.max_renewals) applyIssues.push(`You have reached the maximum of ${settings.max_renewals} renewal(s).`);
+  const oneTimeTaken = isRenewing && isOneTime(scholarships.find((s) => s.id === applyScholarshipId)?.release_schedule);
+  if (oneTimeTaken) applyIssues.push("This is a one-time grant and you have already received it, so it can't be renewed.");
+  if (isRenewing && !oneTimeTaken && !settings.renewal_enabled) applyIssues.push("Scholarship renewals are not open right now.");
+  if (isRenewing && !oneTimeTaken && approvedBefore > settings.max_renewals) applyIssues.push(`You have reached the maximum of ${settings.max_renewals} renewal(s).`);
   if (minGrade > 0 && myGrade == null) applyIssues.push(`Add your average grade to your profile (minimum required: ${minGrade}).`);
   else if (minGrade > 0 && myGrade != null && myGrade < minGrade) applyIssues.push(`Your average grade (${myGrade}) is below the minimum of ${minGrade}.`);
 

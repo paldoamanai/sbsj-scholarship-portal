@@ -14,7 +14,7 @@ import { profileCompleteness } from "@/lib/profile";
 import { availabilityInfo, deadlineLabel, programChecks, requirementLines, slotsLabel, type PublicScholarship } from "@/lib/scholarships";
 import { daysUntil, formatDate, peso } from "@/lib/format";
 import { ayStart, type AppSettings } from "@/lib/settings";
-import { awardText } from "@/lib/release-schedule";
+import { awardText, isOneTime } from "@/lib/release-schedule";
 import type { Tables } from "@/integrations/supabase/types";
 
 type AppRow = Tables<"applications"> & { scholarships: { name: string } | null };
@@ -159,6 +159,7 @@ export default function Overview(p: OverviewProps) {
     : undefined;
   const programBlock = !program ? null
     : appliedTo(program.id) ? `You already applied to this program (${appliedTo(program.id)?.status.toLowerCase()}).`
+    : isOneTime(program.release_schedule) && applications.some((a) => a.status === "Approved" && a.scholarship_id === program.id) ? "This is a one-time grant and you have already received it."
     : applyBlocked ? applyBlocked
     : !availabilityInfo(program).canApply ? availabilityInfo(program).label
     : programFailed ? `Requirement not met: ${programFailed.label} (${programFailed.detail}). Update your profile first.`

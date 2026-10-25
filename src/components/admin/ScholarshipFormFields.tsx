@@ -108,7 +108,7 @@ export function ScholarshipFormFields({
 
       <Section title="Award and capacity" hint="Slots and budget refill when a new academic year starts.">
         <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="Award per scholar (₱)" htmlFor="sch-amount" hint="The yearly total">
+          <Field label="Award per scholar (₱)" htmlFor="sch-amount" hint={schedule === "one_time" ? "Paid once" : "The yearly total"}>
             <MoneyInput id="sch-amount" name="amount" min={0} defaultValue={cur?.amount ?? 0} onValueChange={setAward} />
           </Field>
           <Field label="Budget (₱)" htmlFor="sch-budget" hint="Per academic year · 0 = no cap">
@@ -122,7 +122,7 @@ export function ScholarshipFormFields({
         <div className="space-y-1.5">
           <Label id="sch-schedule-label">Release schedule</Label>
           <input type="hidden" name="release_schedule" value={schedule} />
-          <div role="radiogroup" aria-labelledby="sch-schedule-label" className="grid gap-3 sm:grid-cols-3">
+          <div role="radiogroup" aria-labelledby="sch-schedule-label" className="grid gap-3 sm:grid-cols-2">
             {RELEASE_SCHEDULES.map((r) => {
               const on = schedule === r.value;
               return (

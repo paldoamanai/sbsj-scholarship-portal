@@ -2164,6 +2164,7 @@ export default function AdminDashboardPage() {
                             <p className="text-xs text-muted-foreground">{
                               sch.release_schedule === "semester" ? `Per semester${Number(sch.amount) > 0 ? ` (${formatPHP(termAmount(Number(sch.amount), "semester"))} each)` : ""}`
                               : sch.release_schedule === "monthly" ? `Monthly for ${asMonths(sch.release_months)} months${Number(sch.amount) > 0 ? ` (${formatPHP(termAmount(Number(sch.amount), "monthly", sch.release_months))} each)` : ""}`
+                              : sch.release_schedule === "one_time" ? "One-time, no renewal"
                               : "Once a year"}</p>
                             {Number(sch.total_budget) > 0 && (() => {
                               const committed = committedFor(sch);
