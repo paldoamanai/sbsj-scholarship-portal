@@ -686,16 +686,20 @@ export default function AdminDashboardPage() {
       if (payload.total_budget > 0 && payload.total_budget < committed) { toast.error(`The budget cannot be lower than the ${formatPHP(committed)} already committed`); return; }
     }
 
+    // A schedule the database doesn't know yet means its migration hasn't been run.
+    const saveError = (error: { message: string }) => error.message.includes("scholarships_release_schedule_check")
+      ? toast.error("The database doesn't support this release schedule yet", { description: "Run migration 069_one_time_release.sql in the Supabase SQL Editor, then save again." })
+      : toast.error(error.message);
     if (editing) {
       const { error } = await supabase.from("scholarships").update(payload).eq("id", editing.id);
-      if (error) { toast.error(error.message); return; }
+      if (error) { saveError(error); return; }
       // Log every field that can change, not just a few.
       const before = Object.fromEntries(Object.keys(payload).map((k) => [k, editing[k as keyof typeof editing] ?? null]));
       await logAudit("update_scholarship", "scholarships", editing.id, before as Json, payload as unknown as Json);
       toast.success("Scholarship updated");
     } else {
       const { data, error } = await supabase.from("scholarships").insert(payload).select().single();
-      if (error) { toast.error(error.message); return; }
+      if (error) { saveError(error); return; }
       await logAudit("create_scholarship", "scholarships", data.id, null, payload as unknown as Json);
       toast.success("Scholarship added");
     }
@@ -2164,6 +2168,7 @@ export default function AdminDashboardPage() {
                             <p className="text-xs text-muted-foreground">{
                               sch.release_schedule === "semester" ? `Per semester${Number(sch.amount) > 0 ? ` (${formatPHP(termAmount(Number(sch.amount), "semester"))} each)` : ""}`
                               : sch.release_schedule === "monthly" ? `Monthly for ${asMonths(sch.release_months)} months${Number(sch.amount) > 0 ? ` (${formatPHP(termAmount(Number(sch.amount), "monthly", sch.release_months))} each)` : ""}`
+                              : sch.release_schedule === "one_time" ? "One-time, no renewal"
                               : "Once a year"}</p>
                             {Number(sch.total_budget) > 0 && (() => {
                               const committed = committedFor(sch);

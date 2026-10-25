@@ -1,14 +1,17 @@
-// How a program pays its award: once a year, half in each of the 1st and 2nd semesters (Summer is never
+// How a program pays its award: once ever (a one-time grant that can't be renewed), once a year, half in each of the 1st and 2nd semesters (Summer is never
 // paid), or in equal monthly releases over the program's number of months (Month 1 to Month N, 10 by
-// default). The award is always the yearly total. The database enforces the same rules (migrations 056
-// and 064): one live payment per term, and an application's payments can't add up to more than its award.
+// default). The award is the yearly total, or for a one-time grant the whole amount. A one-time payment is
+// recorded under the "Yearly" term. The database enforces the same rules (migrations 056, 064 and 069): one
+// live payment per term, an application's payments can't add up to more than its award, and a student
+// approved for a one-time program once can't apply to it again.
 
 import { peso } from "@/lib/format";
 
-export type ReleaseSchedule = "yearly" | "semester" | "monthly";
+export type ReleaseSchedule = "one_time" | "yearly" | "semester" | "monthly";
 export type PaymentTerm = "Yearly" | "1st Semester" | "2nd Semester" | `Month ${number}`;
 
 export const RELEASE_SCHEDULES: { value: ReleaseSchedule; label: string; hint: string }[] = [
+  { value: "one_time", label: "One-time", hint: "The whole award is released once. Scholars can't renew it in later years." },
   { value: "yearly", label: "Once a year", hint: "The whole award is released in one payment." },
   { value: "semester", label: "Per semester", hint: "Half the award is released in the 1st semester and half in the 2nd." },
   { value: "monthly", label: "Monthly", hint: "The award is split into equal monthly releases." },
@@ -18,7 +21,9 @@ export const RELEASE_SCHEDULES: { value: ReleaseSchedule; label: string; hint: s
 export const DEFAULT_RELEASE_MONTHS = 10;
 
 export const asSchedule = (v: string | null | undefined): ReleaseSchedule =>
-  v === "semester" || v === "monthly" ? v : "yearly";
+  v === "one_time" || v === "semester" || v === "monthly" ? v : "yearly";
+/** A one-time grant: paid once, and a scholar approved for it can't apply to it again. */
+export const isOneTime = (v: string | null | undefined) => v === "one_time";
 /** A program's number of monthly releases: 1 to 12. */
 export const asMonths = (v: number | null | undefined) =>
   Number.isInteger(v) && v! >= 1 && v! <= 12 ? v! : DEFAULT_RELEASE_MONTHS;
@@ -50,6 +55,7 @@ export const awardText = (amount: number | null | undefined, schedule: string | 
   const each = peso(termAmount(Number(amount ?? 0), s, months));
   if (s === "semester") return `${peso(amount)} a year · ${each} per semester`;
   if (s === "monthly") return `${peso(amount)} a year · ${each} a month for ${asMonths(months)} months`;
+  if (s === "one_time") return `${peso(amount)}, one-time grant`;
   return `${peso(amount)} a year, released once`;
 };
 
@@ -62,8 +68,8 @@ export function openTerms(
 ): PaymentTerm[] {
   const live = payments.filter((p) => p.status !== "Cancelled");
   if (award > 0 && live.reduce((t, p) => t + Number(p.amount), 0) >= award) return [];
-  // Once a year: any payment covers it, including ones made before payments had a term.
-  if (asSchedule(schedule) === "yearly") return live.length > 0 ? [] : ["Yearly"];
+  // Once a year or one-time: any payment covers it, including ones made before payments had a term.
+  if (asSchedule(schedule) === "yearly" || asSchedule(schedule) === "one_time") return live.length > 0 ? [] : ["Yearly"];
   const used = new Set(live.map((p) => p.term));
   return termsFor(schedule, months).filter((t) => !used.has(t));
 }
