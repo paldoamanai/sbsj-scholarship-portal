@@ -201,7 +201,7 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Required Documents</CardTitle><CardDescription>Students see this checklist and its progress on their dashboard.</CardDescription></CardHeader>
+        <CardHeader><CardTitle className="text-base">Required Documents</CardTitle><CardDescription>Students see this checklist and its progress on their dashboard. Barangay Affairs and MSWDO programs use their own lists instead, so this list covers the Sangguniang Bayan Office and programs without an office.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2">
             {draft.required_documents.map((d) => (

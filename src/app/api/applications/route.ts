@@ -92,8 +92,8 @@ export async function POST(request: Request) {
     .insert({
       user_id: user.id,
       scholarship_id: input.scholarship_id,
-      // The database checks the photo and files it as this application's Letter of Intent.
-      letter_of_intent_path: input.letter_of_intent_path,
+      // The database checks the photo and files it as this application's Letter of Intent (where the office asks for one).
+      letter_of_intent_path: input.letter_of_intent_path ?? null,
       certified_at: new Date().toISOString(),
     })
     .select()
