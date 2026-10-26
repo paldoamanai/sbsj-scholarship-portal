@@ -201,7 +201,7 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Required Documents</CardTitle><CardDescription>Students see this checklist and its progress on their dashboard.</CardDescription></CardHeader>
+        <CardHeader><CardTitle className="text-base">Required Documents</CardTitle><CardDescription>Students see this checklist and its progress on their dashboard. Barangay Affairs programs use their own list instead (photos of the Student ID, Barangay Indigency, Certificate of Registration and Grades).</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2">
             {draft.required_documents.map((d) => (

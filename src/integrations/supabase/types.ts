@@ -865,6 +865,7 @@ export type Database = {
           barangays: string[] | null
           release_schedule: string
           release_months: number
+          office: string | null
           created_at: string
           availability: "open" | "upcoming" | "closed" | "full"
         }[]

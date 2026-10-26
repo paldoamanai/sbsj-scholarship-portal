@@ -20,6 +20,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import { officeDocumentsSummary, officesWithOwnDocuments } from "@/lib/office-requirements";
 import {
   GraduationCap, ArrowRight, Zap, BarChart3, Wallet, Bell,
   UserPlus, FileText, Search, CheckCircle2, Mail, Phone, MapPin, Clock,
@@ -210,7 +211,8 @@ export default function HomePage({ initial }: { initial: HomePageData }) {
   const historyMax = Math.max(1, ...history.map((h) => h.scholars));
 
   // Plus a letter of intent with each application, which isn't one of the shared documents.
-  const docs = [...settings.required_documents, "Letter of intent (a photo), for each program you apply to"];
+  // Offices with their own list (Barangay Affairs) are described after it.
+  const docs = [...settings.required_documents, "Letter of intent (a photo), for each program you apply to", ...officesWithOwnDocuments().map(officeDocumentsSummary)];
 
   return (
     <Layout>

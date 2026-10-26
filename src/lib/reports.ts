@@ -2,6 +2,7 @@ import type { Tables, Json } from "@/integrations/supabase/types";
 import { staffLabel } from "@/lib/permissions";
 import { pesoFixed } from "@/lib/format";
 import { termLabel } from "@/lib/release-schedule";
+import { programDocuments } from "@/lib/office-requirements";
 
 // ── Shapes ──
 // `money` columns are formatted as pesos; `totals` columns get a summed "Total" row.
@@ -524,14 +525,15 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
     const receiptRows = [...new Set(paid.map(receiptState))].sort().map((st) => [st, paid.filter((p) => receiptState(p) === st).length]);
     const docRows = open.filter((a) => s.within(a.created_at)).map((a) => {
       const sameYear = new Set(data.applications.filter((x) => x.user_id === a.user_id && x.academic_year === a.academic_year).map((x) => x.id));
-      const latest = data.requiredDocuments.map((type) => ({
+      const required = programDocuments(data.scholarships.find((sc) => sc.id === a.scholarship_id)?.office, data.requiredDocuments);
+      const latest = required.map((type) => ({
         type,
         doc: data.documents
           .filter((d) => d.user_id === a.user_id && d.document_type === type && (d.application_id === null || sameYear.has(d.application_id)))
           .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0],
       }));
       const missing = latest.filter((x) => !x.doc).map((x) => x.type);
-      return [personName(a.profiles), a.scholarships?.name || "—", fmtDate(a.created_at), data.requiredDocuments.length, latest.filter((x) => x.doc).length, latest.filter((x) => x.doc?.status === "Verified").length, latest.filter((x) => x.doc?.status === "Disapproved").length, missing.join(", ") || "—"];
+      return [personName(a.profiles), a.scholarships?.name || "—", fmtDate(a.created_at), required.length, latest.filter((x) => x.doc).length, latest.filter((x) => x.doc?.status === "Verified").length, latest.filter((x) => x.doc?.status === "Disapproved").length, missing.join(", ") || "—"];
     });
     const reqs = data.dataRequests.filter((r) => s.within(r.created_at));
     const handleDays = (r: Tables<"data_requests">) => (r.handled_at ? daysBetween(r.created_at, r.handled_at) : null);

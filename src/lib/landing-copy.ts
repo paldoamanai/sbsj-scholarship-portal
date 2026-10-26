@@ -1,5 +1,6 @@
 import { formatDate } from "@/lib/format";
 import type { AppSettings, ApplicationsBlock } from "@/lib/settings";
+import { officeDocumentsSummary, officesWithOwnDocuments } from "@/lib/office-requirements";
 
 // Text for the landing page. Values that come from the settings (contact details, document names,
 // the maintenance message) are shown as the office wrote them.
@@ -30,7 +31,10 @@ function faqs(s: AppSettings, period: string): { q: string; a: string }[] {
     },
     {
       q: "What documents do I need?",
-      a: docs.length ? `Prepare: ${docs.join(", ")}. Upload them in your dashboard when you apply.` : "The required documents are listed in your dashboard when you apply.",
+      a: [
+        docs.length ? `Prepare: ${docs.join(", ")}, plus a photo of a letter of intent for each program. Upload them in your dashboard when you apply.` : "The required documents are listed in your dashboard when you apply.",
+        ...officesWithOwnDocuments().map(officeDocumentsSummary),
+      ].join(" "),
     },
     {
       q: "When can I apply?",

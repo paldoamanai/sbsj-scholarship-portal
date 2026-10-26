@@ -50,6 +50,7 @@ import { asMonths, asSchedule, isMonthTerm, openTerms, secondSemesterGradeWarnin
 import { OFFICE_FULL_NAME, OFFICE_LABEL, STAFF_OFFICES, isOffice, officeLogo, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 import { printReceiptSlip } from "@/lib/receipt-slip";
 import { LETTER_OF_INTENT } from "@/lib/documents";
+import { programDocuments } from "@/lib/office-requirements";
 import { peso, pesoFixed as formatPHP } from "@/lib/format";
 import { MoneyInput } from "@/components/MoneyInput";
 import type { Tables, Json } from "@/integrations/supabase/types";
@@ -1082,7 +1083,8 @@ export default function AdminDashboardPage() {
     const letterCheck: RequirementCheck[] = letter
       ? [{ key: "doc-letter", label: "Letter of intent verified", ok: letter.status === "Verified", detail: letter.status }]
       : [];
-    const docs = settings.required_documents.map((type): RequirementCheck => {
+    // The program's office may ask for its own documents (Barangay Affairs does).
+    const docs = programDocuments(program?.office, settings.required_documents).map((type): RequirementCheck => {
       // Latest copy wins.
       const latest = allDocs
         .filter((d) => d.user_id === a.user_id && d.document_type === type && (d.application_id === null || sameYearIds.has(d.application_id)))
