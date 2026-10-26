@@ -51,7 +51,8 @@ import { OFFICE_FULL_NAME, OFFICE_LABEL, STAFF_OFFICES, isOffice, officeLogo, pe
 import { printReceiptSlip } from "@/lib/receipt-slip";
 import { LETTER_OF_INTENT, MOA } from "@/lib/documents";
 import { approvalDocuments, needsHomeVisit, needsHousePin, needsMoa } from "@/lib/office-requirements";
-import { googleMapsLink } from "@/lib/geo";
+import { directionsLink, distanceKm, earthLink, fmtDistance, googleMapsLink, streetViewLink } from "@/lib/geo";
+import HomeVisitsPanel from "@/components/admin/HomeVisitsPanel";
 import dynamic from "next/dynamic";
 import { peso, pesoFixed as formatPHP } from "@/lib/format";
 import { MoneyInput } from "@/components/MoneyInput";
@@ -72,6 +73,7 @@ const sidebarItems = [
   { icon: LayoutDashboard, label: "Dashboard", key: "overview", group: "" },
   { icon: GraduationCap, label: "Scholarships", key: "scholarships", group: "Process" },
   { icon: FileText, label: "Applicants", key: "applications", group: "Process" },
+  { icon: MapPin, label: "Home Visits", key: "visits", group: "Process" },
   { icon: Users, label: "Students", key: "students", group: "Process" },
   { icon: Banknote, label: "Disbursement", key: "disbursement", group: "Process" },
   { icon: Wallet, label: "Funds", key: "funds", group: "Monitoring" },
@@ -86,7 +88,7 @@ const sidebarItems = [
 // Sections each role doesn't need. Everything is still enforced by the database (migration 050).
 const hiddenSections: Record<string, string[]> = {
   reviewer: ["disbursement", "funds", "audit-logs"],
-  finance_admin: ["applications", "audit-logs"],
+  finance_admin: ["applications", "visits", "audit-logs"],
 };
 
 
@@ -217,6 +219,9 @@ function AdminDashboard() {
   const [visitAt, setVisitAt] = useState("");
   const [visitNote, setVisitNote] = useState("");
   const [visitBusy, setVisitBusy] = useState(false);
+  const [pinHistory, setPinHistory] = useState<Tables<"home_location_history">[]>([]);
+  // An application to open once the list has loaded (from a notification's ?view= link).
+  const [pendingView, setPendingView] = useState<string | null>(null);
   const [appPage, setAppPage] = useState(1);
   const [viewDocs, setViewDocs] = useState<AdminDoc[]>([]);
   const [allDocs, setAllDocs] = useState<DocSummary[]>([]);
@@ -583,6 +588,17 @@ function AdminDashboard() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewApp?.id]);
+
+  // Where the student has pinned their house before (migration 076; empty before it runs).
+  useEffect(() => {
+    setPinHistory([]);
+    if (!viewApp) return;
+    let cancelled = false;
+    supabase.from("home_location_history").select("*").eq("user_id", viewApp.user_id).order("changed_at", { ascending: false }).limit(10)
+      .then(({ data }) => { if (!cancelled) setPinHistory(data ?? []); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewApp?.id, viewApp?.user_id]);
 
   // Documents: loaded on open and re-read (without a loading state) when a document changes.
   useEffect(() => {
@@ -1381,6 +1397,7 @@ function AdminDashboard() {
     if (u.pathname === "/admin") {
       const sec = u.searchParams.get("section");
       if (sec && sidebarItems.some((i) => i.key === sec)) setActiveSection(sec);
+      if (u.searchParams.get("view")) setPendingView(u.searchParams.get("view"));
     } else {
       router.push(link);
     }
@@ -1390,9 +1407,16 @@ function AdminDashboard() {
   goToLinkRef.current = goToLink;
 
   useEffect(() => {
-    const sec = new URLSearchParams(window.location.search).get("section");
+    const params = new URLSearchParams(window.location.search);
+    const sec = params.get("section");
     if (sec && sidebarItems.some((i) => i.key === sec)) setActiveSection(sec);
+    if (params.get("view")) setPendingView(params.get("view"));
   }, []);
+  useEffect(() => {
+    if (!pendingView) return;
+    const a = applications.find((x) => x.id === pendingView);
+    if (a) { setViewApp(a); setPendingView(null); }
+  }, [pendingView, applications]);
 
   // A deep link or notification may point at a section this role doesn't use.
   useEffect(() => {
@@ -1744,6 +1768,10 @@ function AdminDashboard() {
           )}
 
           {/* APPLICATIONS */}
+          {activeSection === "visits" && (
+            <HomeVisitsPanel applications={applications} scholarships={scholarships} onOpen={(a) => setViewApp(a)} />
+          )}
+
           {activeSection === "applications" && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex items-center justify-between flex-wrap gap-3">
@@ -2046,13 +2074,50 @@ function AdminDashboard() {
                                 {pin ? (
                                   <>
                                     <span>{pr?.home_landmark || "No landmark given"}</span>
-                                    <a href={googleMapsLink(pin)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
-                                      Open in Google Maps <ExternalLink className="h-3 w-3" />
-                                    </a>
+                                    {[["Google Maps", googleMapsLink(pin)], ["Directions", directionsLink(pin)], ["Street View", streetViewLink(pin)], ["Google Earth (3D)", earthLink(pin)]].map(([label, href]) => (
+                                      <a key={label} href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+                                        {label} <ExternalLink className="h-3 w-3" />
+                                      </a>
+                                    ))}
                                   </>
                                 ) : <span className="text-muted-foreground">The student hasn&apos;t pinned their house yet.</span>}
                               </div>
-                              {pin && <HouseMap pin={pin} readOnly className="h-48" />}
+                              {pin && <HouseMap pin={pin} readOnly className="h-56" />}
+                              {(() => {
+                                // Moved since the visit was done (or, without a visit, just the history).
+                                const latest = pinHistory[0];
+                                const before = pinHistory.slice(1).find((h) => h.home_lat != null && h.home_lng != null);
+                                const movedAfterVisit = latest && viewApp.home_visit_done_at && latest.changed_at > viewApp.home_visit_done_at;
+                                if (pinHistory.length < 2 && !movedAfterVisit) return null;
+                                return (
+                                  <div className="space-y-1 text-xs">
+                                    {movedAfterVisit && (
+                                      <p className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-800">
+                                        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                                        The student {latest.home_lat == null ? "removed" : "changed"} their house pin after the visit was done
+                                        {latest.home_lat != null && before?.home_lat != null && before.home_lng != null
+                                          ? ` (moved ${fmtDistance(distanceKm({ lat: before.home_lat, lng: before.home_lng }, { lat: latest.home_lat, lng: latest.home_lng! }))})` : ""}.
+                                      </p>
+                                    )}
+                                    <details>
+                                      <summary className="cursor-pointer text-muted-foreground">Pin history ({pinHistory.length})</summary>
+                                      <ul className="mt-1 space-y-0.5">
+                                        {pinHistory.map((h) => (
+                                          <li key={h.id} className="text-muted-foreground">
+                                            {new Date(h.changed_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })} ·{" "}
+                                            {h.home_lat == null || h.home_lng == null ? "Pin removed" : (
+                                              <a href={googleMapsLink({ lat: h.home_lat, lng: h.home_lng })} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                                                {h.home_lat.toFixed(5)}, {h.home_lng.toFixed(5)}
+                                              </a>
+                                            )}
+                                            {h.home_landmark ? ` · ${h.home_landmark}` : ""}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </details>
+                                  </div>
+                                );
+                              })()}
                               {needsHomeVisit(office) && (
                                 <>
                                   <p className={viewApp.home_visit_done_at ? "text-success font-medium" : "text-muted-foreground"}>

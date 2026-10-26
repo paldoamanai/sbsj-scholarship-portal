@@ -1,8 +1,9 @@
 "use client";
 
-import "leaflet/dist/leaflet.css";
 import { useEffect } from "react";
-import { Circle, CircleMarker, MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import type { Map as LeafletMap } from "leaflet";
+import { Circle, CircleMarker, MapContainer, useMap, useMapEvents } from "react-leaflet";
+import { BaseLayers, FullscreenFrame, KeepSized } from "@/components/maps/MapBase";
 import { TOWN, type LatLng } from "@/lib/geo";
 
 function ClickToPin({ onPick }: { onPick: (p: LatLng) => void }) {
@@ -10,58 +11,51 @@ function ClickToPin({ onPick }: { onPick: (p: LatLng) => void }) {
   return null;
 }
 
+/** Hands the Leaflet map to the parent (to read its centre or move it). */
+function Expose({ onReady }: { onReady?: (m: LeafletMap) => void }) {
+  const map = useMap();
+  useEffect(() => { onReady?.(map); }, [map, onReady]);
+  return null;
+}
+
 /**
- * Leaflet measures its container once. Inside a dialog that opens with a zoom animation it measures
- * mid-animation, which leaves grey tiles and an off-centre pin, so it re-measures whenever the
- * container's size changes.
+ * The house map: the student taps their house, or moves the map under the crosshair and uses "Pin at
+ * the centre" (which also works from the keyboard: arrow keys pan, + and − zoom). Only ever loaded in
+ * the browser (next/dynamic, ssr: false).
  */
-function KeepSized() {
-  const map = useMap();
-  useEffect(() => {
-    const el = map.getContainer();
-    const fit = () => map.invalidateSize();
-    const t = setTimeout(fit, 250);
-    const ro = new ResizeObserver(fit);
-    ro.observe(el);
-    return () => { clearTimeout(t); ro.disconnect(); };
-  }, [map]);
-  return null;
-}
-
-/** Moves the view to the pin when `focus` changes (opening, "Use my location"), not on every tap. */
-function FocusPin({ pin, focus }: { pin: LatLng | null; focus: number }) {
-  const map = useMap();
-  useEffect(() => {
-    if (pin) map.setView(pin, Math.max(map.getZoom(), 17));
-    // Only `focus` decides when to move; following every tap would make the map jump.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, focus]);
-  return null;
-}
-
-/** A map the student taps to pin their house. Only ever loaded in the browser (next/dynamic, ssr: false). */
-export default function HouseMap({ pin, onPick, focus = 0, accuracy, readOnly = false, className = "h-64" }: {
+export default function HouseMap({ pin, onPick, onReady, start, accuracy, readOnly = false, crosshair = false, className = "h-72 sm:h-80" }: {
   pin: LatLng | null;
   onPick?: (p: LatLng) => void;
-  /** Bump to move the view to the pin. */
-  focus?: number;
+  onReady?: (m: LeafletMap) => void;
+  /** Where to open when there's no pin yet (e.g. the student's barangay). */
+  start?: LatLng | null;
   /** Metres, from the phone's location: drawn as a circle around the pin. */
   accuracy?: number | null;
   readOnly?: boolean;
+  crosshair?: boolean;
   className?: string;
 }) {
   return (
-    <MapContainer center={pin ?? TOWN} zoom={pin ? 17 : 14} className={`${className} w-full rounded-xl border z-0`}
-      scrollWheelZoom={!readOnly} dragging touchZoom doubleClickZoom={!readOnly}>
-      <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxZoom={19}
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' />
-      <KeepSized />
-      {!readOnly && onPick && <ClickToPin onPick={onPick} />}
-      <FocusPin pin={pin} focus={focus} />
-      {pin && accuracy != null && accuracy > 0 && (
-        <Circle center={pin} radius={accuracy} pathOptions={{ color: "#f97316", weight: 1, fillOpacity: 0.1 }} />
+    <FullscreenFrame className={`${className} w-full`}>
+      <MapContainer center={pin ?? start ?? TOWN} zoom={pin ? 18 : start ? 16 : 14} className="h-full w-full rounded-xl border z-0"
+        scrollWheelZoom={!readOnly} keyboard>
+        <BaseLayers />
+        <KeepSized />
+        <Expose onReady={onReady} />
+        {!readOnly && onPick && <ClickToPin onPick={onPick} />}
+        {pin && accuracy != null && accuracy > 0 && (
+          <Circle center={pin} radius={accuracy} pathOptions={{ color: "#f97316", weight: 1, fillOpacity: 0.1 }} />
+        )}
+        {pin && <CircleMarker center={pin} radius={10} pathOptions={{ color: "#ffffff", weight: 3, fillColor: "#ea580c", fillOpacity: 1 }} />}
+      </MapContainer>
+      {crosshair && (
+        <div aria-hidden className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
+          <div className="relative h-8 w-8">
+            <span className="absolute left-1/2 top-0 h-full w-0.5 -translate-x-1/2 bg-white shadow-[0_0_2px_#000]" />
+            <span className="absolute top-1/2 left-0 h-0.5 w-full -translate-y-1/2 bg-white shadow-[0_0_2px_#000]" />
+          </div>
+        </div>
       )}
-      {pin && <CircleMarker center={pin} radius={10} pathOptions={{ color: "#c2410c", weight: 3, fillColor: "#f97316", fillOpacity: 0.9 }} />}
-    </MapContainer>
+    </FullscreenFrame>
   );
 }
