@@ -13,7 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { YEAR_LEVELS } from "@/lib/scholarships";
 import { BARANGAYS, HOME_MUNICIPALITY } from "@/lib/barangays";
-import { RELEASE_SCHEDULES, asMonths, asSchedule, termAmount } from "@/lib/release-schedule";
+import { RELEASE_SCHEDULES, asMonths, asSchedule, termAmount, yearlyAward } from "@/lib/release-schedule";
 import { pesoFixed } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -100,7 +100,7 @@ export function ScholarshipFormFields({
   // The form remounts per program (it's keyed by id), so this starts from the program's schedule.
   const [schedule, setSchedule] = useState(asSchedule(cur?.release_schedule));
   const [months, setMonths] = useState(String(asMonths(cur?.release_months)));
-  // Followed only to show what each monthly release comes to.
+  // Followed only to show what each release (or a semester program's year) comes to.
   const [award, setAward] = useState(String(cur?.amount ?? 0));
   const shownBarangays = BARANGAYS.filter((b) => b.toLowerCase().includes(barangaySearch.trim().toLowerCase()));
 
@@ -139,7 +139,7 @@ export function ScholarshipFormFields({
 
       <Section title="Award and capacity" hint="Slots and budget refill when a new academic year starts.">
         <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="Award per scholar (₱)" htmlFor="sch-amount" hint={schedule === "one_time" ? "Paid once" : "The yearly total"}>
+          <Field label="Award per scholar (₱)" htmlFor="sch-amount" hint={schedule === "one_time" ? "Paid once" : schedule === "semester" ? "Per semester, paid in each of the two" : "The yearly total"}>
             <MoneyInput id="sch-amount" name="amount" min={0} defaultValue={cur?.amount ?? 0} onValueChange={setAward} />
           </Field>
           <Field label="Budget (₱)" htmlFor="sch-budget" hint="Per academic year · 0 = no cap">
@@ -174,6 +174,11 @@ export function ScholarshipFormFields({
             })}
           </div>
           <input type="hidden" name="release_months" value={months} />
+          {schedule === "semester" && Number(award) > 0 && (
+            <p className="pt-1 text-xs text-muted-foreground tabular-nums">
+              {pesoFixed(Number(award))} in the 1st Semester and {pesoFixed(Number(award))} in the 2nd: {pesoFixed(yearlyAward(Number(award), "semester"))} a year per scholar
+            </p>
+          )}
           {schedule === "monthly" && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
               <Label htmlFor="sch-months" className="font-normal">Released over</Label>
