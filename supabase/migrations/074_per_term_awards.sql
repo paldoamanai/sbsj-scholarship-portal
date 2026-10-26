@@ -1,29 +1,30 @@
--- A semester program's award is per semester (run after 073).
+-- Semester and monthly awards are paid in full each term (run after 073).
 --
--- Until now a semester program's award was the yearly total, half paid in each semester. Now the award
--- (scholarships.amount, and applications.amount_approved) is what each semester pays, so a ₱2,500 award
--- releases ₱2,500 in the 1st Semester and ₱2,500 in the 2nd: ₱5,000 for the year. Monthly, yearly and
--- one-time programs are unchanged.
+-- Until now a semester or monthly program's award was the yearly total, split over its semesters or
+-- months. Now the award (scholarships.amount, and applications.amount_approved) is what each term pays:
+-- a ₱2,500 semester award releases ₱2,500 in the 1st Semester and ₱2,500 in the 2nd (₱5,000 a year), and
+-- a ₱1,000 monthly award over 10 months releases ₱1,000 every month (₱10,000 a year). Yearly and one-time
+-- programs are unchanged.
 --
---   * Payments: an application's payments can't add up to more than its award for the year (twice the
---     award for a semester program).
---   * Budget: a semester scholar commits twice the award against the program's budget.
---   * Disbursement status: a semester award is 'Disbursed' once both semesters are paid (or the year's total is).
+--   * Payments: an application's payments can't add up to more than its award for the year (the award
+--     times 2 semesters, or times the program's number of months).
+--   * Budget: a scholar commits the year's total against the program's budget.
+--   * Disbursement status: 'Disbursed' once every semester or month is paid (or the year's total is).
 --
 -- Payments already made keep their amounts. Run in the Supabase SQL Editor. Safe to re-run.
 
 BEGIN;
 
 -- ── 1. All an award pays in a year ──
-CREATE OR REPLACE FUNCTION public.yearly_award(_award NUMERIC, _schedule TEXT)
+CREATE OR REPLACE FUNCTION public.yearly_award(_award NUMERIC, _schedule TEXT, _months INTEGER)
 RETURNS NUMERIC
 LANGUAGE sql
 IMMUTABLE
 AS $$
-  SELECT COALESCE(_award, 0) * CASE WHEN _schedule = 'semester' THEN 2 ELSE 1 END;
+  SELECT COALESCE(_award, 0) * CASE _schedule WHEN 'semester' THEN 2 WHEN 'monthly' THEN COALESCE(_months, 10) ELSE 1 END;
 $$;
 
--- ── 2. Money committed to a program (055, per semester ×2) ──
+-- ── 2. Money committed to a program (055, for the whole year) ──
 CREATE OR REPLACE FUNCTION public.scholarship_committed(_id UUID, _ay TEXT)
 RETURNS NUMERIC
 LANGUAGE sql
@@ -31,13 +32,13 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT COALESCE(SUM(public.yearly_award(COALESCE(a.amount_approved, s.amount, 0), s.release_schedule)), 0)
+  SELECT COALESCE(SUM(public.yearly_award(COALESCE(a.amount_approved, s.amount, 0), s.release_schedule, s.release_months)), 0)
     FROM public.applications a
     JOIN public.scholarships s ON s.id = a.scholarship_id
    WHERE a.scholarship_id = _id AND a.status = 'Approved' AND a.academic_year IS NOT DISTINCT FROM _ay;
 $$;
 
--- ── 3. Budget check on approval (031 + 055, per semester ×2) ──
+-- ── 3. Budget check on approval (031 + 055, for the whole year) ──
 CREATE OR REPLACE FUNCTION public.apply_scholarship_award()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -65,8 +66,8 @@ BEGIN
     -- Exclude this row itself: on a fresh approval it isn't in the table as Approved yet; on a later
     -- edit it already is, and would otherwise be double-counted against its own new amount.
     committed := public.scholarship_committed(s.id, NEW.academic_year)
-      - CASE WHEN OLD.status = 'Approved' THEN public.yearly_award(COALESCE(OLD.amount_approved, s.amount, 0), s.release_schedule) ELSE 0 END;
-    IF committed + public.yearly_award(NEW.amount_approved, s.release_schedule) > s.total_budget THEN
+      - CASE WHEN OLD.status = 'Approved' THEN public.yearly_award(COALESCE(OLD.amount_approved, s.amount, 0), s.release_schedule, s.release_months) ELSE 0 END;
+    IF committed + public.yearly_award(NEW.amount_approved, s.release_schedule, s.release_months) > s.total_budget THEN
       RAISE EXCEPTION 'This would exceed the budget for % (% of % already committed)', s.name, committed, s.total_budget;
     END IF;
   END IF;
@@ -74,7 +75,7 @@ BEGIN
 END;
 $$;
 
--- ── 4. Payment rules (069, per semester ×2) ──
+-- ── 4. Payment rules (069, capped at the year's total) ──
 CREATE OR REPLACE FUNCTION public.enforce_payment_term()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -106,9 +107,9 @@ BEGIN
   sched := COALESCE(sched, 'yearly');
   months := COALESCE(months, 10);
   award := COALESCE(award, app.amount_approved, 0);
+  -- A semester or monthly award is per term: the year pays it once per semester or month (074).
+  award := public.yearly_award(award, sched, months);
   -- A one-time grant is paid the same way as a once-a-year award: one 'Yearly' payment.
-  -- A semester program's award is per semester: the year pays it twice (074).
-  IF sched = 'semester' THEN award := award * 2; END IF;
   one_time := sched = 'one_time';
   IF one_time THEN sched := 'yearly'; END IF;
 
@@ -166,7 +167,7 @@ BEGIN
 END;
 $$;
 
--- ── 5. Application disbursement status (064, per semester ×2) ──
+-- ── 5. Application disbursement status (064, against the year's total) ──
 CREATE OR REPLACE FUNCTION public.application_disbursement_status(_app UUID)
 RETURNS TEXT
 LANGUAGE sql
@@ -176,7 +177,7 @@ SET search_path = public
 AS $$
   WITH a AS (
     SELECT ap.id, COALESCE(s.release_schedule, 'yearly') AS sched, COALESCE(s.release_months, 10) AS months,
-           public.yearly_award(COALESCE(ap.amount_approved, s.amount, 0), s.release_schedule) AS award
+           public.yearly_award(COALESCE(ap.amount_approved, s.amount, 0), s.release_schedule, s.release_months) AS award
       FROM public.applications ap LEFT JOIN public.scholarships s ON s.id = ap.scholarship_id
      WHERE ap.id = _app
   ), p AS (
@@ -196,6 +197,9 @@ AS $$
   END
   FROM a, p;
 $$;
+
+-- An earlier draft of this migration had a two-argument version.
+DROP FUNCTION IF EXISTS public.yearly_award(NUMERIC, TEXT);
 
 COMMIT;
 

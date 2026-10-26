@@ -13,7 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { YEAR_LEVELS } from "@/lib/scholarships";
 import { BARANGAYS, HOME_MUNICIPALITY } from "@/lib/barangays";
-import { RELEASE_SCHEDULES, asMonths, asSchedule, termAmount, yearlyAward } from "@/lib/release-schedule";
+import { RELEASE_SCHEDULES, asMonths, asSchedule, yearlyAward } from "@/lib/release-schedule";
 import { pesoFixed } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -139,7 +139,7 @@ export function ScholarshipFormFields({
 
       <Section title="Award and capacity" hint="Slots and budget refill when a new academic year starts.">
         <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="Award per scholar (₱)" htmlFor="sch-amount" hint={schedule === "one_time" ? "Paid once" : schedule === "semester" ? "Per semester, paid in each of the two" : "The yearly total"}>
+          <Field label="Award per scholar (₱)" htmlFor="sch-amount" hint={schedule === "one_time" ? "Paid once" : schedule === "semester" ? "Per semester, paid in each of the two" : schedule === "monthly" ? "Per month, paid every month" : "The yearly total"}>
             <MoneyInput id="sch-amount" name="amount" min={0} defaultValue={cur?.amount ?? 0} onValueChange={setAward} />
           </Field>
           <Field label="Budget (₱)" htmlFor="sch-budget" hint="Per academic year · 0 = no cap">
@@ -190,7 +190,7 @@ export function ScholarshipFormFields({
               </Select>
               {Number(award) > 0 && (
                 <span className="text-xs text-muted-foreground tabular-nums">
-                  {pesoFixed(termAmount(Number(award), "monthly", Number(months)))} a month (Month 1 to Month {months})
+                  {pesoFixed(Number(award))} a month (Month 1 to Month {months}): {pesoFixed(yearlyAward(Number(award), "monthly", Number(months)))} a year per scholar
                 </span>
               )}
             </div>

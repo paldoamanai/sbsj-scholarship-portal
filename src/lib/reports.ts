@@ -234,10 +234,10 @@ export function scope(data: ReportData, f: ReportFilters) {
   };
   const payDate = (p: Tables<"payments">) => p.disbursed_at || p.scheduled_date || p.created_at;
   const profById = new Map(data.profiles.map((p) => [p.id, p]));
-  // The award for the year: both semesters of a semester program.
+  // The award for the year: every semester or month of a semester or monthly program.
   const appAward = (a: ReportApp) => {
     const sch = data.scholarships.find((s) => s.id === a.scholarship_id);
-    return yearlyAward(Number(a.amount_approved ?? sch?.amount ?? 0), sch?.release_schedule);
+    return yearlyAward(Number(a.amount_approved ?? sch?.amount ?? 0), sch?.release_schedule, sch?.release_months);
   };
   return { within, termOk, progOk, appOk, payApp, payOk, payDate, profById, appAward };
 }

@@ -867,12 +867,12 @@ export default function StudentDashboardPage() {
   const appReqLines = appProgram ? requirementLines(appProgram, appRenewal ? settings.renewal_min_grade : settings.min_grade_requirement) : appMinGrade > 0 ? [`Average grade of at least ${appMinGrade}`] : [];
   const appAward = currentApp?.amount_approved ?? appProgram?.amount;
 
-  // Everything awarded to this student: approved awards, using the program amount where none was set (both semesters of a semester program).
+  // Everything awarded to this student: approved awards, using the program amount where none was set (every semester or month of the year).
   const approvedTotal = applications
     .filter((a) => a.status === "Approved")
     .reduce((t, a) => {
       const sc = scholarships.find((x) => x.id === a.scholarship_id);
-      return t + yearlyAward(Number(a.amount_approved ?? sc?.amount ?? 0), sc?.release_schedule);
+      return t + yearlyAward(Number(a.amount_approved ?? sc?.amount ?? 0), sc?.release_schedule, sc?.release_months);
     }, 0);
 
   const openDocument = async (doc: Tables<"documents">) => {
@@ -1388,7 +1388,7 @@ export default function StudentDashboardPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="rounded-xl bg-muted border border-muted p-4">
                 <p className="text-xs text-muted-foreground mb-1">{currentApp.status === "Approved" ? "Approved award" : "Award per scholar"}</p>
-                <p className="text-xl font-bold text-black">{Number(appAward) > 0 ? `${peso(appAward)}${appProgram?.release_schedule === "semester" ? " per semester" : ""}` : "To be announced"}</p>
+                <p className="text-xl font-bold text-black">{Number(appAward) > 0 ? `${peso(appAward)}${appProgram?.release_schedule === "semester" ? " per semester" : appProgram?.release_schedule === "monthly" ? " a month" : ""}` : "To be announced"}</p>
               </div>
               <div className="rounded-xl bg-muted border border-muted p-4">
                 <p className="text-xs text-muted-foreground mb-1">Required grade</p>
