@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { IDLE_MINUTES } from "@/components/IdleSignOut";
 import { LogIn, ShieldCheck, Loader2, Eye, EyeOff, GraduationCap } from "@/components/icons";
 import { createClient } from "@/lib/supabase/client";
 import { rememberCredential } from "@/lib/credentials";
@@ -78,6 +79,10 @@ export default function LoginPage() {
     // /auth/callback sends people here when an email link was invalid, expired or opened on another device.
     if (new URLSearchParams(window.location.search).get("error") === "inactive")
       toast.error("You've been signed out", { description: DEACTIVATED });
+    if (new URLSearchParams(window.location.search).get("reason") === "other_device")
+      toast.info("You were signed out", { description: "Your staff account was signed in on another device. Staff accounts can be used on one device at a time." });
+    if (new URLSearchParams(window.location.search).get("reason") === "idle")
+      toast.info("You were signed out", { description: `There was no activity for ${IDLE_MINUTES} minutes. Log in again to continue.` });
     if (new URLSearchParams(window.location.search).get("error") === "auth")
       toast.error("That link is invalid or has expired", { description: "Request a new one, or log in if your account is already verified." });
     needsSecondStep().catch(() => {});

@@ -261,7 +261,7 @@ export default function AdminProfilePanel({ profile, email, userId, role, office
       <Card>
         <CardHeader><CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Security</CardTitle></CardHeader>
         <CardContent>
-          <SecuritySettings userId={userId} logAudit={logAudit} />
+          <SecuritySettings userId={userId} logAudit={logAudit} required />
         </CardContent>
       </Card>
 

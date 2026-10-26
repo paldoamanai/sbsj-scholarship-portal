@@ -57,6 +57,7 @@ import { peso, pesoFixed as formatPHP } from "@/lib/format";
 import { MoneyInput } from "@/components/MoneyInput";
 import type { Tables, Json } from "@/integrations/supabase/types";
 import DashboardSkeleton from "@/components/DashboardSkeleton";
+import StaffTwoFactorGate from "@/components/admin/StaffTwoFactorGate";
 import { Skeleton } from "@/components/ui/skeleton";
 
 // The house map only loads in the browser, and only when a pinned house is shown.
@@ -127,7 +128,12 @@ function asObj(v: Json | null | undefined): Record<string, unknown> {
 }
 const fmtVal = (v: unknown) => (v === null || v === undefined ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v));
 
+// Staff must set up two-factor before the panel loads (migration 075).
 export default function AdminDashboardPage() {
+  return <StaffTwoFactorGate><AdminDashboard /></StaffTwoFactorGate>;
+}
+
+function AdminDashboard() {
   const router = useRouter();
   const supabase = createClient();
   const [activeSection, setActiveSection] = useState("overview");
