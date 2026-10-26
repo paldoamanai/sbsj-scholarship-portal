@@ -773,33 +773,37 @@ export default function StudentDashboardPage() {
   // uploaded from the application form.
   const docsForProgram = (p: { office?: string | null } | undefined) => programDocuments(p?.office, settings.required_documents);
   const approvalDocsFor = (p: { office?: string | null } | undefined) => approvalDocuments(p?.office, settings.required_documents);
-  // Every application the student submitted. This academic year's open and approved ones can still take
-  // uploads; the others (disapproved, withdrawn, earlier years) show what was filed with them.
+  // Each application has its own documents (migration 073). Uploads in the application form aren't
+  // filed with an application yet (application_id null); the new application takes the ones its program
+  // asks for. Letters of intent and MOAs have their own panels. Latest copy of each type wins.
+  const docMaps = new Map<string | null, Map<string, Tables<"documents">>>();
+  const docsOf = (appId: string | null) => {
+    let m = docMaps.get(appId);
+    if (!m) {
+      m = new Map();
+      for (const d of [...documents].sort((x, y) => x.uploaded_at.localeCompare(y.uploaded_at))) {
+        if (!APPLICATION_DOCS.includes(d.document_type) && (d.application_id ?? null) === appId) m.set(d.document_type, d);
+      }
+      docMaps.set(appId, m);
+    }
+    return m;
+  };
+  // A disapproved document has to be replaced, so it doesn't count as uploaded.
+  const docOkIn = (appId: string | null, t: string) => { const d = docsOf(appId).get(t); return !!d && d.status !== "Disapproved"; };
+  const isPhoto = (d: Tables<"documents"> | undefined) => !d?.mime_type || PHOTO_MIME.includes(d.mime_type);
+  const needsPhoto = (_t: string, office?: string | null) => photosOnly(office);
+
+  // Every application the student submitted. This academic year's applications still in review take
+  // uploads; the others (approved, disapproved, withdrawn, earlier years) show what was filed with them.
   const docPrograms = applications.map((a) => ({
     key: a.id, name: a.scholarships?.name ?? "Scholarship", office: a.scholarships?.office ?? null, app: a,
-    editable: yearAppIds.has(a.id) && a.status !== "Disapproved",
+    editable: yearAppIds.has(a.id) && (a.status === "Pending" || a.status === "Waitlisted"),
   }));
-  const requiredDocTypes = [...new Set(docPrograms.filter((p) => p.editable).flatMap(approvalDocsFor))];
-  const programsNeeding = (t: string) => docPrograms.filter((p) => p.editable && approvalDocsFor(p).includes(t));
   const housePinned = profile?.home_lat != null && profile?.home_lng != null;
-  // A photo where any program the document is for asks for photos (or the program being applied to does).
-  const needsPhoto = (t: string, office?: string | null) => photosOnly(office) || programsNeeding(t).some((p) => photosOnly(p.office));
-  // Documents are shared by all of this academic year's applications: filed with any of them, or still
-  // unattached (uploaded ahead of applying). Documents tied to older years don't count. Latest wins.
-  // Letters of intent and MOAs belong to one application each, so they aren't part of the shared set.
-  const inDocSet = (d: Tables<"documents">) => !APPLICATION_DOCS.includes(d.document_type) && (!d.application_id || yearAppIds.has(d.application_id));
-  const docByType = new Map<string, Tables<"documents">>();
-  [...documents]
-    .filter(inDocSet)
-    .sort((a, b) => a.uploaded_at.localeCompare(b.uploaded_at))
-    .forEach((d) => docByType.set(d.document_type, d));
-  // A disapproved document has to be replaced, so it doesn't count as uploaded.
-  const docOk = (t: string) => { const d = docByType.get(t); return !!d && d.status !== "Disapproved"; };
-  const docsUploaded = requiredDocTypes.filter(docOk).length;
-  const missingDocs = requiredDocTypes.filter(t => !docOk(t));
-  const isPhoto = (d: Tables<"documents"> | undefined) => !d?.mime_type || PHOTO_MIME.includes(d.mime_type);
-  // An approval locks the documents it relied on; a type not on file yet (or disapproved) can still be uploaded.
-  const typeOpen = (t: string) => !docOk(t);
+  // For the Overview: what the applications in review still need.
+  const openDocs = docPrograms.filter((p) => p.editable).flatMap((p) => approvalDocsFor(p).map((t) => ({ p, t, label: `${t} (${p.name})` })));
+  const docsUploaded = openDocs.filter((x) => docOkIn(x.p.key, x.t)).length;
+  const missingDocs = openDocs.filter((x) => !docOkIn(x.p.key, x.t)).map((x) => x.label);
 
   // Renewal: approved for the chosen program in an earlier academic year means this one renews it.
   const approvedBefore = applications.filter((a) => a.status === "Approved" && a.scholarship_id === applyScholarshipId && ayStart(a.academic_year) < ayStart(academicYear)).length;
@@ -845,9 +849,9 @@ export default function StudentDashboardPage() {
 
   // The chosen program's documents (the database checks the same when applying).
   const applyDocs = applyProgram ? docsForProgram(applyProgram) : [];
-  const applyMissing = applyDocs.filter((t) => !docOk(t));
+  const applyMissing = applyDocs.filter((t) => !docOkIn(null, t));
   // A document the office already verified counts even if it isn't a photo (same as the database).
-  const applyNotPhotos = applyProgram && photosOnly(applyProgram.office) ? applyDocs.filter((t) => docOk(t) && docByType.get(t)?.status !== "Verified" && !isPhoto(docByType.get(t))) : [];
+  const applyNotPhotos = applyProgram && photosOnly(applyProgram.office) ? applyDocs.filter((t) => docOkIn(null, t) && docsOf(null).get(t)?.status !== "Verified" && !isPhoto(docsOf(null).get(t))) : [];
   // MSWDO doesn't ask for a letter of intent.
   const letterNeeded = asksLetter(applyProgram?.office);
   const applyLater = applyProgram ? [
@@ -887,7 +891,8 @@ export default function StudentDashboardPage() {
   // ── Document actions ───────────────────────────────────────────────────────
   // Files go straight to private storage; the database then re-checks type, size, ownership and the
   // lock against the stored object before it accepts the row, so these client checks are for UX only.
-  const uploadDocument = async (docType: string, picked: File, office?: string | null) => {
+  // appId: the application in review it's for, or null for the application form.
+  const uploadDocument = async (docType: string, picked: File, office: string | null, appId: string | null) => {
     let file = picked;
     if (settings.maintenance_mode) { toast.error(settings.maintenance_message); return; }
     if (needsPhoto(docType, office)) {
@@ -897,16 +902,16 @@ export default function StudentDashboardPage() {
     if (file.size === 0) { toast.error("That file is empty."); return; }
     if (file.size > settings.max_upload_mb * 1024 * 1024) { toast.error(`File is too large (max ${settings.max_upload_mb} MB).`); return; }
 
-    setUploadingDoc(docType);
+    setUploadingDoc(`${appId ?? "form"}:${docType}`);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const result = await uploadUserDocument(supabase, { userId: user.id, docType, file, applicationId: openApp?.id });
+      const result = await uploadUserDocument(supabase, { userId: user.id, docType, file, applicationId: appId });
       if ("error" in result) { toast.error("Upload failed", { description: result.error }); return; }
       const row = result.row;
 
       // Replace: drop the older copies of this document (the database only allows it once a newer one exists).
-      const older = documents.filter((d) => d.document_type === docType && d.id !== row.id && inDocSet(d));
+      const older = documents.filter((d) => d.document_type === docType && d.id !== row.id && (d.application_id ?? null) === appId);
       for (const d of older) {
         const { data: gone } = await supabase.from("documents").delete().eq("id", d.id).select("id");
         const oldPath = documentPath(d);
@@ -1081,15 +1086,8 @@ export default function StudentDashboardPage() {
   const viewApplication = (id: string) => { setSelectedAppId(id); setViewOpen(true); };
   const withdrawPrompt = (a: typeof applications[number]) => { setSelectedAppId(a.id); setWithdrawOpen(true); };
 
-  // Documents shown with an application: this academic year's shared set, or what was filed with an older one.
-  const letterFor = (a: typeof applications[number]) =>
-    documents.filter((d) => d.document_type === LETTER_OF_INTENT && d.application_id === a.id)
-      .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
+  // Documents shown with an application: what was filed with it.
   const docsFor = (a: typeof applications[number]) => {
-    if (yearAppIds.has(a.id)) {
-      const moa = documents.filter((d) => d.document_type === MOA && d.application_id === a.id).sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
-      return [letterFor(a), moa, ...docByType.values()].filter((d): d is Tables<"documents"> => !!d);
-    }
     const latest = new Map<string, Tables<"documents">>();
     [...documents].filter((d) => d.application_id === a.id)
       .sort((x, y) => x.uploaded_at.localeCompare(y.uploaded_at))
@@ -1109,7 +1107,7 @@ export default function StudentDashboardPage() {
         renewalEnabled: settings.renewal_enabled, isRenewal: app.is_renewal,
       }),
       ...approvalDocsFor(program).map((t) => {
-        const d = docByType.get(t);
+        const d = docsOf(app.id).get(t);
         return { key: `doc-${t}`, label: t, ok: d?.status === "Verified", detail: !d ? "Not uploaded" : d.status === "Pending" ? "Waiting for the office to verify" : d.status };
       }),
       ...(needsHousePin(program.office) ? [{ key: "house-pin", label: "House pinned on the map", ok: housePinned, detail: housePinned ? "Saved" : "Not yet (Documents tab)" }] : []),
@@ -1137,19 +1135,17 @@ export default function StudentDashboardPage() {
     );
   };
 
-  // ── One document card, for a program applied to (Documents tab) or being applied to (application form) ──
-  // A document is shared by every program the student applies to this academic year, so the same card can
-  // show under several programs; the photo rule and notes come from the program it's shown for.
-  const docCard = (docType: string, program: { key: string; name: string; office: string | null }) => {
-      const uploaded = docByType.get(docType);
-      const busy = uploadingDoc === docType;
-      const closed = locked && !typeOpen(docType);
+  // ── One document card, for an application in review (Documents tab) or the application form (appId null) ──
+  // The photo rule and notes come from the program it's for.
+  const docCard = (docType: string, program: { key: string; name: string; office: string | null; appId: string | null }) => {
+      const uploaded = docsOf(program.appId).get(docType);
+      const busy = uploadingDoc === `${program.appId ?? "form"}:${docType}`;
       const photo = needsPhoto(docType, program.office);
       const followUp = followUpDocuments(program.office).includes(docType);
       const note = documentNote(program.office, docType);
       // Uploaded as a file where a photo is needed.
-      const notPhoto = photo && !!uploaded && uploaded.status !== "Verified" && !isPhoto(uploaded) && !closed;
-      const canRemove = !!uploaded && !locked && (!uploaded.application_id || uploaded.status === "Disapproved");
+      const notPhoto = photo && !!uploaded && uploaded.status !== "Verified" && !isPhoto(uploaded);
+      const canRemove = !!uploaded && (!uploaded.application_id || uploaded.status === "Disapproved");
       const tone = !uploaded ? "" : uploaded.status === "Disapproved" ? "border-red-200" : uploaded.status === "Verified" ? "border-emerald-200" : "border-amber-100";
       return (
         <Panel key={`${program.key}-${docType}`} className={`p-4 ${tone}`}>
@@ -1181,15 +1177,15 @@ export default function StudentDashboardPage() {
                 </Button>
               )}
               <Label className={`flex-1 sm:flex-none ${busy ? "pointer-events-none" : "cursor-pointer"}`}>
-                <Input type="file" className="hidden" accept={photo ? "image/jpeg,image/png" : ".pdf,.jpg,.jpeg,.png"} disabled={closed || busy}
+                <Input type="file" className="hidden" accept={photo ? "image/jpeg,image/png" : ".pdf,.jpg,.jpeg,.png"} disabled={busy}
                   onChange={async (e) => {
                     const input = e.target;
                     const file = input.files?.[0];
                     input.value = ""; // so picking the same file again still fires onChange
-                    if (file) await uploadDocument(docType, file, program.office);
+                    if (file) await uploadDocument(docType, file, program.office, program.appId);
                   }} />
                 <span className={`inline-flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 sm:py-1.5 text-xs font-semibold transition-colors ${
-                  closed || busy ? "opacity-50 pointer-events-none border-border text-muted-foreground" :
+                  busy ? "opacity-50 pointer-events-none border-border text-muted-foreground" :
                   uploaded && uploaded.status !== "Disapproved" ? "border-primary/20 text-primary hover:bg-accent" : "border-primary bg-primary text-white hover:bg-primary"
                 }`}>
                   {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
@@ -1239,7 +1235,7 @@ export default function StudentDashboardPage() {
         <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
           <Lock className="h-4 w-4 text-amber-700 shrink-0" />
           <p className="text-sm text-amber-800">
-            You are approved for <strong>{approvedApps.map((a) => a.scholarships?.name ?? "a scholarship").join(", ")}</strong>. Your school details and documents are now locked, but you can still apply to other open programs. Each program reviews you against its own requirements.
+            You are approved for <strong>{approvedApps.map((a) => a.scholarships?.name ?? "a scholarship").join(", ")}</strong>. Your school details are now locked, but you can still apply to other open programs. Each program reviews you against its own requirements.
           </p>
         </div>
       )}
@@ -1415,7 +1411,7 @@ export default function StudentDashboardPage() {
                 {[
                   ...appReqLines,
                   ...(appProgram?.eligibility ? [appProgram.eligibility] : []),
-                  `Keep these documents on file: ${(appProgram ? approvalDocsFor(appProgram) : requiredDocTypes).join(", ") || "none required"}${appProgram && photosOnly(appProgram.office) ? " (photos, JPG or PNG)" : ""}.`,
+                  `Keep these documents on file with this application: ${approvalDocsFor(appProgram ?? currentApp?.scholarships ?? undefined).join(", ") || "none required"}${appProgram && photosOnly(appProgram.office) ? " (photos, JPG or PNG)" : ""}.`,
                   ...(needsHomeVisit(appProgram?.office) ? ["The office visits your home before deciding."] : []),
                   ...(needsMoa(appProgram?.office) ? [`A signed ${MOA} is needed before your first payout.`] : []),
                   ...[LETTER_OF_INTENT, ...approvalDocsFor(appProgram)].flatMap((t) => { const n = documentNote(appProgram?.office, t); return n ? [`${t}: ${n.replace(/^Also s/, "S")}`] : []; }),
@@ -1559,10 +1555,10 @@ export default function StudentDashboardPage() {
           <DialogSection title={`Documents for ${applyProgram.name}`}>
             <p className="text-xs text-muted-foreground mb-2">
               {applyMissing.length > 0 || applyNotPhotos.length > 0
-                ? `Upload ${photosOnly(applyProgram.office) ? "a photo of " : ""}each document to submit. Documents you already uploaded this academic year count for every program.`
+                ? `Upload ${photosOnly(applyProgram.office) ? "a photo of " : ""}each document to submit. Each application has its own documents, so upload them here even if another application has them.`
                 : "All set. These are on file for this application."}
             </p>
-            <div className="grid grid-cols-1 gap-2">{applyDocs.map((t) => docCard(t, { key: "apply", name: applyProgram.name, office: applyProgram.office ?? null }))}</div>
+            <div className="grid grid-cols-1 gap-2">{applyDocs.map((t) => docCard(t, { key: "apply", name: applyProgram.name, office: applyProgram.office ?? null, appId: null }))}</div>
           </DialogSection>
         )}
         {applyLater.length > 0 && (
@@ -1604,12 +1600,7 @@ export default function StudentDashboardPage() {
   // ── Section: Documents ─────────────────────────────────────────────────────
   const Documents = () => (
     <div className="space-y-4">
-      {locked && (
-        <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-          <Lock className="h-4 w-4 text-red-600 shrink-0" />
-          <p className="text-sm text-red-700">Documents are locked because a scholarship has been approved. Your verified documents still count for your other applications, and you can still upload documents you don&apos;t have on file yet.</p>
-        </div>
-      )}
+      <p className="text-sm text-muted-foreground">Each application has its own documents. Upload them under the application they&apos;re for; once an application is decided, its documents can no longer change.</p>
 
 
       {docPrograms.length === 0 ? (
@@ -1621,7 +1612,7 @@ export default function StudentDashboardPage() {
         </Panel>
       ) : docPrograms.map((program) => {
         const docs = approvalDocsFor(program);
-        const done = docs.filter(docOk).length;
+        const done = docs.filter((t) => docOkIn(program.key, t)).length;
         const a = program.app;
         const filed = program.editable ? [] : docsFor(a);
         return (
@@ -1645,13 +1636,13 @@ export default function StudentDashboardPage() {
                 </div>
                 <p className="text-xs text-muted-foreground">{photosOnly(program.office) ? "Photos (JPG or PNG)" : "PDF, JPG or PNG"}, up to {settings.max_upload_mb} MB each.</p>
                 {docs.length === 0 ? <p className="text-sm text-muted-foreground">This program doesn&apos;t ask for documents.</p> : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{docs.map((t) => docCard(t, program))}</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{docs.map((t) => docCard(t, { ...program, appId: program.key }))}</div>
                 )}
               </>
             ) : (
               <>
                 <p className="text-xs text-muted-foreground">
-                  {a.status === "Withdrawn" ? "Withdrawn." : a.status === "Disapproved" ? "Decided." : "From an earlier academic year."} These are the documents filed with it; nothing more is needed.
+                  {a.status === "Withdrawn" ? "Withdrawn." : a.status === "Approved" ? "Approved." : a.status === "Disapproved" ? "Decided." : "From an earlier academic year."} These are the documents filed with it{a.status === "Approved" ? ", and they can no longer change" : "; nothing more is needed"}.
                 </p>
                 {filed.length === 0 ? <p className="text-sm text-muted-foreground">No documents on file.</p> : (
                   <ul className="space-y-1.5">
@@ -1770,8 +1761,8 @@ export default function StudentDashboardPage() {
           issues={issues} gradeUpdates={gradeUpdates} scholarships={scholarships} notifications={notifications} settings={settings}
           applyBlocked={applyBlocked} approvedTotal={approvedTotal} locked={locked} isDisbursed={isDisbursed} academicYear={academicYear}
           docStatus={{
-            uploaded: docsUploaded, required: requiredDocTypes.length, missing: missingDocs,
-            disapproved: requiredDocTypes.filter((t) => docByType.get(t)?.status === "Disapproved").map((t) => ({ type: t, note: docByType.get(t)?.review_note ?? null })),
+            uploaded: docsUploaded, required: openDocs.length, missing: missingDocs,
+            disapproved: openDocs.filter((x) => docsOf(x.p.key).get(x.t)?.status === "Disapproved").map((x) => ({ type: x.label, note: docsOf(x.p.key).get(x.t)?.review_note ?? null })),
           }}
           onNavigate={setActive}
           onApply={(id) => { openApply(id); setActive("application"); }}

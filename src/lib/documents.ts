@@ -3,11 +3,11 @@ import type { Tables } from "@/integrations/supabase/types";
 
 export const DOC_MIME = ["application/pdf", "image/jpeg", "image/png"];
 
-/** Filed with each application on its own, not shared like the required documents (migration 063). */
+/** Filed with each application on its own, with its own field in the application form (migration 063). */
 export const LETTER_OF_INTENT = "Letter of Intent";
 /** Filed with an approved application before its first payout, where the office asks for one (migration 071). */
 export const MOA = "MOA Agreement Letter";
-/** Documents that belong to one application rather than the student's shared set. */
+/** Documents with their own panels instead of a required-documents card. */
 export const APPLICATION_DOCS = [LETTER_OF_INTENT, MOA];
 export const PHOTO_MIME = ["image/jpeg", "image/png"];
 

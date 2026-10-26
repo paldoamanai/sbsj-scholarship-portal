@@ -124,7 +124,7 @@ export default function Overview(p: OverviewProps) {
     }
     const disapprovedTypes = new Set(p.docStatus.disapproved.map((d) => d.type));
     const gone = p.docStatus.missing.filter((m) => !disapprovedTypes.has(m));
-    if (gone.length > 0 && approvedApps.length === 0) {
+    if (gone.length > 0) {
       out.push({ id: "docs", tone: "amber", title: `Upload ${gone.length} required document${gone.length === 1 ? "" : "s"}`, detail: gone.join(", "), tab: "documents", cta: "Upload" });
     }
     if (profile?.average_grade != null && !profile.grade_verified_at && !p.gradeUpdates.some((g) => g.status === "Pending" || g.status === "Disapproved")) {
@@ -136,7 +136,7 @@ export default function Overview(p: OverviewProps) {
 
     const order = { red: 0, amber: 1, blue: 2, green: 3 } as const;
     return out.sort((a, b) => order[a.tone] - order[b.tone]);
-  }, [p.docStatus, p.gradeUpdates, p.issues, live, completeness, approvedApps.length, profile, yearApps]);
+  }, [p.docStatus, p.gradeUpdates, p.issues, live, completeness, profile, yearApps]);
 
   // ── programs ──
   // Open programs first, so students see what they can apply for right now.

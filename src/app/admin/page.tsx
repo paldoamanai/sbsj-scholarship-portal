@@ -49,7 +49,7 @@ import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
 import { asMonths, asSchedule, isMonthTerm, openTerms, secondSemesterGradeWarning, termAmount, termLabel, termsFor, type PaymentTerm } from "@/lib/release-schedule";
 import { OFFICE_FULL_NAME, OFFICE_LABEL, STAFF_OFFICES, isOffice, officeLogo, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 import { printReceiptSlip } from "@/lib/receipt-slip";
-import { APPLICATION_DOCS, LETTER_OF_INTENT, MOA } from "@/lib/documents";
+import { LETTER_OF_INTENT, MOA } from "@/lib/documents";
 import { approvalDocuments, needsHomeVisit, needsHousePin, needsMoa } from "@/lib/office-requirements";
 import { googleMapsLink } from "@/lib/geo";
 import dynamic from "next/dynamic";
@@ -1114,12 +1114,11 @@ export default function AdminDashboardPage() {
   };
 
   // Each program (office) decides on its own: the student must pass that program's requirements and
-  // have every required document verified. Documents are shared by the student's applications for the academic year.
+  // have every required document verified. Each application has its own documents (migration 073).
   const requirementChecks = (a: { id: string; user_id: string; academic_year: string | null; scholarship_id: string | null; is_renewal: boolean; home_visit_at?: string | null; home_visit_done_at?: string | null }): RequirementCheck[] => {
     const settings = parseSettings(systemSettings);
     const program = scholarships.find((sc) => sc.id === a.scholarship_id);
     const profile = profiles.find((pr) => pr.id === a.user_id);
-    const sameYearIds = new Set(applications.filter((x) => x.user_id === a.user_id && x.academic_year === a.academic_year).map((x) => x.id));
     // Each application has its own letter of intent. Applications from before letters were asked for have none.
     const letter = allDocs.filter((d) => d.application_id === a.id && d.document_type === LETTER_OF_INTENT)
       .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
@@ -1131,7 +1130,7 @@ export default function AdminDashboardPage() {
     const docs = approvalDocuments(program?.office, settings.required_documents).map((type): RequirementCheck => {
       // Latest copy wins.
       const latest = allDocs
-        .filter((d) => d.user_id === a.user_id && d.document_type === type && (d.application_id === null || sameYearIds.has(d.application_id)))
+        .filter((d) => d.application_id === a.id && d.document_type === type)
         .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
       return { key: `doc-${type}`, label: `${type} verified`, ok: latest?.status === "Verified", detail: latest ? latest.status : "Missing" };
     });
@@ -1278,13 +1277,8 @@ export default function AdminDashboardPage() {
     setAppNotes((prev) => prev.filter((x) => x.id !== n.id));
   };
 
-  // Documents that count for an application: unattached ones, or those filed with one of the student's
-  // applications from the same academic year (the database's in_document_set()).
-  const countsForApp = (a: AppRow) => {
-    const ids = new Set(applications.filter((x) => x.user_id === a.user_id && x.academic_year === a.academic_year).map((x) => x.id));
-    // A letter of intent or MOA counts only for its own application; the other documents are shared by the year's applications.
-    return (d: AdminDoc) => APPLICATION_DOCS.includes(d.type) ? d.applicationId === a.id : d.applicationId === null || ids.has(d.applicationId);
-  };
+  // Documents that count for an application: the ones filed with it (migration 073).
+  const countsForApp = (a: AppRow) => (d: AdminDoc) => d.applicationId === a.id;
   const logAudit = async (action: string, entityType: string, entityId?: string, prev?: Json | null, next?: Json | null) => {
     const { data: { session } } = await supabase.auth.getSession();
     const user = session?.user;
@@ -1935,7 +1929,7 @@ export default function AdminDashboardPage() {
                 const cap = va ? capacityFor(va, awardOverride) : null;
                 const counts = va ? countsForApp(va) : null;
                 const currentDocs = counts ? viewDocs.filter(counts) : [];
-                const olderDocs = counts ? viewDocs.filter((d) => !counts(d) && !APPLICATION_DOCS.includes(d.type)) : [];
+                const olderDocs = counts ? viewDocs.filter((d) => !counts(d)) : [];
                 const livePay = va ? hasLivePayment(va.id) : false;
                 const close = () => setViewApp(null);
                 return (
@@ -2092,7 +2086,7 @@ export default function AdminDashboardPage() {
                         {!docsLoading && olderDocs.length > 0 && (
                           <details className="mt-2 text-sm">
                             <summary className="cursor-pointer text-xs text-muted-foreground">
-                              {olderDocs.length} document{olderDocs.length === 1 ? "" : "s"} from earlier years (don&apos;t count for this application)
+                              {olderDocs.length} document{olderDocs.length === 1 ? "" : "s"} filed with the student&apos;s other applications or not yet filed (don&apos;t count for this one)
                             </summary>
                             {docList(olderDocs, false)}
                           </details>

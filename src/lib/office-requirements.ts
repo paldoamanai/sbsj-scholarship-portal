@@ -4,7 +4,7 @@ import { OFFICE_LABEL, isOffice, type StaffOffice } from "@/lib/permissions";
 /**
  * What an office asks for instead of Settings → Required Documents (migrations 070 and 071, which
  * keep the same rules in office_required_documents() and the office_* functions). The letter of
- * intent and the MOA are filed with one application each, so they aren't shared documents; their
+ * intent and the MOA have their own fields and checks (063, 071), so they aren't in these lists; their
  * notes are kept here with the rest.
  */
 type OfficeRequirements = {
@@ -61,7 +61,7 @@ export const HOUSE_PHOTO = "House Photo";
 
 const own = (office: string | null | undefined) => (isOffice(office) ? OFFICE_REQUIREMENTS[office] : undefined);
 
-/** The shared documents a program asks for to apply: its office's own list, or the Settings list. */
+/** The documents a program asks for to apply: its office's own list, or the Settings list. */
 export const programDocuments = (office: string | null | undefined, settingsList: string[]) =>
   own(office)?.documents ?? settingsList;
 

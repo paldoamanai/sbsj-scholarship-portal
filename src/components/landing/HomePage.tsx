@@ -210,7 +210,7 @@ export default function HomePage({ initial }: { initial: HomePageData }) {
   const history = initial.scholarsByYear.length >= 2 ? initial.scholarsByYear : [];
   const historyMax = Math.max(1, ...history.map((h) => h.scholars));
 
-  // Plus a letter of intent with each application, which isn't one of the shared documents.
+  // Plus a letter of intent with each application, which has its own field in the application form.
   // Offices with their own list (Barangay Affairs) are described after it.
   const docs = [...settings.required_documents, "Letter of intent (a photo), for each program you apply to", ...officesWithOwnDocuments().map(officeDocumentsSummary)];
 
