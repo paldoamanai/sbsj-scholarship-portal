@@ -773,10 +773,14 @@ export default function StudentDashboardPage() {
   // uploaded from the application form.
   const docsForProgram = (p: { office?: string | null } | undefined) => programDocuments(p?.office, settings.required_documents);
   const approvalDocsFor = (p: { office?: string | null } | undefined) => approvalDocuments(p?.office, settings.required_documents);
-  const docPrograms = yearApps.filter((a) => a.status !== "Disapproved")
-    .map((a) => ({ key: a.id, name: a.scholarships?.name ?? "Scholarship", office: a.scholarships?.office ?? null }));
-  const requiredDocTypes = [...new Set(docPrograms.flatMap(approvalDocsFor))];
-  const programsNeeding = (t: string) => docPrograms.filter((p) => approvalDocsFor(p).includes(t));
+  // Every application the student submitted. This academic year's open and approved ones can still take
+  // uploads; the others (disapproved, withdrawn, earlier years) show what was filed with them.
+  const docPrograms = applications.map((a) => ({
+    key: a.id, name: a.scholarships?.name ?? "Scholarship", office: a.scholarships?.office ?? null, app: a,
+    editable: yearAppIds.has(a.id) && a.status !== "Disapproved",
+  }));
+  const requiredDocTypes = [...new Set(docPrograms.filter((p) => p.editable).flatMap(approvalDocsFor))];
+  const programsNeeding = (t: string) => docPrograms.filter((p) => p.editable && approvalDocsFor(p).includes(t));
   const housePinned = profile?.home_lat != null && profile?.home_lng != null;
   // A photo where any program the document is for asks for photos (or the program being applied to does).
   const needsPhoto = (t: string, office?: string | null) => photosOnly(office) || programsNeeding(t).some((p) => photosOnly(p.office));
@@ -1615,22 +1619,51 @@ export default function StudentDashboardPage() {
       ) : docPrograms.map((program) => {
         const docs = approvalDocsFor(program);
         const done = docs.filter(docOk).length;
+        const a = program.app;
+        const filed = program.editable ? [] : docsFor(a);
         return (
-          <Panel key={program.key} className="p-4 sm:p-5 space-y-3">
+          <Panel key={program.key} className={`p-4 sm:p-5 space-y-3 ${program.editable ? "" : "bg-muted/20"}`}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-foreground truncate">{program.name}</p>
                 <p className="text-xs text-muted-foreground">
-                  {isOffice(program.office) ? `${OFFICE_LABEL[program.office]} · ` : ""}{photosOnly(program.office) ? "Photos (JPG or PNG)" : "PDF, JPG or PNG"}, up to {settings.max_upload_mb} MB each
+                  {[isOffice(program.office) ? OFFICE_LABEL[program.office] : null, a.academic_year, `submitted ${formatDate(a.created_at)}`].filter(Boolean).join(" · ")}
                 </p>
               </div>
-              <span className="text-sm font-bold text-primary shrink-0">{done}/{docs.length}</span>
+              <div className="flex items-center gap-2 shrink-0">
+                <StatusBadge status={a.status} />
+                {program.editable && <span className="text-sm font-bold text-primary">{done}/{docs.length}</span>}
+              </div>
             </div>
-            <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-              <div className="h-full rounded-full bg-primary transition-all duration-500" style={{ width: `${docs.length ? (done / docs.length) * 100 : 100}%` }} />
-            </div>
-            {docs.length === 0 ? <p className="text-sm text-muted-foreground">This program doesn&apos;t ask for documents.</p> : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{docs.map((t) => docCard(t, program))}</div>
+            {program.editable ? (
+              <>
+                <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                  <div className="h-full rounded-full bg-primary transition-all duration-500" style={{ width: `${docs.length ? (done / docs.length) * 100 : 100}%` }} />
+                </div>
+                <p className="text-xs text-muted-foreground">{photosOnly(program.office) ? "Photos (JPG or PNG)" : "PDF, JPG or PNG"}, up to {settings.max_upload_mb} MB each.</p>
+                {docs.length === 0 ? <p className="text-sm text-muted-foreground">This program doesn&apos;t ask for documents.</p> : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{docs.map((t) => docCard(t, program))}</div>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-muted-foreground">
+                  {a.status === "Withdrawn" ? "Withdrawn." : a.status === "Disapproved" ? "Decided." : "From an earlier academic year."} These are the documents filed with it; nothing more is needed.
+                </p>
+                {filed.length === 0 ? <p className="text-sm text-muted-foreground">No documents on file.</p> : (
+                  <ul className="space-y-1.5">
+                    {filed.map((d) => (
+                      <li key={d.id}>
+                        <button type="button" onClick={() => openDocument(d)}
+                          className="w-full flex items-center justify-between gap-2 rounded-xl border bg-card px-3 py-2 text-sm hover:bg-muted text-left cursor-pointer">
+                          <span className="min-w-0 truncate"><span className="font-medium">{d.document_type}</span> · {d.file_name}</span>
+                          <span className="flex items-center gap-2 shrink-0"><DocStatusBadge status={d.status} /><Eye className="h-3.5 w-3.5 text-muted-foreground" /></span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </Panel>
         );
