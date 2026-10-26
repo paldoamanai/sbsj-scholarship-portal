@@ -38,6 +38,7 @@ import { APPLICATION_DOCS, DOC_MIME, LETTER_OF_INTENT, MOA, PHOTO_MIME, document
 import { uploadPendingDocuments } from "@/lib/pending-documents";
 import { HOUSE_PHOTO, approvalDocuments, asksLetter, documentNote, followUpDocuments, needsHomeVisit, needsHousePin, needsMoa, photosOnly, programDocuments } from "@/lib/office-requirements";
 import HouseLocationDialog from "@/components/student/HouseLocationDialog";
+import { OFFICE_LABEL, isOffice } from "@/lib/permissions";
 import { googleMapsLink } from "@/components/student/HouseMap";
 import { availabilityInfo, programChecks, requirementLines, sameTown, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
 import { inBarangays } from "@/lib/barangays";
@@ -766,18 +767,19 @@ export default function StudentDashboardPage() {
 
   const unreadCount = unreadTotal;
   useUnreadTitle(unreadTotal);
-  // Each program asks for its office's documents (Barangay Affairs has its own list, as photos) or the
-  // Settings list. The Documents tab shows what this year's applications and the open programs ask for.
-  // MSWDO also has documents that can follow after applying (needed before approval).
+  // Each program asks for its office's documents (Barangay Affairs and MSWDO have their own lists, as
+  // photos) or the Settings list; MSWDO also has documents that can follow after applying. The Documents
+  // tab shows what the programs applied to this academic year ask for; the documents needed to apply are
+  // uploaded from the application form.
   const docsForProgram = (p: { office?: string | null } | undefined) => programDocuments(p?.office, settings.required_documents);
   const approvalDocsFor = (p: { office?: string | null } | undefined) => approvalDocuments(p?.office, settings.required_documents);
-  const relevantPrograms = [...scholarships.filter((s) => appliedProgramIds.has(s.id)), ...programsToApply];
-  const requiredDocTypes = relevantPrograms.length ? [...new Set(relevantPrograms.flatMap(approvalDocsFor))] : settings.required_documents;
-  const programsNeeding = (t: string) => relevantPrograms.filter((p) => approvalDocsFor(p).includes(t));
-  const followUpOnly = (t: string) => programsNeeding(t).length > 0 && programsNeeding(t).every((p) => followUpDocuments(p.office).includes(t));
+  const docPrograms = yearApps.filter((a) => a.status !== "Disapproved")
+    .map((a) => ({ key: a.id, name: a.scholarships?.name ?? "Scholarship", office: a.scholarships?.office ?? null }));
+  const requiredDocTypes = [...new Set(docPrograms.flatMap(approvalDocsFor))];
+  const programsNeeding = (t: string) => docPrograms.filter((p) => approvalDocsFor(p).includes(t));
   const housePinned = profile?.home_lat != null && profile?.home_lng != null;
-  const needsPhoto = (t: string) => programsNeeding(t).some((p) => photosOnly(p.office));
-  const notesFor = (t: string) => [...new Set(programsNeeding(t).map((p) => documentNote(p.office, t)).filter((n): n is string => !!n))];
+  // A photo where any program the document is for asks for photos (or the program being applied to does).
+  const needsPhoto = (t: string, office?: string | null) => photosOnly(office) || programsNeeding(t).some((p) => photosOnly(p.office));
   // Documents are shared by all of this academic year's applications: filed with any of them, or still
   // unattached (uploaded ahead of applying). Documents tied to older years don't count. Latest wins.
   // Letters of intent and MOAs belong to one application each, so they aren't part of the shared set.
@@ -880,10 +882,10 @@ export default function StudentDashboardPage() {
   // ── Document actions ───────────────────────────────────────────────────────
   // Files go straight to private storage; the database then re-checks type, size, ownership and the
   // lock against the stored object before it accepts the row, so these client checks are for UX only.
-  const uploadDocument = async (docType: string, picked: File) => {
+  const uploadDocument = async (docType: string, picked: File, office?: string | null) => {
     let file = picked;
     if (settings.maintenance_mode) { toast.error(settings.maintenance_message); return; }
-    if (needsPhoto(docType)) {
+    if (needsPhoto(docType, office)) {
       if (!PHOTO_MIME.includes(file.type)) { toast.error(`${docType} must be a photo (JPG or PNG).`); return; }
       file = await shrinkPhoto(file, settings.max_upload_mb * 1024 * 1024);
     } else if (!DOC_MIME.includes(file.type)) { toast.error("Upload a PDF, JPG or PNG file."); return; }
@@ -1126,6 +1128,102 @@ export default function StudentDashboardPage() {
         {passing < checks.length && <p className="text-[11px] text-muted-foreground mt-2">The office can approve this application once every requirement is met.</p>}
       </div>
     );
+  };
+
+  // ── One document card, for a program applied to (Documents tab) or being applied to (application form) ──
+  // A document is shared by every program the student applies to this academic year, so the same card can
+  // show under several programs; the photo rule and notes come from the program it's shown for.
+  const docCard = (docType: string, program: { key: string; name: string; office: string | null }) => {
+      const uploaded = docByType.get(docType);
+      const busy = uploadingDoc === docType;
+      const closed = locked && !typeOpen(docType);
+      const photo = needsPhoto(docType, program.office);
+      const followUp = followUpDocuments(program.office).includes(docType);
+      const note = documentNote(program.office, docType);
+      // Uploaded as a file where a photo is needed.
+      const notPhoto = photo && !!uploaded && !isPhoto(uploaded) && !closed;
+      const canRemove = !!uploaded && !locked && (!uploaded.application_id || uploaded.status === "Disapproved");
+      const tone = !uploaded ? "" : uploaded.status === "Disapproved" ? "border-red-200" : uploaded.status === "Verified" ? "border-emerald-200" : "border-amber-100";
+      return (
+        <Panel key={`${program.key}-${docType}`} className={`p-4 ${tone}`}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${
+                !uploaded ? "bg-muted" : uploaded.status === "Disapproved" ? "bg-red-100" : uploaded.status === "Verified" ? "bg-emerald-100" : "bg-amber-100"}`}>
+                <FileText className={`h-5 w-5 ${
+                  !uploaded ? "text-muted-foreground" : uploaded.status === "Disapproved" ? "text-red-600" : uploaded.status === "Verified" ? "text-emerald-700" : "text-amber-700"}`} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-foreground truncate">{docType}</p>
+                <p className="text-xs text-muted-foreground truncate">
+                  {uploaded ? [uploaded.file_name, fmtSize(uploaded.file_size)].filter(Boolean).join(" · ") : photo ? "Not uploaded · photo (JPG or PNG)" : "Not uploaded"}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 items-center sm:shrink-0">
+              {uploaded && (
+                <Button size="sm" variant="outline" className="h-10 w-10 sm:h-8 sm:w-8 p-0 rounded-xl border-border hover:bg-muted"
+                  aria-label={`View ${docType}`} onClick={() => openDocument(uploaded)}>
+                  <Eye className="h-3.5 w-3.5 text-muted-foreground" />
+                </Button>
+              )}
+              {canRemove && (
+                <Button size="sm" variant="outline" className="h-10 w-10 sm:h-8 sm:w-8 p-0 rounded-xl border-red-200 hover:bg-red-50"
+                  aria-label={`Remove ${docType}`} onClick={() => setRemoveDoc(uploaded)}>
+                  <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                </Button>
+              )}
+              <Label className={`flex-1 sm:flex-none ${busy ? "pointer-events-none" : "cursor-pointer"}`}>
+                <Input type="file" className="hidden" accept={photo ? "image/jpeg,image/png" : ".pdf,.jpg,.jpeg,.png"} disabled={closed || busy}
+                  onChange={async (e) => {
+                    const input = e.target;
+                    const file = input.files?.[0];
+                    input.value = ""; // so picking the same file again still fires onChange
+                    if (file) await uploadDocument(docType, file, program.office);
+                  }} />
+                <span className={`inline-flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 sm:py-1.5 text-xs font-semibold transition-colors ${
+                  closed || busy ? "opacity-50 pointer-events-none border-border text-muted-foreground" :
+                  uploaded && uploaded.status !== "Disapproved" ? "border-primary/20 text-primary hover:bg-accent" : "border-primary bg-primary text-white hover:bg-primary"
+                }`}>
+                  {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+                  {busy ? "Uploading…" : uploaded ? (uploaded.status === "Disapproved" ? "Upload new" : "Replace") : "Upload"}
+                </span>
+              </Label>
+            </div>
+          </div>
+          {(followUp || note || notPhoto) && (
+            <div className="mt-2 space-y-0.5 text-[11px] text-muted-foreground">
+              {followUp && <p>Can be uploaded after you apply (needed before approval).</p>}
+              {note && <p className="font-medium text-foreground">{note}</p>}
+              {notPhoto && <p className="font-medium text-red-700">This program needs a photo (JPG or PNG). Upload a photo to replace this file.</p>}
+            </div>
+          )}
+          {uploaded && (
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              <DocStatusBadge status={uploaded.status} />
+              <span className="text-[11px] text-muted-foreground">Uploaded {new Date(uploaded.uploaded_at).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</span>
+            </div>
+          )}
+          {docType === HOUSE_PHOTO && (
+            <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${housePinned ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+              <p className="font-semibold flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{housePinned ? "House pinned on the map" : "Pin your house on the map too"}</p>
+              {housePinned && profile?.home_landmark && <p className="mt-0.5">Landmark: {profile.home_landmark}</p>}
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" className="h-8 rounded-lg text-xs bg-white" onClick={() => setHouseOpen(true)}>{housePinned ? "Change pin" : "Pin location"}</Button>
+                {housePinned && (
+                  <a className="inline-flex h-8 items-center rounded-lg border bg-white px-2.5 font-medium hover:bg-muted" target="_blank" rel="noreferrer"
+                    href={googleMapsLink({ lat: profile!.home_lat!, lng: profile!.home_lng! })}>Open in Google Maps</a>
+                )}
+              </div>
+            </div>
+          )}
+          {uploaded?.status === "Disapproved" && uploaded.review_note && (
+            <p className="mt-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+              <span className="font-semibold">Reason: </span>{uploaded.review_note}
+            </p>
+          )}
+        </Panel>
+      );
   };
 
   const Application = () => (
@@ -1438,17 +1536,6 @@ export default function StudentDashboardPage() {
             <div className="space-y-1">{applyIssues.map((m) => <p key={m}>{m}</p>)}</div>
           </div>
         )}
-        {(applyMissing.length > 0 || applyNotPhotos.length > 0) && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-            <p className="font-semibold mb-1">Upload your required documents first</p>
-            {applyMissing.length > 0 && <p className="mb-2">Missing or disapproved: {applyMissing.join(", ")}.</p>}
-            {applyNotPhotos.length > 0 && <p className="mb-2">This program needs a photo (JPG or PNG) of each document. Upload a photo of: {applyNotPhotos.join(", ")}.</p>}
-            <Button size="sm" variant="outline" className="rounded-xl border-amber-300 text-amber-800 hover:bg-amber-100"
-              onClick={() => { setApplyDialogOpen(false); setActive("documents"); }}>
-              <Upload className="mr-1 h-3 w-3" /> Go to Documents
-            </Button>
-          </div>
-        )}
         <DialogField label="Scholarship Program *" htmlFor="apply-program">
           <Select value={applyScholarshipId} onValueChange={setApplyScholarshipId}>
             <SelectTrigger id="apply-program" className="rounded-xl border-border"><SelectValue placeholder="Select program" /></SelectTrigger>
@@ -1461,6 +1548,16 @@ export default function StudentDashboardPage() {
             </SelectContent>
           </Select>
         </DialogField>
+        {applyProgram && applyDocs.length > 0 && (
+          <DialogSection title={`Documents for ${applyProgram.name}`}>
+            <p className="text-xs text-muted-foreground mb-2">
+              {applyMissing.length > 0 || applyNotPhotos.length > 0
+                ? `Upload ${photosOnly(applyProgram.office) ? "a photo of " : ""}each document to submit. Documents you already uploaded this academic year count for every program.`
+                : "All set. These are on file for this application."}
+            </p>
+            <div className="grid grid-cols-1 gap-2">{applyDocs.map((t) => docCard(t, { key: "apply", name: applyProgram.name, office: applyProgram.office ?? null }))}</div>
+          </DialogSection>
+        )}
         {applyLater.length > 0 && (
           <div className="rounded-xl border border-primary/20 bg-accent px-4 py-3 text-sm text-foreground">
             <p className="font-semibold mb-1">After you apply</p>
@@ -1507,119 +1604,37 @@ export default function StudentDashboardPage() {
         </div>
       )}
 
-      {/* Progress bar */}
-      <Panel className="p-5">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-sm font-semibold text-foreground">Upload Progress</span>
-          <span className="text-sm font-bold text-primary">{docsUploaded}/{requiredDocTypes.length}</span>
-        </div>
-        <div className="h-2.5 w-full rounded-full bg-muted overflow-hidden">
-          <div
-            className="h-full rounded-full bg-primary transition-all duration-500"
-            style={{ width: `${requiredDocTypes.length ? (docsUploaded / requiredDocTypes.length) * 100 : 100}%` }}
-          />
-        </div>
-        <p className="text-xs text-muted-foreground mt-2">
-          {docsUploaded === requiredDocTypes.length ? "All required documents uploaded." : `${requiredDocTypes.length - docsUploaded} document(s) remaining.`}
-          {" "}{requiredDocTypes.every(needsPhoto) ? "Photos (JPG or PNG)" : "PDF, JPG or PNG"}, up to {settings.max_upload_mb} MB each.
-        </p>
-      </Panel>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {requiredDocTypes.map((docType) => {
-          const uploaded = docByType.get(docType);
-          const busy = uploadingDoc === docType;
-          const closed = locked && !typeOpen(docType);
-          const photo = needsPhoto(docType);
-          const forPrograms = programsNeeding(docType);
-          // Only some programs ask for it, or it was uploaded as a file where a photo is needed.
-          const narrower = forPrograms.length > 0 && forPrograms.length < relevantPrograms.length;
-          const notPhoto = photo && !!uploaded && !isPhoto(uploaded) && !closed;
-          const canRemove = !!uploaded && !locked && (!uploaded.application_id || uploaded.status === "Disapproved");
-          const tone = !uploaded ? "" : uploaded.status === "Disapproved" ? "border-red-200" : uploaded.status === "Verified" ? "border-emerald-200" : "border-amber-100";
-          return (
-            <Panel key={docType} className={`p-4 ${tone}`}>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${
-                    !uploaded ? "bg-muted" : uploaded.status === "Disapproved" ? "bg-red-100" : uploaded.status === "Verified" ? "bg-emerald-100" : "bg-amber-100"}`}>
-                    <FileText className={`h-5 w-5 ${
-                      !uploaded ? "text-muted-foreground" : uploaded.status === "Disapproved" ? "text-red-600" : uploaded.status === "Verified" ? "text-emerald-700" : "text-amber-700"}`} />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-foreground truncate">{docType}</p>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {uploaded ? [uploaded.file_name, fmtSize(uploaded.file_size)].filter(Boolean).join(" · ") : photo ? "Not uploaded · photo (JPG or PNG)" : "Not uploaded"}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex gap-2 items-center sm:shrink-0">
-                  {uploaded && (
-                    <Button size="sm" variant="outline" className="h-10 w-10 sm:h-8 sm:w-8 p-0 rounded-xl border-border hover:bg-muted"
-                      aria-label={`View ${docType}`} onClick={() => openDocument(uploaded)}>
-                      <Eye className="h-3.5 w-3.5 text-muted-foreground" />
-                    </Button>
-                  )}
-                  {canRemove && (
-                    <Button size="sm" variant="outline" className="h-10 w-10 sm:h-8 sm:w-8 p-0 rounded-xl border-red-200 hover:bg-red-50"
-                      aria-label={`Remove ${docType}`} onClick={() => setRemoveDoc(uploaded)}>
-                      <Trash2 className="h-3.5 w-3.5 text-red-600" />
-                    </Button>
-                  )}
-                  <Label className={`flex-1 sm:flex-none ${busy ? "pointer-events-none" : "cursor-pointer"}`}>
-                    <Input type="file" className="hidden" accept={photo ? "image/jpeg,image/png" : ".pdf,.jpg,.jpeg,.png"} disabled={closed || busy}
-                      onChange={async (e) => {
-                        const input = e.target;
-                        const file = input.files?.[0];
-                        input.value = ""; // so picking the same file again still fires onChange
-                        if (file) await uploadDocument(docType, file);
-                      }} />
-                    <span className={`inline-flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 sm:py-1.5 text-xs font-semibold transition-colors ${
-                      closed || busy ? "opacity-50 pointer-events-none border-border text-muted-foreground" :
-                      uploaded && uploaded.status !== "Disapproved" ? "border-primary/20 text-primary hover:bg-accent" : "border-primary bg-primary text-white hover:bg-primary"
-                    }`}>
-                      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
-                      {busy ? "Uploading…" : uploaded ? (uploaded.status === "Disapproved" ? "Upload new" : "Replace") : "Upload"}
-                    </span>
-                  </Label>
-                </div>
-              </div>
-              {(narrower || followUpOnly(docType) || notesFor(docType).length > 0 || notPhoto) && (
-                <div className="mt-2 space-y-0.5 text-[11px] text-muted-foreground">
-                  {narrower && <p>For {forPrograms.map((p) => p.name).join(", ")}</p>}
-                  {followUpOnly(docType) && <p>Can be uploaded after you apply (needed before approval).</p>}
-                  {notesFor(docType).map((n) => <p key={n} className="font-medium text-foreground">{n}</p>)}
-                  {notPhoto && <p className="font-medium text-red-700">This program needs a photo (JPG or PNG). Upload a photo to replace this file.</p>}
-                </div>
-              )}
-              {uploaded && (
-                <div className="mt-3 flex items-center gap-2 flex-wrap">
-                  <DocStatusBadge status={uploaded.status} />
-                  <span className="text-[11px] text-muted-foreground">Uploaded {new Date(uploaded.uploaded_at).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</span>
-                </div>
-              )}
-              {docType === HOUSE_PHOTO && (
-                <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${housePinned ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
-                  <p className="font-semibold flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{housePinned ? "House pinned on the map" : "Pin your house on the map too"}</p>
-                  {housePinned && profile?.home_landmark && <p className="mt-0.5">Landmark: {profile.home_landmark}</p>}
-                  <div className="mt-1.5 flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" className="h-8 rounded-lg text-xs bg-white" onClick={() => setHouseOpen(true)}>{housePinned ? "Change pin" : "Pin location"}</Button>
-                    {housePinned && (
-                      <a className="inline-flex h-8 items-center rounded-lg border bg-white px-2.5 font-medium hover:bg-muted" target="_blank" rel="noreferrer"
-                        href={googleMapsLink({ lat: profile!.home_lat!, lng: profile!.home_lng! })}>Open in Google Maps</a>
-                    )}
-                  </div>
-                </div>
-              )}
-              {uploaded?.status === "Disapproved" && uploaded.review_note && (
-                <p className="mt-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
-                  <span className="font-semibold">Reason: </span>{uploaded.review_note}
+      {docPrograms.length === 0 ? (
+        <Panel className="p-6 text-center">
+          <FileText className="mx-auto h-8 w-8 text-muted-foreground" />
+          <p className="mt-2 text-sm font-semibold text-foreground">Your documents show up here once you apply</p>
+          <p className="mt-1 text-sm text-muted-foreground">Each program asks for its own documents. When you apply, you upload the ones needed to apply in the application form; anything the program needs later is listed here.</p>
+          <Button className="mt-4 rounded-xl" onClick={() => setActive("application")}><FileText className="mr-2 h-4 w-4" />Apply for a scholarship</Button>
+        </Panel>
+      ) : docPrograms.map((program) => {
+        const docs = approvalDocsFor(program);
+        const done = docs.filter(docOk).length;
+        return (
+          <Panel key={program.key} className="p-4 sm:p-5 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-foreground truncate">{program.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {isOffice(program.office) ? `${OFFICE_LABEL[program.office]} · ` : ""}{photosOnly(program.office) ? "Photos (JPG or PNG)" : "PDF, JPG or PNG"}, up to {settings.max_upload_mb} MB each
                 </p>
-              )}
-            </Panel>
-          );
-        })}
-      </div>
+              </div>
+              <span className="text-sm font-bold text-primary shrink-0">{done}/{docs.length}</span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+              <div className="h-full rounded-full bg-primary transition-all duration-500" style={{ width: `${docs.length ? (done / docs.length) * 100 : 100}%` }} />
+            </div>
+            {docs.length === 0 ? <p className="text-sm text-muted-foreground">This program doesn&apos;t ask for documents.</p> : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{docs.map((t) => docCard(t, program))}</div>
+            )}
+          </Panel>
+        );
+      })}
 
       <HouseLocationDialog open={houseOpen} onOpenChange={setHouseOpen} userId={userId} saved={profile} onSaved={loadData} />
 
