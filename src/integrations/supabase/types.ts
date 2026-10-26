@@ -555,8 +555,36 @@ export type Database = {
         }
         Relationships: []
       }
+      home_location_history: {
+        Row: {
+          id: number
+          user_id: string
+          home_lat: number | null
+          home_lng: number | null
+          home_landmark: string | null
+          changed_at: string
+        }
+        Insert: {
+          id?: number
+          user_id: string
+          home_lat?: number | null
+          home_lng?: number | null
+          home_landmark?: string | null
+          changed_at?: string
+        }
+        Update: {
+          id?: number
+          user_id?: string
+          home_lat?: number | null
+          home_lng?: number | null
+          home_landmark?: string | null
+          changed_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
+          home_located_at: string | null
           home_lat: number | null
           home_lng: number | null
           home_landmark: string | null
@@ -591,6 +619,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          home_located_at?: string | null
           home_lat?: number | null
           home_lng?: number | null
           home_landmark?: string | null
@@ -625,6 +654,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          home_located_at?: string | null
           home_lat?: number | null
           home_lng?: number | null
           home_landmark?: string | null

@@ -39,7 +39,8 @@ import { uploadPendingDocuments } from "@/lib/pending-documents";
 import { HOUSE_PHOTO, approvalDocuments, asksLetter, documentNote, followUpDocuments, needsHomeVisit, needsHousePin, needsMoa, photosOnly, programDocuments } from "@/lib/office-requirements";
 import HouseLocationDialog from "@/components/student/HouseLocationDialog";
 import { OFFICE_LABEL, isOffice } from "@/lib/permissions";
-import { googleMapsLink } from "@/lib/geo";
+import { distanceKm, fmtDistance, googleMapsLink, type LatLng } from "@/lib/geo";
+import { photoLocation } from "@/lib/exif-gps";
 import { availabilityInfo, programChecks, requirementLines, sameTown, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
 import { inBarangays } from "@/lib/barangays";
 import { formatDate, peso, pesoFixed } from "@/lib/format";
@@ -493,6 +494,8 @@ export default function StudentDashboardPage() {
   const [replacingLetter, setReplacingLetter]       = useState(false);
   const [uploadingMoa, setUploadingMoa]             = useState<string | null>(null);
   const [houseOpen, setHouseOpen]                   = useState(false);
+  // Where the house photo was taken, when the phone kept that in the photo.
+  const [photoSpot, setPhotoSpot]                   = useState<LatLng | null>(null);
   const submittingRef = useRef(false);
   // The application the View / Withdraw dialogs act on.
   const [selectedAppId, setSelectedAppId]           = useState<string | null>(null);
@@ -898,6 +901,8 @@ export default function StudentDashboardPage() {
   const uploadDocument = async (docType: string, picked: File, office: string | null, appId: string | null) => {
     let file = picked;
     if (settings.maintenance_mode) { toast.error(settings.maintenance_message); return; }
+    // Read the photo's location before shrinking it (shrinking drops it).
+    const spot = docType === HOUSE_PHOTO ? await photoLocation(picked) : null;
     if (needsPhoto(docType, office)) {
       if (!PHOTO_MIME.includes(file.type)) { toast.error(`${docType} must be a photo (JPG or PNG).`); return; }
       file = await shrinkPhoto(file, settings.max_upload_mb * 1024 * 1024);
@@ -921,6 +926,12 @@ export default function StudentDashboardPage() {
         if (gone?.length && oldPath) await supabase.storage.from("documents").remove([oldPath]);
       }
       toast.success(`${docType} uploaded`);
+      if (spot) {
+        setPhotoSpot(spot);
+        const pinned = profile?.home_lat != null && profile?.home_lng != null ? { lat: profile.home_lat, lng: profile.home_lng } : null;
+        if (!pinned) toast.info("Your photo has the place it was taken", { description: "Use it to pin your house on the map.", action: { label: "Pin my house", onClick: () => setHouseOpen(true) } });
+        else if (distanceKm(pinned, spot) > 0.3) toast.warning(`Your house photo was taken ${fmtDistance(distanceKm(pinned, spot))} from your house pin`, { description: "If the photo was taken at home, move the pin there.", action: { label: "Check pin", onClick: () => setHouseOpen(true) } });
+      }
       // Not loadData(): its full-page loading state would close the application form mid-application.
       refreshDocuments(user.id);
     } finally {
@@ -1666,7 +1677,8 @@ export default function StudentDashboardPage() {
         );
       })}
 
-      <HouseLocationDialog open={houseOpen} onOpenChange={setHouseOpen} userId={userId} saved={profile} onSaved={() => refreshProfile(userId)} />
+      <HouseLocationDialog open={houseOpen} onOpenChange={setHouseOpen} userId={userId} saved={profile}
+        barangay={profile?.barangay} municipality={profile?.municipality} photoSpot={photoSpot} onSaved={() => refreshProfile(userId)} />
 
       <AppDialog open={!!removeDoc} onOpenChange={(o) => { if (!o && !removingDoc) setRemoveDoc(null); }} size="sm" className="rounded-2xl"
         title="Remove this document?"
