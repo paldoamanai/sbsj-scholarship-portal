@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import EdgeSwipeNav from "@/components/EdgeSwipeNav";
 import LeaveSignOut from "@/components/LeaveSignOut";
+import IdleSignOut from "@/components/IdleSignOut";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -13,6 +14,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
         {children}
         <EdgeSwipeNav />
         <LeaveSignOut />
+        <IdleSignOut />
         <Toaster />
       </TooltipProvider>
     </ThemeProvider>
