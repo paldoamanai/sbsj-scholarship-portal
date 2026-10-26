@@ -16,10 +16,14 @@ const fmt = (d?: string | null) => (d ? new Date(d).toLocaleString("en-PH", { da
  * Sign-in details, two-factor authentication and "sign out other devices". Shared by the student and
  * admin profile pages. Two-factor is enforced at sign-in (login page + middleware), not just recorded.
  */
-export default function SecuritySettings({ userId, logAudit }: {
+export default function SecuritySettings({ userId, logAudit, required = false, onEnabled }: {
   userId: string;
   /** Admins pass their audit logger; students don't have one. */
   logAudit?: (action: string, entityType: string, entityId?: string) => Promise<void>;
+  /** Staff must keep two-factor on (migration 075), so it can't be disabled. */
+  required?: boolean;
+  /** Called once two-factor has been turned on. */
+  onEnabled?: () => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
 
@@ -71,6 +75,7 @@ export default function SecuritySettings({ userId, logAudit }: {
     await logAudit?.("enable_2fa", "auth", userId);
     toast.success("Two-factor authentication enabled", { description: "You'll be asked for a code every time you sign in." });
     setEnroll(null); setCode(""); loadFactors();
+    onEnabled?.();
   };
   const disable2fa = async () => {
     if (!verified) return;
@@ -98,10 +103,10 @@ export default function SecuritySettings({ userId, logAudit }: {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <p className="text-sm font-medium flex items-center gap-2"><Smartphone className="h-4 w-4" />Two-factor authentication {verified && <Badge variant="secondary">On</Badge>}</p>
-            <p className="text-xs text-muted-foreground">Ask for a code from an authenticator app (Google Authenticator, Authy…) each time you sign in.</p>
+            <p className="text-xs text-muted-foreground">Ask for a code from an authenticator app (Google Authenticator, Authy…) each time you sign in.{required && " Required for staff accounts."}</p>
           </div>
           {verified ? (
-            <Button variant="outline" size="sm" onClick={disable2fa} disabled={busy}>Disable</Button>
+            !required && <Button variant="outline" size="sm" onClick={disable2fa} disabled={busy}>Disable</Button>
           ) : !enroll ? (
             <Button size="sm" onClick={startEnroll} disabled={busy}>{busy && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Enable</Button>
           ) : null}

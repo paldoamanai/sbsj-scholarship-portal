@@ -79,6 +79,8 @@ export default function LoginPage() {
     // /auth/callback sends people here when an email link was invalid, expired or opened on another device.
     if (new URLSearchParams(window.location.search).get("error") === "inactive")
       toast.error("You've been signed out", { description: DEACTIVATED });
+    if (new URLSearchParams(window.location.search).get("reason") === "other_device")
+      toast.info("You were signed out", { description: "Your staff account was signed in on another device. Staff accounts can be used on one device at a time." });
     if (new URLSearchParams(window.location.search).get("reason") === "idle")
       toast.info("You were signed out", { description: `There was no activity for ${IDLE_MINUTES} minutes. Log in again to continue.` });
     if (new URLSearchParams(window.location.search).get("error") === "auth")

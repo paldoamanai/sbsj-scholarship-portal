@@ -1114,6 +1114,10 @@ export type Database = {
         Args: { _application_id: string; _done: boolean }
         Returns: undefined
       }
+      note_sign_in: {
+        Args: { _device_id: string; _label: string }
+        Returns: Json
+      }
     }
     Enums: {
       app_role: "admin" | "student"
