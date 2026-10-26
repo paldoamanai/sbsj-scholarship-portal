@@ -48,11 +48,7 @@ DECLARE
     RAISE EXCEPTION ''Your documents are locked because your scholarship has been approved'';',
      'IF NEW.document_type NOT IN (''Letter of Intent'', ''MOA Agreement Letter'') AND NEW.application_id IS NOT NULL
      AND NOT EXISTS (SELECT 1 FROM public.applications WHERE id = NEW.application_id AND status IN (''Pending'', ''Waitlisted'')) THEN
-    RAISE EXCEPTION ''That application has been decided, so its documents can no longer change'';'],
-    -- Reminders: the application's own documents.
-    ['send_document_reminders',
-     'AND (doc.application_id = a.id OR doc.application_id IS NULL)',
-     'AND doc.application_id = a.id']
+    RAISE EXCEPTION ''That application has been decided, so its documents can no longer change'';']
   ];
   fn TEXT;
   f RECORD;
@@ -86,6 +82,42 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+-- Reminders: each application's own missing documents, once a week. Replaced whole rather than edited,
+-- because the live definition differs from the one in this folder.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname = 'public' AND p.proname = 'send_document_reminders' AND p.pronargs = 0
+                AND p.prorettype <> 'void'::regtype) THEN
+    DROP FUNCTION public.send_document_reminders();
+  END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.send_document_reminders()
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  a RECORD;
+  missing TEXT;
+  week TEXT := floor(extract(epoch FROM now()) / 604800)::bigint::text;
+BEGIN
+  FOR a IN
+    SELECT id, user_id, scholarship_id FROM public.applications
+     WHERE status = 'Pending' AND created_at < now() - interval '2 days'
+       AND academic_year = public.current_academic_year()
+  LOOP
+    SELECT string_agg(d, ', ') INTO missing
+      FROM jsonb_array_elements_text(public.program_approval_documents(a.scholarship_id)) AS d
+     WHERE NOT EXISTS (
+       SELECT 1 FROM public.documents doc
+        WHERE doc.application_id = a.id AND doc.document_type = d AND doc.status NOT IN ('Rejected', 'Disapproved')
+     );
+    IF missing IS NOT NULL THEN
+      PERFORM public.notify(a.user_id, 'Documents still needed', 'Your application can''t be approved until these are uploaded: ' || missing || '.',
+        'warning', 'application', '/student-dashboard?section=documents', 'applications', a.id, 'docs-' || a.id::text || '-' || week);
+    END IF;
+  END LOOP;
+END;
+$$;
 
 -- Photos-only programs, at apply time: what was uploaded in the form (072, per application).
 CREATE OR REPLACE FUNCTION public.documents_not_photos(_user UUID, _scholarship UUID, _ay TEXT)
