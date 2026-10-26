@@ -846,7 +846,8 @@ export default function StudentDashboardPage() {
   // The chosen program's documents (the database checks the same when applying).
   const applyDocs = applyProgram ? docsForProgram(applyProgram) : [];
   const applyMissing = applyDocs.filter((t) => !docOk(t));
-  const applyNotPhotos = applyProgram && photosOnly(applyProgram.office) ? applyDocs.filter((t) => docOk(t) && !isPhoto(docByType.get(t))) : [];
+  // A document the office already verified counts even if it isn't a photo (same as the database).
+  const applyNotPhotos = applyProgram && photosOnly(applyProgram.office) ? applyDocs.filter((t) => docOk(t) && docByType.get(t)?.status !== "Verified" && !isPhoto(docByType.get(t))) : [];
   // MSWDO doesn't ask for a letter of intent.
   const letterNeeded = asksLetter(applyProgram?.office);
   const applyLater = applyProgram ? [
@@ -912,7 +913,8 @@ export default function StudentDashboardPage() {
         if (gone?.length && oldPath) await supabase.storage.from("documents").remove([oldPath]);
       }
       toast.success(`${docType} uploaded`);
-      loadData();
+      // Not loadData(): its full-page loading state would close the application form mid-application.
+      refreshDocuments(user.id);
     } finally {
       setUploadingDoc(null);
     }
@@ -929,7 +931,7 @@ export default function StudentDashboardPage() {
       if (path) await supabase.storage.from("documents").remove([path]);
       toast.success("Document removed");
       setRemoveDoc(null);
-      loadData();
+      refreshDocuments(userId);
     } finally {
       setRemovingDoc(false);
     }
@@ -967,7 +969,8 @@ export default function StudentDashboardPage() {
         toast.success(isRenewing ? "Renewal application submitted!" : "Application submitted!");
         setApplyDialogOpen(false);
         setApplyScholarshipId(""); setApplyCertified(false); pickLetter(null);
-        loadData();
+        // The new application files the documents uploaded ahead of it.
+        silentRefresh(userId); refreshDocuments(userId);
       }
     } catch {
       toast.error("Network error. Please try again.");
@@ -1007,7 +1010,7 @@ export default function StudentDashboardPage() {
         if (gone?.length && oldPath) await supabase.storage.from("documents").remove([oldPath]);
       }
       toast.success("Letter of intent replaced", { description: "The office will review the new photo." });
-      loadData();
+      refreshDocuments(userId);
     } finally {
       setReplacingLetter(false);
     }
@@ -1022,7 +1025,7 @@ export default function StudentDashboardPage() {
       const result = await uploadUserDocument(supabase, { userId, docType: MOA, file, applicationId: app.id });
       if ("error" in result) { toast.error("Upload failed", { description: result.error }); return; }
       toast.success("MOA uploaded", { description: "The office will check it before your payout." });
-      loadData();
+      refreshDocuments(userId);
     } finally {
       setUploadingMoa(null);
     }
@@ -1145,7 +1148,7 @@ export default function StudentDashboardPage() {
       const followUp = followUpDocuments(program.office).includes(docType);
       const note = documentNote(program.office, docType);
       // Uploaded as a file where a photo is needed.
-      const notPhoto = photo && !!uploaded && !isPhoto(uploaded) && !closed;
+      const notPhoto = photo && !!uploaded && uploaded.status !== "Verified" && !isPhoto(uploaded) && !closed;
       const canRemove = !!uploaded && !locked && (!uploaded.application_id || uploaded.status === "Disapproved");
       const tone = !uploaded ? "" : uploaded.status === "Disapproved" ? "border-red-200" : uploaded.status === "Verified" ? "border-emerald-200" : "border-amber-100";
       return (
