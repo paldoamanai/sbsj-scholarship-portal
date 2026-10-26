@@ -39,7 +39,7 @@ import { uploadPendingDocuments } from "@/lib/pending-documents";
 import { HOUSE_PHOTO, approvalDocuments, asksLetter, documentNote, followUpDocuments, needsHomeVisit, needsHousePin, needsMoa, photosOnly, programDocuments } from "@/lib/office-requirements";
 import HouseLocationDialog from "@/components/student/HouseLocationDialog";
 import { OFFICE_LABEL, isOffice } from "@/lib/permissions";
-import { googleMapsLink } from "@/components/student/HouseMap";
+import { googleMapsLink } from "@/lib/geo";
 import { availabilityInfo, programChecks, requirementLines, sameTown, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
 import { inBarangays } from "@/lib/barangays";
 import { formatDate, peso, pesoFixed } from "@/lib/format";
@@ -1669,7 +1669,7 @@ export default function StudentDashboardPage() {
         );
       })}
 
-      <HouseLocationDialog open={houseOpen} onOpenChange={setHouseOpen} userId={userId} saved={profile} onSaved={loadData} />
+      <HouseLocationDialog open={houseOpen} onOpenChange={setHouseOpen} userId={userId} saved={profile} onSaved={() => refreshProfile(userId)} />
 
       <AppDialog open={!!removeDoc} onOpenChange={(o) => { if (!o && !removingDoc) setRemoveDoc(null); }} size="sm" className="rounded-2xl"
         title="Remove this document?"

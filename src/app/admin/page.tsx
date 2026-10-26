@@ -51,12 +51,19 @@ import { OFFICE_FULL_NAME, OFFICE_LABEL, STAFF_OFFICES, isOffice, officeLogo, pe
 import { printReceiptSlip } from "@/lib/receipt-slip";
 import { APPLICATION_DOCS, LETTER_OF_INTENT, MOA } from "@/lib/documents";
 import { approvalDocuments, needsHomeVisit, needsHousePin, needsMoa } from "@/lib/office-requirements";
-import { googleMapsLink } from "@/components/student/HouseMap";
+import { googleMapsLink } from "@/lib/geo";
+import dynamic from "next/dynamic";
 import { peso, pesoFixed as formatPHP } from "@/lib/format";
 import { MoneyInput } from "@/components/MoneyInput";
 import type { Tables, Json } from "@/integrations/supabase/types";
 import DashboardSkeleton from "@/components/DashboardSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
+
+// The house map only loads in the browser, and only when a pinned house is shown.
+const HouseMap = dynamic(() => import("@/components/student/HouseMap"), {
+  ssr: false,
+  loading: () => <div className="h-48 w-full rounded-xl border bg-muted animate-pulse" />,
+});
 
 // Ordered by the scholarship process: set up a program, review applicants, manage scholars,
 // pay them out, then track and report. Each group gets a heading in the sidebar.
@@ -2042,6 +2049,7 @@ export default function AdminDashboardPage() {
                                   </>
                                 ) : <span className="text-muted-foreground">The student hasn&apos;t pinned their house yet.</span>}
                               </div>
+                              {pin && <HouseMap pin={pin} readOnly className="h-48" />}
                               {needsHomeVisit(office) && (
                                 <>
                                   <p className={viewApp.home_visit_done_at ? "text-success font-medium" : "text-muted-foreground"}>
