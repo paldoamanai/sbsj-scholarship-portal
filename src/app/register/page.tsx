@@ -17,34 +17,22 @@ import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import {
-  User, School, Lock, Upload, ChevronRight, ChevronLeft, AlertTriangle, Loader2, Eye, EyeOff, CalendarIcon, MailCheck,
+  User, School, Lock, ClipboardCheck, ChevronRight, ChevronLeft, AlertTriangle, Loader2, Eye, EyeOff, CalendarIcon, MailCheck,
 } from "@/components/icons";
 import { format, subYears } from "date-fns";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { rememberCredential } from "@/lib/credentials";
-import { DOC_MIME, uploadUserDocument } from "@/lib/documents";
 import { YEAR_LEVEL_OPTIONS, coursesFor, isCollege, isSHS, schoolsFor } from "@/lib/academics";
 import { useSystemSettings } from "@/hooks/use-system-settings";
 import type { RegistrationProfileFields } from "@/lib/registration-profile";
-import { savePendingDocuments } from "@/lib/pending-documents";
 import { PASSWORD_HINT, passwordProblem, passwordScore } from "@/validations/auth";
 import Captcha, { captchaEnabled } from "@/components/Captcha";
 import BarangayField from "@/components/BarangayField";
 import { HOME_MUNICIPALITY } from "@/lib/barangays";
 
-const stepLabels = ["Account", "Personal Info", "School Info", "Documents"];
+const stepLabels = ["Account", "Personal Info", "School Info", "Review"];
 const LAST_STEP = stepLabels.length - 1;
-
-const PREREQUISITE_DOCS = ["Valid ID", "Grades"] as const;
-
-const requiredDocuments = [
-  "Valid ID",
-  "Grades",
-  "Certificate of Registration",
-  "Barangay Indigency",
-  "Birth Certificate",
-];
 
 const MIN_AGE = 12;
 
@@ -69,7 +57,6 @@ export default function RegisterPage() {
   const router = useRouter();
   const { settings } = useSystemSettings();
   const minGrade = settings.min_grade_requirement || 85;
-  const maxUploadBytes = settings.max_upload_mb * 1024 * 1024;
   const [step, setStep] = useState(0);
   const maxStep = useRef(0);
   maxStep.current = Math.max(maxStep.current, step);
@@ -79,7 +66,6 @@ export default function RegisterPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   // Set once the account exists but the email still has to be confirmed.
   const [sentTo, setSentTo] = useState<string | null>(null);
-  const [docsKept, setDocsKept] = useState(false);
   const [resending, setResending] = useState(false);
 
   // Step 0 — Account
@@ -103,24 +89,10 @@ export default function RegisterPage() {
     schoolName: "", course: "", yearLevel: "", averageGrade: "",
   });
 
-  // Step 3 — Documents
-  const [docFiles, setDocFiles] = useState<Record<string, File | null>>({});
+  // Step 3 — Review
   const [agreed, setAgreed] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [captchaKey, setCaptchaKey] = useState(0);
-
-  const pickFile = (doc: string, file: File | null) => {
-    if (file && !DOC_MIME.includes(file.type)) {
-      toast.error(`${doc}: use a PDF, JPG or PNG file.`);
-      return;
-    }
-    if (file && file.size > maxUploadBytes) {
-      toast.error(`${doc} is too large (max ${settings.max_upload_mb} MB).`);
-      return;
-    }
-    setDocFiles((prev) => ({ ...prev, [doc]: file }));
-    setErrors((p) => ({ ...p, docs: "" }));
-  };
 
   const update = (field: string, value: string) => {
     setForm((p) => ({ ...p, [field]: value }));
@@ -159,11 +131,6 @@ export default function RegisterPage() {
       if (!academic.averageGrade.trim()) errs.averageGrade = "Required";
       else if (parseFloat(academic.averageGrade) < minGrade) errs.averageGrade = `Must be ${minGrade} or above to be eligible`;
     } else if (step === 3) {
-      const missing = PREREQUISITE_DOCS.filter((doc) => !docFiles[doc]);
-      if (missing.length > 0)
-        errs.docs = `Please upload the following required documents before proceeding: ${missing.join(" and ")}.`;
-      const tooBig = Object.entries(docFiles).filter(([, f]) => f && f.size > maxUploadBytes).map(([d]) => d);
-      if (tooBig.length > 0) errs.docs = `${tooBig.join(", ")} ${tooBig.length > 1 ? "are" : "is"} larger than ${settings.max_upload_mb} MB.`;
       if (!agreed) errs.agreed = "You must agree to the Terms and Privacy Policy to register";
       if (captchaEnabled && !captchaToken) errs.captcha = "Please complete the bot check";
     }
@@ -232,16 +199,13 @@ export default function RegisterPage() {
       return;
     }
 
-    const userId = authData.user.id;
     // Ask the browser to remember these credentials, in addition to the native
     // save-password prompt the <form> submit below already triggers.
     rememberCredential(email, password);
 
     // Email confirmation is enabled — user is not authenticated yet, so RLS-protected
-    // writes would fail. The auth trigger still inserts the profile from metadata, and the documents
-    // are kept in this browser and uploaded on the first dashboard visit after logging in.
+    // writes would fail. The auth trigger still inserts the profile from metadata.
     if (!authData.session) {
-      setDocsKept(await savePendingDocuments(email, docFiles));
       setSentTo(email);
       setLoading(false);
       return;
@@ -249,7 +213,7 @@ export default function RegisterPage() {
 
     // 2. Upsert profile (update is a no-op if the signup trigger never created a row)
     const { error: profileError } = await supabase.from("profiles").upsert({
-      id: userId,
+      id: authData.user.id,
       email,
       ...profileFields,
     });
@@ -260,22 +224,7 @@ export default function RegisterPage() {
       return;
     }
 
-    // 3. Upload documents. A file the database refuses (wrong type, too large, not on the current
-    // required list) doesn't block registration: the student can upload it again from the dashboard.
-    const failed: string[] = [];
-    for (const [docType, file] of Object.entries(docFiles)) {
-      if (!file) continue;
-      if (!DOC_MIME.includes(file.type)) { failed.push(docType); continue; }
-      const result = await uploadUserDocument(supabase, { userId, docType, file });
-      if ("error" in result) failed.push(docType);
-    }
-    if (failed.length > 0) {
-      toast.warning("Some documents were not uploaded", {
-        description: `Upload ${failed.join(", ")} again from your dashboard (PDF, JPG or PNG).`,
-      });
-    }
-
-    // 4. Applying for a program (statement, household details, certification) is done from the dashboard.
+    // 3. Documents and applying for a program (statement, household details, certification) are done from the dashboard.
     toast.success("Registration submitted successfully!", {
       description: "You can now apply for a scholarship from your dashboard.",
     });
@@ -327,14 +276,6 @@ export default function RegisterPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className={cn(
-                "rounded-lg border px-4 py-3 text-sm",
-                docsKept ? "border-primary/20 bg-primary/5 text-foreground" : "border-destructive/40 bg-destructive/5 text-destructive",
-              )}>
-                {docsKept
-                  ? "Your documents are saved in this browser and will upload automatically the first time you log in here. If you log in on another device, upload them from your dashboard."
-                  : "Your documents could not be saved in this browser. Upload them from your dashboard after you log in."}
-              </div>
               <Button className="w-full bg-gradient-primary shadow-primary" onClick={() => router.push("/login")}>
                 Go to Login
               </Button>
@@ -392,7 +333,7 @@ export default function RegisterPage() {
               {step === 0 && <><Lock className="h-5 w-5 text-primary" /> Account Setup</>}
               {step === 1 && <><User className="h-5 w-5 text-primary" /> Personal Information</>}
               {step === 2 && <><School className="h-5 w-5 text-primary" /> School Information</>}
-              {step === 3 && <><Upload className="h-5 w-5 text-primary" /> Document Upload</>}
+              {step === 3 && <><ClipboardCheck className="h-5 w-5 text-primary" /> Review &amp; Submit</>}
             </CardTitle>
             <CardDescription>Fill in all required fields to proceed.</CardDescription>
           </CardHeader>
@@ -664,95 +605,12 @@ export default function RegisterPage() {
               </>
             )}
 
-            {/* STEP 3: Document Upload */}
+            {/* STEP 3: Review */}
             {step === 3 && (
               <div className="space-y-4">
                 <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
-                  <span className="font-semibold text-primary">Valid ID</span> and <span className="font-semibold text-primary">Grades</span> are required to proceed. The remaining documents can be uploaded later from your dashboard. PDF, JPG or PNG, up to {settings.max_upload_mb} MB each.
+                  You&apos;ll upload your documents (Valid ID, Grades and the rest) from your dashboard after you register.
                 </div>
-
-                {/* Prerequisites */}
-                <div className="space-y-2">
-                  <p className="text-xs font-bold text-primary tracking-widest uppercase">Required to Proceed</p>
-                  {PREREQUISITE_DOCS.map((doc) => (
-                    <div
-                      key={doc}
-                      className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-lg border p-3 sm:p-4 transition-colors ${
-                        docFiles[doc]
-                          ? "border-success/40 bg-success/5"
-                          : "border-primary/30 bg-primary/5"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <Upload className={`h-5 w-5 shrink-0 ${docFiles[doc] ? "text-success" : "text-primary"}`} />
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold">
-                            {doc}
-                            <span className="ml-1.5 text-primary text-xs">*</span>
-                          </p>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {docFiles[doc] ? docFiles[doc]!.name : "Required — not uploaded"}
-                          </p>
-                        </div>
-                      </div>
-                      <Label className="cursor-pointer">
-                        <Input
-                          type="file"
-                          className="hidden"
-                          accept=".pdf,.jpg,.jpeg,.png"
-                          onChange={(e) => {
-                            pickFile(doc, e.target.files?.[0] ?? null);
-                            e.target.value = "";
-                          }}
-                        />
-                        <span className="inline-flex w-full sm:w-auto items-center justify-center gap-1 rounded-md border px-3 py-2.5 sm:py-1.5 text-sm font-medium hover:bg-muted cursor-pointer">
-                          <Upload className="h-3 w-3" />
-                          {docFiles[doc] ? "Replace" : "Upload"}
-                        </span>
-                      </Label>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Optional documents */}
-                <div className="space-y-2">
-                  <p className="text-xs font-bold text-muted-foreground tracking-widest uppercase">Optional — Upload Later</p>
-                  {requiredDocuments.filter((d) => !(PREREQUISITE_DOCS as readonly string[]).includes(d)).map((doc) => (
-                    <div key={doc} className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-lg border p-3 sm:p-4 transition-colors ${docFiles[doc] ? "border-success/40 bg-success/5" : ""}`}>
-                      <div className="flex items-center gap-3 min-w-0">
-                        <Upload className={`h-5 w-5 shrink-0 ${docFiles[doc] ? "text-success" : "text-muted-foreground"}`} />
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium">{doc}</p>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {docFiles[doc] ? docFiles[doc]!.name : "Not uploaded"}
-                          </p>
-                        </div>
-                      </div>
-                      <Label className="cursor-pointer">
-                        <Input
-                          type="file"
-                          className="hidden"
-                          accept=".pdf,.jpg,.jpeg,.png"
-                          onChange={(e) => {
-                            pickFile(doc, e.target.files?.[0] ?? null);
-                            e.target.value = "";
-                          }}
-                        />
-                        <span className="inline-flex w-full sm:w-auto items-center justify-center gap-1 rounded-md border px-3 py-2.5 sm:py-1.5 text-sm font-medium hover:bg-muted cursor-pointer">
-                          <Upload className="h-3 w-3" />
-                          {docFiles[doc] ? "Replace" : "Upload"}
-                        </span>
-                      </Label>
-                    </div>
-                  ))}
-                </div>
-
-                {errors.docs && (
-                  <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                    <AlertTriangle className="h-4 w-4 shrink-0" />
-                    {errors.docs}
-                  </div>
-                )}
 
                 {/* Review summary */}
                 <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
@@ -763,7 +621,6 @@ export default function RegisterPage() {
                     <p>School: <span className="text-foreground">{academic.schoolName}</span></p>
                     <p>Course: <span className="text-foreground">{academic.course}</span></p>
                     <p>Grade: <span className="text-foreground">{academic.averageGrade}</span></p>
-                    <p>Docs uploaded: <span className="text-foreground">{Object.values(docFiles).filter(Boolean).length}/{requiredDocuments.length}</span></p>
                   </div>
                 </div>
 
@@ -775,7 +632,7 @@ export default function RegisterPage() {
                       className="mt-0.5"
                     />
                     <span>
-                      I certify that the information and documents I provided are true and correct, and I agree to the{" "}
+                      I certify that the information I provided is true and correct, and I agree to the{" "}
                       <Link href="/terms" target="_blank" className="text-primary hover:underline">Terms of Use</Link> and the{" "}
                       <Link href="/privacy" target="_blank" className="text-primary hover:underline">Privacy Policy</Link>, including the
                       processing of my personal data for this scholarship program.
