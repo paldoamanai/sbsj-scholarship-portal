@@ -19,7 +19,7 @@ import {
   Menu, X, Search, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock,
   FileDown, Receipt, Loader2, User, Upload, ArrowRight,
-   ChevronRight, ChevronLeft, ExternalLink, Printer, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2,
+   ChevronRight, ChevronLeft, ExternalLink, Printer, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2, MapPin,
 } from "@/components/icons";
 import { createClient } from "@/lib/supabase/client";
 import { scholarshipSchema } from "@/validations/scholarship";
@@ -49,8 +49,9 @@ import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
 import { asMonths, asSchedule, isMonthTerm, openTerms, secondSemesterGradeWarning, termAmount, termLabel, termsFor, type PaymentTerm } from "@/lib/release-schedule";
 import { OFFICE_FULL_NAME, OFFICE_LABEL, STAFF_OFFICES, isOffice, officeLogo, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 import { printReceiptSlip } from "@/lib/receipt-slip";
-import { LETTER_OF_INTENT } from "@/lib/documents";
-import { programDocuments } from "@/lib/office-requirements";
+import { APPLICATION_DOCS, LETTER_OF_INTENT, MOA } from "@/lib/documents";
+import { approvalDocuments, needsHomeVisit, needsHousePin, needsMoa } from "@/lib/office-requirements";
+import { googleMapsLink } from "@/components/student/HouseMap";
 import { peso, pesoFixed as formatPHP } from "@/lib/format";
 import { MoneyInput } from "@/components/MoneyInput";
 import type { Tables, Json } from "@/integrations/supabase/types";
@@ -200,6 +201,9 @@ export default function AdminDashboardPage() {
   const [allPayments, setPayments] = useState<Tables<"payments">[]>([]);
   const [viewApp, setViewApp] = useState<typeof applications[0] | null>(null);
   const [remarks, setRemarks] = useState("");
+  const [visitAt, setVisitAt] = useState("");
+  const [visitNote, setVisitNote] = useState("");
+  const [visitBusy, setVisitBusy] = useState(false);
   const [appPage, setAppPage] = useState(1);
   const [viewDocs, setViewDocs] = useState<AdminDoc[]>([]);
   const [allDocs, setAllDocs] = useState<DocSummary[]>([]);
@@ -321,6 +325,12 @@ export default function AdminDashboardPage() {
   const [disbLoading, setDisbLoading] = useState(false);
 
   useEffect(() => { loadData(); }, []);
+  // The home visit form follows the application being viewed. datetime-local wants local "YYYY-MM-DDTHH:mm".
+  useEffect(() => {
+    const at = viewApp?.home_visit_at ? new Date(viewApp.home_visit_at) : null;
+    setVisitAt(at ? new Date(at.getTime() - at.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "");
+    setVisitNote(viewApp?.home_visit_note ?? "");
+  }, [viewApp?.id, viewApp?.home_visit_at, viewApp?.home_visit_note]);
 
   // Profiles of students only — staff accounts (anyone with a non-student role) are excluded.
   // Staff are kept aside (with their role) so reports can name who disbursed, reviewed or changed something.
@@ -883,6 +893,8 @@ export default function AdminDashboardPage() {
     if (!disbReceipt) return;
     const payment = payments.find((pm) => pm.id === disbPaymentId);
     if (!payment) return;
+    const moa = moaBlocker(payment.application_id);
+    if (moa) { toast.error("Can't release this payment yet", { description: moa }); return; }
     const maxMb = parseSettings(systemSettings).max_upload_mb;
     if (disbReceipt.size > maxMb * 1024 * 1024) { toast.error(`Receipt is too large (max ${maxMb} MB)`); return; }
     setDisbLoading(true);
@@ -1018,6 +1030,8 @@ export default function AdminDashboardPage() {
     const reference = editDisbRef.trim() || null;
     // Marking disbursed needs a receipt upload, so hand off to the disbursement dialog.
     if (editDisbStatus === "Disbursed") {
+      const moa = moaBlocker(pm.application_id);
+      if (moa) { toast.error("Can't release this payment yet", { description: moa }); return; }
       setDisbPaymentId(pm.id);
       setDisbMethod((pm.preferred_method ?? pm.method) === "Cheque" ? "Cheque" : "Cash");
       setDisbRef(reference ?? "");
@@ -1070,9 +1084,31 @@ export default function AdminDashboardPage() {
     toast.success("Excel downloaded");
   };
 
+  // MSWDO home visits (migration 071): staff schedule one, the student is notified, and approval needs it done.
+  const saveHomeVisit = async (a: AppRow, clear = false) => {
+    const at = clear ? null : visitAt ? new Date(visitAt).toISOString() : null;
+    if (!clear && !at) { toast.error("Pick the visit date and time"); return; }
+    setVisitBusy(true);
+    const { error } = await supabase.rpc("set_home_visit", { _application_id: a.id, _at: at, _note: visitNote.trim() || null });
+    setVisitBusy(false);
+    if (error) { toast.error("Couldn't save the home visit", { description: error.message }); return; }
+    toast.success(clear ? "Home visit cleared" : "Home visit scheduled — the student was notified");
+    setViewApp({ ...a, home_visit_at: at, home_visit_note: at ? visitNote.trim() || null : null, home_visit_done_at: null });
+    loadData(true);
+  };
+  const markVisitDone = async (a: AppRow, done: boolean) => {
+    setVisitBusy(true);
+    const { error } = await supabase.rpc("mark_home_visit_done", { _application_id: a.id, _done: done });
+    setVisitBusy(false);
+    if (error) { toast.error("Couldn't update the home visit", { description: error.message }); return; }
+    toast.success(done ? "Home visit marked done" : "Home visit marked not done");
+    setViewApp({ ...a, home_visit_done_at: done ? new Date().toISOString() : null });
+    loadData(true);
+  };
+
   // Each program (office) decides on its own: the student must pass that program's requirements and
   // have every required document verified. Documents are shared by the student's applications for the academic year.
-  const requirementChecks = (a: { id: string; user_id: string; academic_year: string | null; scholarship_id: string | null; is_renewal: boolean }): RequirementCheck[] => {
+  const requirementChecks = (a: { id: string; user_id: string; academic_year: string | null; scholarship_id: string | null; is_renewal: boolean; home_visit_at?: string | null; home_visit_done_at?: string | null }): RequirementCheck[] => {
     const settings = parseSettings(systemSettings);
     const program = scholarships.find((sc) => sc.id === a.scholarship_id);
     const profile = profiles.find((pr) => pr.id === a.user_id);
@@ -1083,8 +1119,9 @@ export default function AdminDashboardPage() {
     const letterCheck: RequirementCheck[] = letter
       ? [{ key: "doc-letter", label: "Letter of intent verified", ok: letter.status === "Verified", detail: letter.status }]
       : [];
-    // The program's office may ask for its own documents (Barangay Affairs does).
-    const docs = programDocuments(program?.office, settings.required_documents).map((type): RequirementCheck => {
+    // The program's office may ask for its own documents (Barangay Affairs and MSWDO do), and MSWDO also
+    // for follow-up documents, the house pinned on a map and a home visit (migration 071).
+    const docs = approvalDocuments(program?.office, settings.required_documents).map((type): RequirementCheck => {
       // Latest copy wins.
       const latest = allDocs
         .filter((d) => d.user_id === a.user_id && d.document_type === type && (d.application_id === null || sameYearIds.has(d.application_id)))
@@ -1095,7 +1132,25 @@ export default function AdminDashboardPage() {
       globalMinGrade: settings.min_grade_requirement, renewalMinGrade: settings.renewal_min_grade,
       renewalEnabled: settings.renewal_enabled, isRenewal: a.is_renewal,
     }) : [];
-    return [...rules, ...letterCheck, ...docs];
+    const office = program?.office;
+    const steps: RequirementCheck[] = [
+      ...(needsHousePin(office) ? [{ key: "house-pin", label: "House pinned on the map", ok: profile?.home_lat != null, detail: profile?.home_lat != null ? "Saved" : "Not yet" }] : []),
+      ...(needsHomeVisit(office) ? [{
+        key: "home-visit", label: "Home visit done", ok: !!a.home_visit_done_at,
+        detail: a.home_visit_done_at ? "Done" : a.home_visit_at ? `Scheduled ${new Date(a.home_visit_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })}` : "Not scheduled",
+      }] : []),
+    ];
+    return [...rules, ...letterCheck, ...docs, ...steps];
+  };
+
+  // MSWDO payouts need the signed MOA verified first (the database enforces it). null = it can be released.
+  const moaBlocker = (applicationId: string | null): string | null => {
+    const app = applications.find((x) => x.id === applicationId);
+    if (!app || !needsMoa(scholarships.find((sc) => sc.id === app.scholarship_id)?.office)) return null;
+    const moa = allDocs.filter((d) => d.application_id === app.id && d.document_type === MOA)
+      .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
+    if (moa?.status === "Verified") return null;
+    return `Verify the student's signed MOA agreement letter first (${moa ? moa.status.toLowerCase() : "not uploaded yet"}).`;
   };
 
   // Slots and budget left in the application's program for its academic year. The database enforces the same limits.
@@ -1220,8 +1275,8 @@ export default function AdminDashboardPage() {
   // applications from the same academic year (the database's in_document_set()).
   const countsForApp = (a: AppRow) => {
     const ids = new Set(applications.filter((x) => x.user_id === a.user_id && x.academic_year === a.academic_year).map((x) => x.id));
-    // A letter of intent counts only for its own application; the other documents are shared by the year's applications.
-    return (d: AdminDoc) => d.type === LETTER_OF_INTENT ? d.applicationId === a.id : d.applicationId === null || ids.has(d.applicationId);
+    // A letter of intent or MOA counts only for its own application; the other documents are shared by the year's applications.
+    return (d: AdminDoc) => APPLICATION_DOCS.includes(d.type) ? d.applicationId === a.id : d.applicationId === null || ids.has(d.applicationId);
   };
   const logAudit = async (action: string, entityType: string, entityId?: string, prev?: Json | null, next?: Json | null) => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -1873,7 +1928,7 @@ export default function AdminDashboardPage() {
                 const cap = va ? capacityFor(va, awardOverride) : null;
                 const counts = va ? countsForApp(va) : null;
                 const currentDocs = counts ? viewDocs.filter(counts) : [];
-                const olderDocs = counts ? viewDocs.filter((d) => !counts(d) && d.type !== LETTER_OF_INTENT) : [];
+                const olderDocs = counts ? viewDocs.filter((d) => !counts(d) && !APPLICATION_DOCS.includes(d.type)) : [];
                 const livePay = va ? hasLivePayment(va.id) : false;
                 const close = () => setViewApp(null);
                 return (
@@ -1967,6 +2022,62 @@ export default function AdminDashboardPage() {
                           ))}
                         </ul>
                       </div>
+                      {(() => {
+                        const office = scholarships.find((sc) => sc.id === viewApp.scholarship_id)?.office;
+                        if (!needsHomeVisit(office) && !needsHousePin(office)) return null;
+                        const pr = profiles.find((x) => x.id === viewApp.user_id);
+                        const pin = pr?.home_lat != null && pr?.home_lng != null ? { lat: pr.home_lat, lng: pr.home_lng } : null;
+                        return (
+                          <div>
+                            <h3 className="mb-1.5 text-sm font-semibold">House and home visit</h3>
+                            <div className="space-y-3 rounded-md border px-3 py-3 text-sm">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                {pin ? (
+                                  <>
+                                    <span>{pr?.home_landmark || "No landmark given"}</span>
+                                    <a href={googleMapsLink(pin)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+                                      Open in Google Maps <ExternalLink className="h-3 w-3" />
+                                    </a>
+                                  </>
+                                ) : <span className="text-muted-foreground">The student hasn&apos;t pinned their house yet.</span>}
+                              </div>
+                              {needsHomeVisit(office) && (
+                                <>
+                                  <p className={viewApp.home_visit_done_at ? "text-success font-medium" : "text-muted-foreground"}>
+                                    {viewApp.home_visit_done_at
+                                      ? `Visit done ${new Date(viewApp.home_visit_done_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })}`
+                                      : viewApp.home_visit_at
+                                        ? `Scheduled ${new Date(viewApp.home_visit_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })}${viewApp.home_visit_note ? ` · ${viewApp.home_visit_note}` : ""}`
+                                        : "Not scheduled yet."}
+                                  </p>
+                                  {can.review && open && (
+                                    <div className="space-y-2">
+                                      <div className="grid gap-2 sm:grid-cols-2">
+                                        <Input type="datetime-local" value={visitAt} onChange={(e) => setVisitAt(e.target.value)} aria-label="Visit date and time" />
+                                        <Input value={visitNote} maxLength={500} onChange={(e) => setVisitNote(e.target.value)} placeholder="Note for the student (optional)" />
+                                      </div>
+                                      <div className="flex flex-wrap gap-2">
+                                        <Button size="sm" variant="outline" disabled={visitBusy || !visitAt} onClick={() => saveHomeVisit(viewApp)}>
+                                          {viewApp.home_visit_at ? "Reschedule & notify" : "Schedule & notify"}
+                                        </Button>
+                                        {viewApp.home_visit_at && (
+                                          <Button size="sm" variant="outline" disabled={visitBusy} onClick={() => markVisitDone(viewApp, !viewApp.home_visit_done_at)}>
+                                            {viewApp.home_visit_done_at ? "Mark not done" : "Mark visit done"}
+                                          </Button>
+                                        )}
+                                        {viewApp.home_visit_at && !viewApp.home_visit_done_at && (
+                                          <Button size="sm" variant="ghost" disabled={visitBusy} onClick={() => saveHomeVisit(viewApp, true)}>Clear</Button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
                       <div>
                         <h3 className="mb-1.5 text-sm font-semibold">Documents for this application</h3>
                         {docList(currentDocs, docsLoading)}

@@ -5,6 +5,10 @@ export const DOC_MIME = ["application/pdf", "image/jpeg", "image/png"];
 
 /** Filed with each application on its own, not shared like the required documents (migration 063). */
 export const LETTER_OF_INTENT = "Letter of Intent";
+/** Filed with an approved application before its first payout, where the office asks for one (migration 071). */
+export const MOA = "MOA Agreement Letter";
+/** Documents that belong to one application rather than the student's shared set. */
+export const APPLICATION_DOCS = [LETTER_OF_INTENT, MOA];
 export const PHOTO_MIME = ["image/jpeg", "image/png"];
 
 // Storage keys reject many characters (accents, #, etc.), so keep file and folder names plain.
@@ -41,7 +45,9 @@ export async function uploadUserDocument(
   const { userId, docType, file, applicationId } = opts;
   const path = docType === LETTER_OF_INTENT
     ? letterPath(userId, file)
-    : `${userId}/documents/${docFolder(docType)}/${Date.now()}-${safeFileName(file.name)}`;
+    : docType === MOA
+      ? `${userId}/moa/${Date.now()}-${safeFileName(file.name)}`
+      : `${userId}/documents/${docFolder(docType)}/${Date.now()}-${safeFileName(file.name)}`;
 
   const { error: uploadError } = await supabase.storage.from("documents").upload(path, file, { contentType: file.type });
   if (uploadError) return { error: uploadError.message };

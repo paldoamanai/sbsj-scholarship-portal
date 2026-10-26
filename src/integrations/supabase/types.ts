@@ -11,6 +11,10 @@ export type Database = {
     Tables: {
       applications: {
         Row: {
+          home_visit_at: string | null
+          home_visit_note: string | null
+          home_visit_done_at: string | null
+          home_visit_by: string | null
           id: string
           user_id: string
           scholarship_id: string | null
@@ -38,6 +42,10 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          home_visit_at?: string | null
+          home_visit_note?: string | null
+          home_visit_done_at?: string | null
+          home_visit_by?: string | null
           id?: string
           user_id: string
           scholarship_id?: string | null
@@ -65,6 +73,10 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          home_visit_at?: string | null
+          home_visit_note?: string | null
+          home_visit_done_at?: string | null
+          home_visit_by?: string | null
           id?: string
           user_id?: string
           scholarship_id?: string | null
@@ -545,6 +557,9 @@ export type Database = {
       }
       profiles: {
         Row: {
+          home_lat: number | null
+          home_lng: number | null
+          home_landmark: string | null
           id: string
           email: string | null
           first_name: string | null
@@ -576,6 +591,9 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          home_lat?: number | null
+          home_lng?: number | null
+          home_landmark?: string | null
           id: string
           email?: string | null
           first_name?: string | null
@@ -607,6 +625,9 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          home_lat?: number | null
+          home_lng?: number | null
+          home_landmark?: string | null
           id?: string
           email?: string | null
           first_name?: string | null
@@ -1083,6 +1104,14 @@ export type Database = {
       }
       mark_changes_done: {
         Args: { _application_id: string }
+        Returns: undefined
+      }
+      set_home_visit: {
+        Args: { _application_id: string; _at: string | null; _note?: string | null }
+        Returns: undefined
+      }
+      mark_home_visit_done: {
+        Args: { _application_id: string; _done: boolean }
         Returns: undefined
       }
     }

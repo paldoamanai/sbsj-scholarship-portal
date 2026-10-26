@@ -2,7 +2,7 @@ import type { Tables, Json } from "@/integrations/supabase/types";
 import { staffLabel } from "@/lib/permissions";
 import { pesoFixed } from "@/lib/format";
 import { termLabel } from "@/lib/release-schedule";
-import { programDocuments } from "@/lib/office-requirements";
+import { approvalDocuments } from "@/lib/office-requirements";
 
 // ── Shapes ──
 // `money` columns are formatted as pesos; `totals` columns get a summed "Total" row.
@@ -525,7 +525,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
     const receiptRows = [...new Set(paid.map(receiptState))].sort().map((st) => [st, paid.filter((p) => receiptState(p) === st).length]);
     const docRows = open.filter((a) => s.within(a.created_at)).map((a) => {
       const sameYear = new Set(data.applications.filter((x) => x.user_id === a.user_id && x.academic_year === a.academic_year).map((x) => x.id));
-      const required = programDocuments(data.scholarships.find((sc) => sc.id === a.scholarship_id)?.office, data.requiredDocuments);
+      const required = approvalDocuments(data.scholarships.find((sc) => sc.id === a.scholarship_id)?.office, data.requiredDocuments);
       const latest = required.map((type) => ({
         type,
         doc: data.documents

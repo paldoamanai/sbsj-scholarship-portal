@@ -16,7 +16,7 @@ import {
   LayoutDashboard, FileText, Upload, GraduationCap, Banknote, Receipt,
   Bell, User, Settings as SettingsIcon, LogOut, Menu, Lock, Download,
   AlertTriangle, CheckCircle, Clock, Eye, Trash2, Loader2,
-  X, HelpCircle, Printer,
+  X, HelpCircle, Printer, Home, MapPin,
 } from "@/components/icons";
 import Overview from "@/components/student/Overview";
 import { createClient } from "@/lib/supabase/client";
@@ -34,9 +34,11 @@ import type { Tables } from "@/integrations/supabase/types";
 import { profileFromUserMetadata } from "@/lib/registration-profile";
 import { useSystemSettings } from "@/hooks/use-system-settings";
 import { applicationsBlockedReason, ayStart } from "@/lib/settings";
-import { DOC_MIME, LETTER_OF_INTENT, PHOTO_MIME, documentPath, shrinkPhoto, uploadLetterPhoto, uploadUserDocument } from "@/lib/documents";
+import { APPLICATION_DOCS, DOC_MIME, LETTER_OF_INTENT, MOA, PHOTO_MIME, documentPath, shrinkPhoto, uploadLetterPhoto, uploadUserDocument } from "@/lib/documents";
 import { uploadPendingDocuments } from "@/lib/pending-documents";
-import { documentNote, photosOnly, programDocuments } from "@/lib/office-requirements";
+import { HOUSE_PHOTO, approvalDocuments, asksLetter, documentNote, followUpDocuments, needsHomeVisit, needsHousePin, needsMoa, photosOnly, programDocuments } from "@/lib/office-requirements";
+import HouseLocationDialog from "@/components/student/HouseLocationDialog";
+import { googleMapsLink } from "@/components/student/HouseMap";
 import { availabilityInfo, programChecks, requirementLines, sameTown, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
 import { inBarangays } from "@/lib/barangays";
 import { formatDate, peso, pesoFixed } from "@/lib/format";
@@ -471,7 +473,7 @@ export default function StudentDashboardPage() {
   const [loading, setLoading] = useState(true);
 
   const [profile, setProfile]           = useState<Tables<"profiles"> | null>(null);
-  const [applications, setApplications] = useState<(Tables<"applications"> & { scholarships: { name: string } | null })[]>([]);
+  const [applications, setApplications] = useState<(Tables<"applications"> & { scholarships: { name: string; office: string | null } | null })[]>([]);
   const [documents, setDocuments]       = useState<Tables<"documents">[]>([]);
   const [payments, setPayments]         = useState<Tables<"payments">[]>([]);
   const [issues, setIssues]             = useState<Tables<"payment_issues">[]>([]);
@@ -488,6 +490,8 @@ export default function StudentDashboardPage() {
   // The letter of intent photo for the application being written, and a preview of it.
   const [applyLetter, setApplyLetter]               = useState<{ file: File; url: string } | null>(null);
   const [replacingLetter, setReplacingLetter]       = useState(false);
+  const [uploadingMoa, setUploadingMoa]             = useState<string | null>(null);
+  const [houseOpen, setHouseOpen]                   = useState(false);
   const submittingRef = useRef(false);
   // The application the View / Withdraw dialogs act on.
   const [selectedAppId, setSelectedAppId]           = useState<string | null>(null);
@@ -570,7 +574,7 @@ export default function StudentDashboardPage() {
 
     const [profileRes, appsRes, docsRes, paymentsRes, notifsRes, scholsRes, issuesRes, gradesRes, requestsRes, unreadRes] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", user.id).single(),
-      supabase.from("applications").select("*, scholarships(name)").eq("user_id", user.id).order("created_at", { ascending: false }),
+      supabase.from("applications").select("*, scholarships(name, office)").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("documents").select("*").eq("user_id", user.id),
       supabase.from("payments").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("notifications").select("*").eq("user_id", user.id).eq("muted", false).order("created_at", { ascending: false }).limit(NOTIFICATION_PAGE),
@@ -618,7 +622,7 @@ export default function StudentDashboardPage() {
   // used when a live status/disbursement update comes in over realtime.
   const silentRefresh = async (uid: string) => {
     const [appsRes, paymentsRes, issuesRes] = await Promise.all([
-      supabase.from("applications").select("*, scholarships(name)").eq("user_id", uid).order("created_at", { ascending: false }),
+      supabase.from("applications").select("*, scholarships(name, office)").eq("user_id", uid).order("created_at", { ascending: false }),
       supabase.from("payments").select("*").eq("user_id", uid).order("created_at", { ascending: false }),
       supabase.from("payment_issues").select("*").eq("user_id", uid).order("created_at", { ascending: false }),
     ]);
@@ -764,16 +768,20 @@ export default function StudentDashboardPage() {
   useUnreadTitle(unreadTotal);
   // Each program asks for its office's documents (Barangay Affairs has its own list, as photos) or the
   // Settings list. The Documents tab shows what this year's applications and the open programs ask for.
+  // MSWDO also has documents that can follow after applying (needed before approval).
   const docsForProgram = (p: { office?: string | null } | undefined) => programDocuments(p?.office, settings.required_documents);
+  const approvalDocsFor = (p: { office?: string | null } | undefined) => approvalDocuments(p?.office, settings.required_documents);
   const relevantPrograms = [...scholarships.filter((s) => appliedProgramIds.has(s.id)), ...programsToApply];
-  const requiredDocTypes = relevantPrograms.length ? [...new Set(relevantPrograms.flatMap(docsForProgram))] : settings.required_documents;
-  const programsNeeding = (t: string) => relevantPrograms.filter((p) => docsForProgram(p).includes(t));
+  const requiredDocTypes = relevantPrograms.length ? [...new Set(relevantPrograms.flatMap(approvalDocsFor))] : settings.required_documents;
+  const programsNeeding = (t: string) => relevantPrograms.filter((p) => approvalDocsFor(p).includes(t));
+  const followUpOnly = (t: string) => programsNeeding(t).length > 0 && programsNeeding(t).every((p) => followUpDocuments(p.office).includes(t));
+  const housePinned = profile?.home_lat != null && profile?.home_lng != null;
   const needsPhoto = (t: string) => programsNeeding(t).some((p) => photosOnly(p.office));
   const notesFor = (t: string) => [...new Set(programsNeeding(t).map((p) => documentNote(p.office, t)).filter((n): n is string => !!n))];
   // Documents are shared by all of this academic year's applications: filed with any of them, or still
   // unattached (uploaded ahead of applying). Documents tied to older years don't count. Latest wins.
-  // Letters of intent belong to one application each, so they aren't part of the shared set.
-  const inDocSet = (d: Tables<"documents">) => d.document_type !== LETTER_OF_INTENT && (!d.application_id || yearAppIds.has(d.application_id));
+  // Letters of intent and MOAs belong to one application each, so they aren't part of the shared set.
+  const inDocSet = (d: Tables<"documents">) => !APPLICATION_DOCS.includes(d.document_type) && (!d.application_id || yearAppIds.has(d.application_id));
   const docByType = new Map<string, Tables<"documents">>();
   [...documents]
     .filter(inDocSet)
@@ -833,6 +841,13 @@ export default function StudentDashboardPage() {
   const applyDocs = applyProgram ? docsForProgram(applyProgram) : [];
   const applyMissing = applyDocs.filter((t) => !docOk(t));
   const applyNotPhotos = applyProgram && photosOnly(applyProgram.office) ? applyDocs.filter((t) => docOk(t) && !isPhoto(docByType.get(t))) : [];
+  // MSWDO doesn't ask for a letter of intent.
+  const letterNeeded = asksLetter(applyProgram?.office);
+  const applyLater = applyProgram ? [
+    ...(followUpDocuments(applyProgram.office).length ? [`Upload these from the Documents tab (they can follow after you apply): ${followUpDocuments(applyProgram.office).join(", ")}${needsHousePin(applyProgram.office) ? ", and pin your house on the map" : ""}.`] : []),
+    ...(needsHomeVisit(applyProgram.office) ? ["The office will schedule a home visit. You'll be notified of the date."] : []),
+    ...(needsMoa(applyProgram.office) ? [`If you're approved, upload a photo of the signed ${MOA} before your first payout.`] : []),
+  ] : [];
 
   // The program behind the current application (shown on the Application tab).
   const appProgram = scholarships.find((sc) => sc.id === currentApp?.scholarship_id);
@@ -918,15 +933,17 @@ export default function StudentDashboardPage() {
   const submitApplication = async () => {
     // A ref, not applyLoading: a quick double-click fires twice before the disabled state renders.
     if (!applyScholarshipId || submittingRef.current) return;
-    if (!applyLetter) { toast.error("Attach a photo of your letter of intent."); return; }
+    if (letterNeeded && !applyLetter) { toast.error("Attach a photo of your letter of intent."); return; }
     submittingRef.current = true;
     setApplyLoading(true);
     // The photo goes to storage first; the application then files it. If applying fails, it is removed again.
     let letterPath: string | null = null;
     try {
-      const up = await uploadLetterPhoto(supabase, userId, applyLetter.file);
-      if ("error" in up) { toast.error("Could not upload your letter of intent", { description: up.error }); return; }
-      letterPath = up.path;
+      if (applyLetter) {
+        const up = await uploadLetterPhoto(supabase, userId, applyLetter.file);
+        if ("error" in up) { toast.error("Could not upload your letter of intent", { description: up.error }); return; }
+        letterPath = up.path;
+      }
       const res = await fetch("/api/applications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -990,6 +1007,21 @@ export default function StudentDashboardPage() {
     }
   };
 
+  // The signed MOA, after approval, where the office asks for one. A newer photo replaces the older one.
+  const uploadMoa = async (app: typeof applications[number], picked: File) => {
+    const file = await preparePhoto(picked);
+    if (!file) return;
+    setUploadingMoa(app.id);
+    try {
+      const result = await uploadUserDocument(supabase, { userId, docType: MOA, file, applicationId: app.id });
+      if ("error" in result) { toast.error("Upload failed", { description: result.error }); return; }
+      toast.success("MOA uploaded", { description: "The office will check it before your payout." });
+      loadData();
+    } finally {
+      setUploadingMoa(null);
+    }
+  };
+
   const withdrawApplication = async () => {
     if (!selectedApp) return;
     setWithdrawing(true);
@@ -1045,13 +1077,18 @@ export default function StudentDashboardPage() {
     documents.filter((d) => d.document_type === LETTER_OF_INTENT && d.application_id === a.id)
       .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
   const docsFor = (a: typeof applications[number]) => {
-    if (yearAppIds.has(a.id)) { const l = letterFor(a); return l ? [l, ...docByType.values()] : [...docByType.values()]; }
+    if (yearAppIds.has(a.id)) {
+      const moa = documents.filter((d) => d.document_type === MOA && d.application_id === a.id).sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
+      return [letterFor(a), moa, ...docByType.values()].filter((d): d is Tables<"documents"> => !!d);
+    }
     const latest = new Map<string, Tables<"documents">>();
     [...documents].filter((d) => d.application_id === a.id)
       .sort((x, y) => x.uploaded_at.localeCompare(y.uploaded_at))
       .forEach((d) => latest.set(d.document_type, d));
     return [...latest.values()];
   };
+
+  const fmtVisit = (at: string) => new Date(at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" });
 
   // Does the student pass this application's program requirements? Same rules the office checks on approval.
   const requirementsChecklist = (app: typeof applications[number]) => {
@@ -1062,10 +1099,15 @@ export default function StudentDashboardPage() {
         globalMinGrade: settings.min_grade_requirement, renewalMinGrade: settings.renewal_min_grade,
         renewalEnabled: settings.renewal_enabled, isRenewal: app.is_renewal,
       }),
-      ...docsForProgram(program).map((t) => {
+      ...approvalDocsFor(program).map((t) => {
         const d = docByType.get(t);
         return { key: `doc-${t}`, label: t, ok: d?.status === "Verified", detail: !d ? "Not uploaded" : d.status === "Pending" ? "Waiting for the office to verify" : d.status };
       }),
+      ...(needsHousePin(program.office) ? [{ key: "house-pin", label: "House pinned on the map", ok: housePinned, detail: housePinned ? "Saved" : "Not yet (Documents tab)" }] : []),
+      ...(needsHomeVisit(program.office) ? [{
+        key: "home-visit", label: "Home visit", ok: !!app.home_visit_done_at,
+        detail: app.home_visit_done_at ? "Done" : app.home_visit_at ? `Scheduled ${fmtVisit(app.home_visit_at)}` : "The office will schedule it",
+      }] : []),
     ];
     const passing = checks.filter((c) => c.ok).length;
     return (
@@ -1172,7 +1214,45 @@ export default function StudentDashboardPage() {
               </div>
             )}
             <ApplicationTimeline app={a} payments={payments} />
+            {(a.status === "Pending" || a.status === "Waitlisted") && needsHomeVisit(a.scholarships?.office) && (
+              <div className={`rounded-xl border px-4 py-3 text-sm ${a.home_visit_done_at ? "border-emerald-200 bg-emerald-50 text-emerald-800" : a.home_visit_at ? "border-primary/20 bg-accent text-foreground" : "border-border bg-muted/40 text-muted-foreground"}`}>
+                <p className="font-semibold flex items-center gap-1.5"><Home className="h-4 w-4 shrink-0" />
+                  {a.home_visit_done_at ? "Home visit done" : a.home_visit_at ? `Home visit: ${fmtVisit(a.home_visit_at)}` : "Home visit not scheduled yet"}
+                </p>
+                <p className="mt-0.5 text-xs">
+                  {a.home_visit_done_at ? "Thank you. The office has visited your home." : a.home_visit_at ? (a.home_visit_note || "Please be home at that time.") : "The office will set a date and notify you."}
+                </p>
+              </div>
+            )}
             {(a.status === "Pending" || a.status === "Waitlisted") && requirementsChecklist(a)}
+            {a.status === "Approved" && needsMoa(a.scholarships?.office) && (() => {
+              const moa = documents.filter((d) => d.document_type === MOA && d.application_id === a.id)
+                .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
+              const busy = uploadingMoa === a.id;
+              const tone = moa?.status === "Verified" ? "border-emerald-200 bg-emerald-50" : moa?.status === "Disapproved" || !moa ? "border-amber-200 bg-amber-50" : "border-border bg-muted/40";
+              return (
+                <div className={`rounded-xl border px-4 py-3 text-sm ${tone}`}>
+                  <p className="font-semibold text-foreground">Signed MOA agreement letter</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {!moa ? "Needed before your first payout. Sign the MOA and upload a clear photo of it (JPG or PNG)."
+                      : moa.status === "Verified" ? "Verified by the office."
+                      : moa.status === "Disapproved" ? `The office asked for a new photo.${moa.review_note ? ` Reason: ${moa.review_note}` : ""}`
+                      : "Uploaded. Waiting for the office to check it."}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {moa && <DocStatusBadge status={moa.status} />}
+                    {moa && <Button size="sm" variant="outline" className="h-8 rounded-lg text-xs" onClick={() => openDocument(moa)}><Eye className="mr-1 h-3 w-3" />View</Button>}
+                    {moa?.status !== "Verified" && (
+                      <label className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${busy ? "opacity-60" : "cursor-pointer border-primary bg-primary text-white"}`}>
+                        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}{moa ? "Upload new photo" : "Upload photo"}
+                        <input type="file" accept="image/jpeg,image/png" className="sr-only" disabled={busy}
+                          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadMoa(a, f); }} />
+                      </label>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
             <div className="flex flex-wrap gap-2">
               {(a.status === "Pending" || a.status === "Waitlisted") && (
                 <Button size="sm" variant="outline" className="text-xs border-red-200 text-red-600 hover:bg-red-50 rounded-xl"
@@ -1230,8 +1310,10 @@ export default function StudentDashboardPage() {
                 {[
                   ...appReqLines,
                   ...(appProgram?.eligibility ? [appProgram.eligibility] : []),
-                  `Keep these documents on file: ${(appProgram ? docsForProgram(appProgram) : requiredDocTypes).join(", ") || "none required"}${appProgram && photosOnly(appProgram.office) ? " (photos, JPG or PNG)" : ""}.`,
-                  ...[LETTER_OF_INTENT, ...docsForProgram(appProgram)].flatMap((t) => { const n = documentNote(appProgram?.office, t); return n ? [`${t}: ${n.replace(/^Also s/, "S")}`] : []; }),
+                  `Keep these documents on file: ${(appProgram ? approvalDocsFor(appProgram) : requiredDocTypes).join(", ") || "none required"}${appProgram && photosOnly(appProgram.office) ? " (photos, JPG or PNG)" : ""}.`,
+                  ...(needsHomeVisit(appProgram?.office) ? ["The office visits your home before deciding."] : []),
+                  ...(needsMoa(appProgram?.office) ? [`A signed ${MOA} is needed before your first payout.`] : []),
+                  ...[LETTER_OF_INTENT, ...approvalDocsFor(appProgram)].flatMap((t) => { const n = documentNote(appProgram?.office, t); return n ? [`${t}: ${n.replace(/^Also s/, "S")}`] : []; }),
                   ...(settings.renewal_enabled ? [`You may renew up to ${settings.max_renewals} time(s)${settings.renewal_min_grade > 0 ? `, with an average grade of at least ${settings.renewal_min_grade}` : ""}.`] : []),
                 ].map((c, i) => (
                   <div key={i} className="flex items-start gap-3">
@@ -1337,7 +1419,7 @@ export default function StudentDashboardPage() {
         footer={<>
           <Button variant="outline" className="rounded-xl" disabled={applyLoading} onClick={() => { setApplyDialogOpen(false); pickLetter(null); }}>Cancel</Button>
           <Button
-            disabled={!canApplyMore || !applyScholarshipId || appliedProgramIds.has(applyScholarshipId) || applyLoading || applyIssues.length > 0 || applyMissing.length > 0 || applyNotPhotos.length > 0 || !applyLetter || !applyCertified}
+            disabled={!canApplyMore || !applyScholarshipId || appliedProgramIds.has(applyScholarshipId) || applyLoading || applyIssues.length > 0 || applyMissing.length > 0 || applyNotPhotos.length > 0 || (letterNeeded && !applyLetter) || !applyCertified}
             className="rounded-xl"
             onClick={submitApplication}>
             {applyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -1379,6 +1461,13 @@ export default function StudentDashboardPage() {
             </SelectContent>
           </Select>
         </DialogField>
+        {applyLater.length > 0 && (
+          <div className="rounded-xl border border-primary/20 bg-accent px-4 py-3 text-sm text-foreground">
+            <p className="font-semibold mb-1">After you apply</p>
+            <ul className="list-disc pl-4 space-y-0.5">{applyLater.map((m) => <li key={m}>{m}</li>)}</ul>
+          </div>
+        )}
+        {letterNeeded && (
         <DialogField label="Letter of intent (photo) *" htmlFor="apply-letter"
           hint={`A letter to this program saying why you are applying. Take a clear photo of the whole page, or choose one (JPG or PNG). Each application needs its own.${documentNote(applyProgram?.office, LETTER_OF_INTENT) ? ` ${documentNote(applyProgram?.office, LETTER_OF_INTENT)}` : ""}`}>
           {applyLetter ? (
@@ -1399,6 +1488,7 @@ export default function StudentDashboardPage() {
           <input id="apply-letter" type="file" accept="image/jpeg,image/png" className="sr-only"
             onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) pickLetter(f); }} />
         </DialogField>
+        )}
         <label className="flex items-start gap-3 rounded-xl border bg-muted/30 px-4 py-3 text-sm text-foreground cursor-pointer">
           <Checkbox checked={applyCertified} onCheckedChange={(v) => setApplyCertified(v === true)} className="mt-0.5" />
           <span>I certify that the information and documents I have provided are true and correct.</span>
@@ -1494,9 +1584,10 @@ export default function StudentDashboardPage() {
                   </Label>
                 </div>
               </div>
-              {(narrower || notesFor(docType).length > 0 || notPhoto) && (
+              {(narrower || followUpOnly(docType) || notesFor(docType).length > 0 || notPhoto) && (
                 <div className="mt-2 space-y-0.5 text-[11px] text-muted-foreground">
                   {narrower && <p>For {forPrograms.map((p) => p.name).join(", ")}</p>}
+                  {followUpOnly(docType) && <p>Can be uploaded after you apply (needed before approval).</p>}
                   {notesFor(docType).map((n) => <p key={n} className="font-medium text-foreground">{n}</p>)}
                   {notPhoto && <p className="font-medium text-red-700">This program needs a photo (JPG or PNG). Upload a photo to replace this file.</p>}
                 </div>
@@ -1505,6 +1596,19 @@ export default function StudentDashboardPage() {
                 <div className="mt-3 flex items-center gap-2 flex-wrap">
                   <DocStatusBadge status={uploaded.status} />
                   <span className="text-[11px] text-muted-foreground">Uploaded {new Date(uploaded.uploaded_at).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</span>
+                </div>
+              )}
+              {docType === HOUSE_PHOTO && (
+                <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${housePinned ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                  <p className="font-semibold flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{housePinned ? "House pinned on the map" : "Pin your house on the map too"}</p>
+                  {housePinned && profile?.home_landmark && <p className="mt-0.5">Landmark: {profile.home_landmark}</p>}
+                  <div className="mt-1.5 flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" className="h-8 rounded-lg text-xs bg-white" onClick={() => setHouseOpen(true)}>{housePinned ? "Change pin" : "Pin location"}</Button>
+                    {housePinned && (
+                      <a className="inline-flex h-8 items-center rounded-lg border bg-white px-2.5 font-medium hover:bg-muted" target="_blank" rel="noreferrer"
+                        href={googleMapsLink({ lat: profile!.home_lat!, lng: profile!.home_lng! })}>Open in Google Maps</a>
+                    )}
+                  </div>
                 </div>
               )}
               {uploaded?.status === "Disapproved" && uploaded.review_note && (
@@ -1516,6 +1620,8 @@ export default function StudentDashboardPage() {
           );
         })}
       </div>
+
+      <HouseLocationDialog open={houseOpen} onOpenChange={setHouseOpen} userId={userId} saved={profile} onSaved={loadData} />
 
       <AppDialog open={!!removeDoc} onOpenChange={(o) => { if (!o && !removingDoc) setRemoveDoc(null); }} size="sm" className="rounded-2xl"
         title="Remove this document?"
