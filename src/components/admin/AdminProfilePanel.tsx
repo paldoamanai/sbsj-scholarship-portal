@@ -17,6 +17,7 @@ import SecuritySettings from "@/components/account/SecuritySettings";
 import { adminProfileSchema, passwordSchema } from "@/validations/profile";
 import type { Tables, Json } from "@/integrations/supabase/types";
 import { staffLabel } from "@/lib/permissions";
+import { verifyCurrentPassword } from "@/lib/verify-password";
 
 type Props = {
   profile: Tables<"profiles"> | null;
@@ -132,8 +133,8 @@ export default function AdminProfilePanel({ profile, email, userId, role, office
     setPwErrors({});
     setPwBusy(true);
     // Verify the current password before allowing a change.
-    const { error: verifyErr } = await supabase.auth.signInWithPassword({ email, password: pw.current });
-    if (verifyErr) { setPwBusy(false); setPwErrors({ current: "Current password is incorrect" }); return; }
+    const check = await verifyCurrentPassword(email, pw.current);
+    if (!check.ok) { setPwBusy(false); setPwErrors({ current: check.message }); return; }
     const { error } = await supabase.auth.updateUser({ password: pw.next });
     setPwBusy(false);
     if (error) { toast.error(error.message); return; }

@@ -14,6 +14,7 @@ import { formatDate } from "@/lib/format";
 import { downloadMyDataPDF } from "@/lib/my-data-pdf";
 import { emailChangeSchema, passwordSchema } from "@/validations/profile";
 import type { Tables } from "@/integrations/supabase/types";
+import { verifyCurrentPassword } from "@/lib/verify-password";
 
 function Field({ label, error, hint, children }: { label: string; error?: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -68,8 +69,8 @@ export default function AccountSettings({ userId, userEmail, profile, dataReques
     setPwErrors({});
     setPwBusy(true);
     // Verify the current password before allowing a change.
-    const { error: verifyErr } = await supabase.auth.signInWithPassword({ email: userEmail, password: pw.current });
-    if (verifyErr) { setPwBusy(false); setPwErrors({ current: "Current password is incorrect" }); return; }
+    const check = await verifyCurrentPassword(userEmail, pw.current);
+    if (!check.ok) { setPwBusy(false); setPwErrors({ current: check.message }); return; }
     const { error } = await supabase.auth.updateUser({ password: pw.next });
     setPwBusy(false);
     if (error) { setPwErrors({ next: error.message }); return; }

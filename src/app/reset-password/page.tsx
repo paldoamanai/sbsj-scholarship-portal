@@ -58,6 +58,8 @@ export default function ResetPasswordPage() {
       toast.error("Could not change your password", { description: error.message });
       return;
     }
+    // A new password starts a fresh count of failed sign-in tries (migration 077).
+    await fetch("/api/auth/lockout-reset", { method: "POST" }).catch(() => {});
     // Sign out so the next login goes through the normal steps (including two-factor, if on).
     await supabase.auth.signOut();
     toast.success(invite ? "Password set" : "Password changed", { description: "Log in with your new password." });

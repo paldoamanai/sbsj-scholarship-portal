@@ -33,6 +33,27 @@ export default function LoginPage() {
   const [resending, setResending] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [captchaKey, setCaptchaKey] = useState(0);
+  // Sign-in is paused after 3 failed tries (migration 077); the server says until when.
+  const [pausedUntil, setPausedUntil] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!pausedUntil) return;
+    const t = setInterval(() => {
+      setNow(Date.now());
+      if (Date.now() >= pausedUntil) setPausedUntil(null);
+    }, 1000);
+    return () => clearInterval(t);
+  }, [pausedUntil]);
+  const pauseLeft = pausedUntil ? Math.max(0, Math.ceil((pausedUntil - now) / 1000)) : 0;
+  const pauseText = `${Math.floor(pauseLeft / 60)}:${String(pauseLeft % 60).padStart(2, "0")}`;
+
+  /** Sign-in and the two-factor step go through the server, which counts failed tries. */
+  const postAuth = async (url: string, body: Record<string, unknown>) => {
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const json = await res.json().catch(() => ({})) as { access_token?: string; refresh_token?: string; error?: string; code?: string; retryAfter?: number };
+    if (res.status === 429 && json.retryAfter) setPausedUntil(Date.now() + json.retryAfter * 1000);
+    return { ok: res.ok && !!json.access_token, json };
+  };
 
   const goToDashboard = async () => {
     const supabase = createClient();
@@ -93,13 +114,18 @@ export default function LoginPage() {
     e.preventDefault();
     if (!factorId || !/^\d{6}$/.test(code)) { toast.error("Enter the 6-digit code from your authenticator app"); return; }
     setLoading(true);
-    const { error } = await createClient().auth.mfa.challengeAndVerify({ factorId, code });
-    if (error) {
-      toast.error("That code didn't work", { description: error.message });
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { toast.error("Your sign-in expired. Enter your password again."); setFactorId(null); setLoading(false); return; }
+    const { ok, json } = await postAuth("/api/auth/mfa", { access_token: session.access_token, refresh_token: session.refresh_token, factorId, code });
+    if (!ok) {
+      toast.error(json.code === "paused" ? "Sign-in paused" : "That code didn't work", { description: json.error ?? "Try again." });
       setCode("");
       setLoading(false);
       return;
     }
+    const { error } = await supabase.auth.setSession({ access_token: json.access_token!, refresh_token: json.refresh_token! });
+    if (error) { toast.error("Login failed", { description: error.message }); setLoading(false); return; }
     await goToDashboard();
   };
 
@@ -133,19 +159,19 @@ export default function LoginPage() {
     }
 
     const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({
-      email, password, options: { captchaToken: captchaToken ?? undefined },
-    });
+    const { ok, json } = await postAuth("/api/auth/login", { email, password, captchaToken: captchaToken ?? undefined });
     // Captcha tokens are single-use.
     if (captchaEnabled) setCaptchaKey((k) => k + 1);
 
-    if (error) {
-      const notConfirmed = error.code === "email_not_confirmed" || /not confirmed/i.test(error.message);
+    const error = ok ? (await supabase.auth.setSession({ access_token: json.access_token!, refresh_token: json.refresh_token! })).error : null;
+    if (!ok || error) {
+      const notConfirmed = json.code === "email_not_confirmed" || /not confirmed/i.test(json.error ?? "");
       setUnconfirmed(notConfirmed);
-      toast.error("Login failed", {
+      toast.error(json.code === "paused" ? "Sign-in paused" : "Login failed", {
         description: notConfirmed ? "Your email isn't verified yet. Open the link we emailed you, or resend it below."
-          : error.code === "user_banned" ? DEACTIVATED : error.message,
+          : json.code === "user_banned" ? DEACTIVATED : error?.message ?? json.error ?? "Something went wrong. Please try again.",
       });
+      if (json.code === "invalid_credentials") setPassword("");
       setLoading(false);
       return;
     }
@@ -213,7 +239,12 @@ export default function LoginPage() {
                   <Input inputMode="numeric" autoComplete="one-time-code" autoFocus maxLength={6} placeholder="123456"
                     value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
                 </div>
-                <Button type="submit" className="w-full bg-gradient-primary shadow-primary" disabled={loading || code.length !== 6}>
+                {pauseLeft > 0 && (
+                  <p role="status" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                    Too many wrong codes. You can try again in <span className="font-semibold tabular-nums">{pauseText}</span>.
+                  </p>
+                )}
+                <Button type="submit" className="w-full bg-gradient-primary shadow-primary" disabled={loading || code.length !== 6 || pauseLeft > 0}>
                   {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
                   Verify
                 </Button>
@@ -267,8 +298,14 @@ export default function LoginPage() {
                   </button>
                 </div>
               )}
+              {pauseLeft > 0 && (
+                <div role="status" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                  Too many failed attempts. You can try again in <span className="font-semibold tabular-nums">{pauseText}</span>, or{" "}
+                  <Link href="/forgot-password" className="font-medium underline">reset your password</Link>.
+                </div>
+              )}
               <Captcha key={captchaKey} onToken={setCaptchaToken} />
-              <Button type="submit" className="w-full bg-gradient-primary shadow-primary" disabled={loading}>
+              <Button type="submit" className="w-full bg-gradient-primary shadow-primary" disabled={loading || pauseLeft > 0}>
                 {loading ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : isAdmin ? (
