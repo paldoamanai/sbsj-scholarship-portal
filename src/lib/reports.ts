@@ -1,7 +1,7 @@
 import type { Tables, Json } from "@/integrations/supabase/types";
 import { staffLabel } from "@/lib/permissions";
 import { pesoFixed } from "@/lib/format";
-import { termLabel } from "@/lib/release-schedule";
+import { termLabel, yearlyAward } from "@/lib/release-schedule";
 import { approvalDocuments } from "@/lib/office-requirements";
 
 // ── Shapes ──
@@ -234,7 +234,11 @@ export function scope(data: ReportData, f: ReportFilters) {
   };
   const payDate = (p: Tables<"payments">) => p.disbursed_at || p.scheduled_date || p.created_at;
   const profById = new Map(data.profiles.map((p) => [p.id, p]));
-  const appAward = (a: ReportApp) => Number(a.amount_approved ?? data.scholarships.find((s) => s.id === a.scholarship_id)?.amount ?? 0);
+  // The award for the year: every semester or month of a semester or monthly program.
+  const appAward = (a: ReportApp) => {
+    const sch = data.scholarships.find((s) => s.id === a.scholarship_id);
+    return yearlyAward(Number(a.amount_approved ?? sch?.amount ?? 0), sch?.release_schedule, sch?.release_months);
+  };
   return { within, termOk, progOk, appOk, payApp, payOk, payDate, profById, appAward };
 }
 

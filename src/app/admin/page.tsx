@@ -46,7 +46,7 @@ import {
   type DocSummary, type ReportData, type ReportDef, type StaffMember,
 } from "@/lib/reports";
 import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
-import { asMonths, asSchedule, isMonthTerm, openTerms, secondSemesterGradeWarning, termAmount, termLabel, termsFor, type PaymentTerm } from "@/lib/release-schedule";
+import { asMonths, asSchedule, isMonthTerm, openTerms, secondSemesterGradeWarning, termLabel, termsFor, yearlyAward, type PaymentTerm } from "@/lib/release-schedule";
 import { OFFICE_FULL_NAME, OFFICE_LABEL, STAFF_OFFICES, isOffice, officeLogo, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 import { printReceiptSlip } from "@/lib/receipt-slip";
 import { LETTER_OF_INTENT, MOA } from "@/lib/documents";
@@ -604,10 +604,10 @@ export default function AdminDashboardPage() {
   // Slots and budgets are per academic year: they count that year's approvals (the current one by default).
   const currentAY = parseSettings(systemSettings).academic_year;
   const approvedCount = (schId: string, ay = currentAY) => applications.filter((a) => a.scholarship_id === schId && a.status === "Approved" && a.academic_year === ay).length;
-  // Money committed to a program: approved awards (the program amount where none was set).
+  // Money committed to a program: approved awards for the year (the program amount where none was set, once per semester or month).
   const committedFor = (sch: Tables<"scholarships">, ay = currentAY) =>
     applications.filter((a) => a.scholarship_id === sch.id && a.status === "Approved" && a.academic_year === ay)
-      .reduce((t, a) => t + Number(a.amount_approved ?? sch.amount ?? 0), 0);
+      .reduce((t, a) => t + yearlyAward(Number(a.amount_approved ?? sch.amount ?? 0), sch.release_schedule, sch.release_months), 0);
   // How an application's award is released, and which of its terms have no payment yet.
   const scheduleOf = (a: { scholarship_id: string | null }) => asSchedule(scholarships.find((x) => x.id === a.scholarship_id)?.release_schedule);
   const monthsOf = (a: { scholarship_id: string | null }) => asMonths(scholarships.find((x) => x.id === a.scholarship_id)?.release_months);
@@ -617,12 +617,12 @@ export default function AdminDashboardPage() {
   const paymentsOf = (appId: string) => payments.filter((p) => p.application_id === appId);
   const openTermsOf = (a: { id: string; scholarship_id: string | null; amount_approved: number | null }) =>
     openTerms(scheduleOf(a), awardOf(a), paymentsOf(a.id), monthsOf(a));
-  // A term's default amount: its share of the award, but never more than what's left of it. The last
-  // open term gets whatever is left, so centavos lost to rounding (₱10,000 over 3 months) aren't.
+  // A term's default amount: the award (each semester or month pays it in full), but never more than
+  // what's left of the year's total. The last open term gets whatever is left.
   const termDefaultAmount = (a: { id: string; scholarship_id: string | null; amount_approved: number | null }) => {
     const award = awardOf(a);
-    const left = Math.round((award - paymentsOf(a.id).filter((p) => p.status !== "Cancelled").reduce((t, p) => t + Number(p.amount), 0)) * 100) / 100;
-    const v = openTermsOf(a).length === 1 ? left : Math.min(termAmount(award, scheduleOf(a), monthsOf(a)), left);
+    const left = Math.round((yearlyAward(award, scheduleOf(a), monthsOf(a)) - paymentsOf(a.id).filter((p) => p.status !== "Cancelled").reduce((t, p) => t + Number(p.amount), 0)) * 100) / 100;
+    const v = openTermsOf(a).length === 1 ? left : Math.min(award, left);
     return v > 0 ? v : "";
   };
   // Before a 2nd-semester payment: a verified 1st-semester grade that meets the application's minimum.
@@ -976,9 +976,12 @@ export default function AdminDashboardPage() {
     return list.find((pm) => pm.status !== "Cancelled") ?? list[0];
   };
 
-  // A scholar's approved applications (newest first) and the award for each.
+  // A scholar's approved applications (newest first) and the award for each (for the year: every semester or month).
   const approvedApps = (userId: string) => applications.filter((a) => a.user_id === userId && a.status === "Approved");
-  const appAward = (a: typeof applications[0]) => Number(a.amount_approved ?? scholarships.find((x) => x.id === a.scholarship_id)?.amount ?? 0);
+  const appAward = (a: typeof applications[0]) => {
+    const sch = scholarships.find((x) => x.id === a.scholarship_id);
+    return yearlyAward(Number(a.amount_approved ?? sch?.amount ?? 0), sch?.release_schedule, sch?.release_months);
+  };
   const disbursedTotal = (userId: string) => payments
     .filter((pm) => pm.user_id === userId && pm.status === "Disbursed")
     .reduce((t, pm) => t + Number(pm.amount), 0);
@@ -1165,7 +1168,7 @@ export default function AdminDashboardPage() {
     if (!sch) return null;
     const approved = approvedCount(sch.id, a.academic_year ?? currentAY);
     const committed = committedFor(sch, a.academic_year ?? currentAY);
-    const amount = award ?? Number(a.amount_approved ?? sch.amount ?? 0);
+    const amount = yearlyAward(award ?? Number(a.amount_approved ?? sch.amount ?? 0), sch.release_schedule, sch.release_months);
     const slotsFull = sch.slots > 0 && approved >= sch.slots;
     const overBudget = Number(sch.total_budget) > 0 && committed + amount > Number(sch.total_budget);
     return { sch, approved, committed, amount, slotsFull, overBudget };
@@ -2095,7 +2098,7 @@ export default function AdminDashboardPage() {
 
                       {viewApp.status === "Approved" && (
                         <div>
-                          <h3 className="mb-1.5 text-sm font-semibold">Award amount (₱)</h3>
+                          <h3 className="mb-1.5 text-sm font-semibold">Award amount (₱){(scheduleOf(viewApp) === "semester" || scheduleOf(viewApp) === "monthly") && <span className="font-normal text-muted-foreground">{scheduleOf(viewApp) === "semester" ? " per semester" : " a month"}</span>}</h3>
                           <div className="mt-1 flex items-start gap-2">
                             <MoneyInput wrapperClassName="flex-1" min={1} value={awardInput} onValueChange={setAwardInput} disabled={!can.manage || hasDisbursed(viewApp.id)} />
                             {can.manage && <Button variant="outline" disabled={hasDisbursed(viewApp.id)} onClick={() => saveAward(viewApp)}>Save award</Button>}
@@ -2107,9 +2110,9 @@ export default function AdminDashboardPage() {
                       )}
                       {open && (
                         <div>
-                          <h3 className="mb-1.5 text-sm font-semibold">Award amount (₱, optional)</h3>
+                          <h3 className="mb-1.5 text-sm font-semibold">Award amount (₱{cap?.sch.release_schedule === "semester" ? " per semester" : cap?.sch.release_schedule === "monthly" ? " a month" : ""}, optional)</h3>
                           <MoneyInput wrapperClassName="mt-1" min={1} value={awardInput} onValueChange={setAwardInput}
-                            placeholder={cap?.sch.amount ? `Program award: ${formatPHP(Number(cap.sch.amount))}` : "Program award"} />
+                            placeholder={cap?.sch.amount ? `Program award: ${formatPHP(Number(cap.sch.amount))}${cap.sch.release_schedule === "semester" ? " per semester" : cap.sch.release_schedule === "monthly" ? " a month" : ""}` : "Program award"} />
                         </div>
                       )}
 
@@ -2281,8 +2284,8 @@ export default function AdminDashboardPage() {
                           <TableCell className="text-sm">
                             <p>{Number(sch.amount) > 0 ? `${formatPHP(Number(sch.amount))} each` : <span className="text-muted-foreground">No award set</span>}</p>
                             <p className="text-xs text-muted-foreground">{
-                              sch.release_schedule === "semester" ? `Per semester${Number(sch.amount) > 0 ? ` (${formatPHP(termAmount(Number(sch.amount), "semester"))} each)` : ""}`
-                              : sch.release_schedule === "monthly" ? `Monthly for ${asMonths(sch.release_months)} months${Number(sch.amount) > 0 ? ` (${formatPHP(termAmount(Number(sch.amount), "monthly", sch.release_months))} each)` : ""}`
+                              sch.release_schedule === "semester" ? `Per semester${Number(sch.amount) > 0 ? ` (${formatPHP(yearlyAward(Number(sch.amount), "semester"))} a year)` : ""}`
+                              : sch.release_schedule === "monthly" ? `Monthly for ${asMonths(sch.release_months)} months${Number(sch.amount) > 0 ? ` (${formatPHP(yearlyAward(Number(sch.amount), "monthly", sch.release_months))} a year)` : ""}`
                               : sch.release_schedule === "one_time" ? "One-time, no renewal"
                               : "Once a year"}</p>
                             {Number(sch.total_budget) > 0 && (() => {
