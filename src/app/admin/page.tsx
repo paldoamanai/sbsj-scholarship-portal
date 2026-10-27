@@ -318,7 +318,11 @@ function AdminDashboard() {
       };
     }).filter((r) => r.programs > 0);
   }, [myOffice, officesReady, allScholarships, allApplications, allPayments]);
-  const canSee = (key: string) => (key === "staff" ? can.super || !!managedOffice : !(hiddenSections[adminRole] ?? []).includes(key));
+  // Students' house pins and the Home Visits map are for MSWDO staff only.
+  const mapAccess = myOffice === "mswdo";
+  const canSee = (key: string) => (key === "staff" ? can.super || !!managedOffice
+    : key === "visits" ? mapAccess
+    : !(hiddenSections[adminRole] ?? []).includes(key));
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -600,13 +604,13 @@ function AdminDashboard() {
   // Where the student has pinned their house before (migration 076; empty before it runs).
   useEffect(() => {
     setPinHistory([]);
-    if (!viewApp) return;
+    if (!viewApp || !mapAccess) return;
     let cancelled = false;
     supabase.from("home_location_history").select("*").eq("user_id", viewApp.user_id).order("changed_at", { ascending: false }).limit(10)
       .then(({ data }) => { if (!cancelled) setPinHistory(data ?? []); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewApp?.id, viewApp?.user_id]);
+  }, [viewApp?.id, viewApp?.user_id, mapAccess]);
 
   // Documents: loaded on open and re-read (without a loading state) when a document changes.
   useEffect(() => {
@@ -1787,7 +1791,7 @@ function AdminDashboard() {
           )}
 
           {/* APPLICATIONS */}
-          {activeSection === "visits" && (
+          {activeSection === "visits" && mapAccess && (
             <HomeVisitsPanel applications={applications} scholarships={scholarships} onOpen={(a) => setViewApp(a)} />
           )}
 
@@ -2090,7 +2094,9 @@ function AdminDashboard() {
                             <div className="space-y-3 rounded-md border px-3 py-3 text-sm">
                               <div className="flex flex-wrap items-center gap-2">
                                 <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                {pin ? (
+                                {!mapAccess ? (
+                                  <span className="text-muted-foreground">{pin ? "The student has pinned their house. Only MSWDO staff can see where." : "The student hasn\u2019t pinned their house yet."}</span>
+                                ) : pin ? (
                                   <>
                                     <span>{pr?.home_landmark || "No landmark given"}</span>
                                     {[["Google Maps", googleMapsLink(pin)], ["Directions", directionsLink(pin)], ["Street View", streetViewLink(pin)], ["Google Earth (3D)", earthLink(pin)]].map(([label, href]) => (
@@ -2101,8 +2107,8 @@ function AdminDashboard() {
                                   </>
                                 ) : <span className="text-muted-foreground">The student hasn&apos;t pinned their house yet.</span>}
                               </div>
-                              {pin && <HouseMap pin={pin} readOnly className="h-56" />}
-                              {(() => {
+                              {mapAccess && pin && <HouseMap pin={pin} readOnly className="h-56" />}
+                              {mapAccess && (() => {
                                 // Moved since the visit was done (or, without a visit, just the history).
                                 const latest = pinHistory[0];
                                 const before = pinHistory.slice(1).find((h) => h.home_lat != null && h.home_lng != null);
