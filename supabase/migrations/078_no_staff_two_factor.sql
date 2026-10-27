@@ -11,7 +11,8 @@
 
 BEGIN;
 
-CREATE OR REPLACE FUNCTION public.is_staff(_user UUID)
+-- Same as 003's (the parameter keeps its name there, which Postgres can't change in place).
+CREATE OR REPLACE FUNCTION public.is_staff(_user_id UUID)
 RETURNS BOOLEAN
 LANGUAGE sql
 STABLE
@@ -20,7 +21,7 @@ SET search_path = public
 AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.user_roles
-     WHERE user_id = _user AND role::text IN ('super_admin', 'admin', 'reviewer', 'finance_admin')
+     WHERE user_id = _user_id AND role::text IN ('super_admin', 'admin', 'reviewer', 'finance_admin')
   );
 $$;
 
