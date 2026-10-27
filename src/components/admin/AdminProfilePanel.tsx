@@ -257,11 +257,11 @@ export default function AdminProfilePanel({ profile, email, userId, role, office
         </CardContent>
       </Card>
 
-      {/* Security: 2FA + sessions */}
+      {/* Security: sign-in details + other devices (staff don't use two-factor) */}
       <Card>
         <CardHeader><CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Security</CardTitle></CardHeader>
         <CardContent>
-          <SecuritySettings userId={userId} logAudit={logAudit} required />
+          <SecuritySettings userId={userId} logAudit={logAudit} twoFactor={false} />
         </CardContent>
       </Card>
 

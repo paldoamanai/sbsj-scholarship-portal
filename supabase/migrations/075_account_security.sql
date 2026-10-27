@@ -1,8 +1,7 @@
 -- Account security (run after 074, once the app that sets up two-factor for staff is live).
 --
---   * Staff need two-factor. Super admin, Admin, Reviewer and Finance accounts must have a verified
---     authenticator and must have entered its code this session (aal2). Until then they can only read
---     their own role and profile (so the app can send them to the two-factor setup) and nothing else.
+--   * (Staff no longer use two-factor: see 078. The policies below are still named "Staff need
+--     two-factor", but staff_access_ok() only checks that the staff session hasn't been signed out.)
 --   * One device at a time for staff. Signing in ends their other sessions (the app does that through
 --     Supabase Auth), and a staff session that has been ended is refused here at once, instead of
 --     working until its token expires.
@@ -27,7 +26,7 @@ AS $$
   );
 $$;
 
--- True for everyone but staff; for staff, only a two-factor session that hasn't been signed out.
+-- True for everyone but staff; for staff, only a session that hasn't been signed out (078: no two-factor).
 CREATE OR REPLACE FUNCTION public.staff_access_ok()
 RETURNS BOOLEAN
 LANGUAGE sql
@@ -37,9 +36,7 @@ SET search_path = public
 AS $$
   SELECT CASE
     WHEN auth.uid() IS NULL OR NOT public.is_staff(auth.uid()) THEN true
-    ELSE EXISTS (SELECT 1 FROM auth.mfa_factors WHERE user_id = auth.uid() AND status = 'verified')
-     AND COALESCE(auth.jwt() ->> 'aal', '') = 'aal2'
-     AND EXISTS (SELECT 1 FROM auth.sessions s
+    ELSE EXISTS (SELECT 1 FROM auth.sessions s
                   WHERE s.id::text = COALESCE(auth.jwt() ->> 'session_id', '') AND s.user_id = auth.uid())
   END;
 $$;
