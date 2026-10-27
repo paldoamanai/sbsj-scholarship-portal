@@ -47,11 +47,9 @@ export async function updateSession(request: NextRequest) {
   // Two-factor: a password-only session for an account with a verified factor may not go past the
   // login page until the code is entered.
   let needsSecondStep = false;
-  let hasSecondFactor = false;
   if (user) {
     const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
     needsSecondStep = !!aal && aal.nextLevel === "aal2" && aal.currentLevel !== "aal2";
-    hasSecondFactor = aal?.nextLevel === "aal2";
   }
 
   if (needsSecondStep) {
@@ -63,12 +61,6 @@ export async function updateSession(request: NextRequest) {
     if (protectedApis.some((route) => path.startsWith(route))) {
       return NextResponse.json({ error: "Two-factor verification required" }, { status: 401 });
     }
-  }
-
-  // Staff must set up two-factor (migration 075): the admin page shows the setup, and the admin API (staff
-  // only; the routes check the role) refuses until then.
-  if (user && !hasSecondFactor && path.startsWith("/api/admin")) {
-    return NextResponse.json({ error: "Set up two-factor authentication first" }, { status: 403 });
   }
 
   if (!user && protectedRoutes.some((route) => path.startsWith(route))) {

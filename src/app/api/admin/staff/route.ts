@@ -5,10 +5,10 @@ import { linkResult, sendLinkEmail, serviceClient, siteUrl } from "@/lib/admin-a
 import { isOffice, isStaffRole, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 
 // Actions on staff accounts that need Supabase Auth's admin API (service role):
-//   GET                         every staff account with its last sign-in and whether 2FA is on
+//   GET                         every staff account with its last sign-in
 //   POST { action: "invite" }   create a staff account and email the person a link to set a password
 //                               (for an invite that is still pending, sends a fresh link instead)
-//   POST { action: "reset_mfa" | "sign_out" | "reset_password", userId }
+//   POST { action: "sign_out" | "reset_password", userId }
 //   POST { action: "resend_invite" | "cancel_invite", userId }   only while the invite is pending
 //   POST { action: "update_details", userId, firstName, lastName, email }
 //   POST { action: "delete_account", userId }   deletes the login; the audit log keeps their history
@@ -88,7 +88,6 @@ export async function GET() {
       id: r.user_id,
       role: r.role as string,
       lastSignInAt: u?.last_sign_in_at ?? null,
-      mfa: !!u?.factors?.some((f) => f.status === "verified"),
       // Invited but hasn't set a password yet.
       invited: invitePending(u),
     };
@@ -168,22 +167,6 @@ export async function POST(request: Request) {
   const role = roleRow!.role as string;
   const office = (roleRow?.office as string | null | undefined) ?? null;
   if (!inScope(caller, role, office)) return NextResponse.json({ error: OUT_OF_SCOPE }, { status: 403 });
-
-  if (action === "reset_mfa") {
-    const { data, error } = await admin.auth.admin.mfa.listFactors({ userId });
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    for (const f of data?.factors ?? []) {
-      const { error: delErr } = await admin.auth.admin.mfa.deleteFactor({ id: f.id, userId });
-      if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
-    }
-    // Sessions that already passed 2FA would otherwise stay signed in.
-    const { error: revokeErr } = await admin.rpc("revoke_user_sessions", { _user_id: userId });
-    await audit(admin, caller, "reset_staff_2fa", userId, { factors_removed: data?.factors?.length ?? 0, signed_out: !revokeErr });
-    if (revokeErr) {
-      return NextResponse.json({ error: `Two-factor was removed, but their sessions could not be ended: ${revokeErr.message}. Use Sign out everywhere.` }, { status: 500 });
-    }
-    return NextResponse.json({ ok: true });
-  }
 
   if (action === "resend_invite" || action === "cancel_invite") {
     const { data: u } = await admin.auth.admin.getUserById(userId);

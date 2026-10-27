@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
-  Copy, History, KeyRound, Loader2, LogOut, MailPlus, MoreHorizontal, Pencil, Search, ShieldCheck, ShieldOff, Trash2, UserMinus, UserPlus,
+  Copy, History, KeyRound, Loader2, LogOut, MailPlus, MoreHorizontal, Pencil, Search, ShieldCheck, Trash2, UserMinus, UserPlus,
 } from "@/components/icons";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -43,10 +43,10 @@ type Person = {
   id: string; email: string | null; name: string; firstName: string; lastName: string; role: string; office: string | null;
 };
 type Profile = { id: string; email: string | null; first_name: string | null; last_name: string | null };
-type Security = { lastSignInAt: string | null; mfa: boolean; invited: boolean };
+type Security = { lastSignInAt: string | null; invited: boolean };
 /** `to` is the new role ("student" removes staff access); `office` the office it comes with. */
 type Pending = { person: Person; to: string; office: string | null };
-type SecAction = { person: Person; action: "reset_mfa" | "sign_out" | "reset_password" | "resend_invite" | "cancel_invite" | "delete_account" };
+type SecAction = { person: Person; action: "sign_out" | "reset_password" | "resend_invite" | "cancel_invite" | "delete_account" };
 type Editing = { person: Person; firstName: string; lastName: string; email: string };
 
 const nameOf = (p: { first_name: string | null; last_name: string | null; email: string | null }) =>
@@ -64,11 +64,6 @@ const ORDER = (p: Person) => (STAFF_ROLES as readonly string[]).indexOf(p.role) 
 const ALL = "all";
 
 const SEC_COPY: Record<SecAction["action"], { title: (n: string) => string; body: (n: string) => string; done: string }> = {
-  reset_mfa: {
-    title: (n) => `Turn off two-factor for ${n}?`,
-    body: (n) => `Removes ${n}'s authenticator and signs them out everywhere. Use this when they lost their phone. They should set up two-factor again from their Profile page.`,
-    done: "Two-factor removed",
-  },
   sign_out: {
     title: (n) => `Sign ${n} out everywhere?`,
     body: (n) => `Ends every session ${n} has. Each device is signed out within the hour (when its current sign-in token expires). Use this if a device was lost or shared.`,
@@ -149,7 +144,6 @@ export default function StaffPanel({ userId, onChanged, onShowActivity, managerO
 
   const hasSuperAdmin = staff.some((s) => s.role === "super_admin");
   const me = staff.find((s) => s.id === userId);
-  const withoutTwoFactor = staff.filter((s) => security[s.id] && !security[s.id].mfa && !security[s.id].invited).length;
 
   const pick = (p: Person) => {
     setFound(p);
@@ -316,15 +310,6 @@ export default function StaffPanel({ userId, onChanged, onShowActivity, managerO
         </Card>
       )}
 
-      {withoutTwoFactor > 0 && (
-        <Card className="border-amber-200 bg-amber-50/60">
-          <CardContent className="pt-6 text-sm">
-            <strong>{withoutTwoFactor} staff {withoutTwoFactor === 1 ? "account doesn't" : "accounts don't"} use two-factor sign-in.</strong>{" "}
-            Staff can see every student&apos;s personal data, so ask them to turn it on from their Profile page.
-          </CardContent>
-        </Card>
-      )}
-
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Staff accounts</CardTitle>
@@ -350,7 +335,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity, managerO
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Name</TableHead><TableHead>Role</TableHead><TableHead>Office</TableHead><TableHead>Two-factor</TableHead>
+                    <TableHead>Name</TableHead><TableHead>Role</TableHead><TableHead>Office</TableHead><TableHead>Status</TableHead>
                     <TableHead>Last sign-in</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -375,8 +360,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity, managerO
                         <TableCell>
                           {!sec ? <span className="text-muted-foreground">—</span>
                             : sec.invited ? <Badge variant="outline">Invite pending</Badge>
-                            : sec.mfa ? <Badge className="bg-emerald-600 hover:bg-emerald-600">On</Badge>
-                            : <Badge variant="outline" className="border-amber-300 text-amber-800 dark:text-amber-300">Off</Badge>}
+                            : <Badge variant="secondary">Active</Badge>}
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">{sec ? fmt(sec.lastSignInAt) : "—"}</TableCell>
                         <TableCell className="text-right">
@@ -402,7 +386,6 @@ export default function StaffPanel({ userId, onChanged, onShowActivity, managerO
                               </>}
                               {!self && !sec?.invited && <>
                                 <DropdownMenuItem onClick={() => setSecAction({ person: s, action: "reset_password" })}><KeyRound className="mr-2 h-4 w-4" />Send password reset</DropdownMenuItem>
-                                <DropdownMenuItem disabled={!sec?.mfa} onClick={() => setSecAction({ person: s, action: "reset_mfa" })}><ShieldOff className="mr-2 h-4 w-4" />Turn off two-factor</DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => setSecAction({ person: s, action: "sign_out" })}><LogOut className="mr-2 h-4 w-4" />Sign out everywhere</DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setPending({ person: s, to: "student", office: null })}>
