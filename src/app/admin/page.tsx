@@ -772,18 +772,28 @@ function AdminDashboard() {
   const confirmDeleteScholarship = async () => {
     if (!deleteSch || deletingSch) return;
     setDeletingSch(true);
-    // Removes the program with its applications, documents, notes and payments in one transaction.
+    // Removes the program with its applications, documents, notes, payments and notifications in one
+    // transaction, writes the audit entry, and returns the uploaded files nothing uses any more.
     const { data, error } = await supabase.rpc("delete_scholarship_cascade", { _scholarship_id: deleteSch.id });
-    setDeletingSch(false);
     if (error) {
+      setDeletingSch(false);
       toast.error("Could not delete", {
-        description: error.code === "PGRST202" ? "The database is missing delete_scholarship_cascade. Run migration 059 in Supabase." : error.message,
+        description: error.code === "PGRST202" ? "The database is missing delete_scholarship_cascade. Run migrations 059 and 079 in Supabase." : error.message,
       });
       return;
     }
-    const removed = (data ?? {}) as { applications?: number; payments?: number };
-    await logAudit("delete_scholarship", "scholarships", deleteSch.id, { name: deleteSch.name, applications: removed.applications ?? 0, payments: removed.payments ?? 0 }, null);
+    const removed = (data ?? {}) as { applications?: number; payments?: number; paths?: string[] };
+    // Before 079 the function neither wrote the audit entry nor returned the files.
+    if (!removed.paths) await logAudit("delete_scholarship", "scholarships", deleteSch.id, { name: deleteSch.name, applications: removed.applications ?? 0, payments: removed.payments ?? 0 }, null);
+    let filesLeft = 0;
+    for (let i = 0; i < (removed.paths?.length ?? 0); i += 100) {
+      const chunk = removed.paths!.slice(i, i + 100);
+      const { error: rmError } = await supabase.storage.from("documents").remove(chunk);
+      if (rmError) filesLeft += chunk.length;
+    }
+    setDeletingSch(false);
     toast.success("Scholarship deleted", removed.applications ? { description: `Also removed ${removed.applications} application${removed.applications === 1 ? "" : "s"} and ${removed.payments ?? 0} payment${removed.payments === 1 ? "" : "s"}.` } : undefined);
+    if (filesLeft) toast.warning(`${filesLeft} uploaded file${filesLeft === 1 ? " was" : "s were"} not removed from storage`, { description: "The records are gone; the files can be cleared from the Supabase Storage dashboard." });
     setDeleteSch(null); setDeleteSchText(""); loadData();
   };
 
@@ -2323,7 +2333,7 @@ function AdminDashboard() {
                   <DialogNote tone="warning" icon={<AlertTriangle className="h-3.5 w-3.5" />}>
                     It has {applicantCount(deleteSch.id)} application{applicantCount(deleteSch.id) === 1 ? "" : "s"}
                     {payments.some((p) => applications.some((a) => a.id === p.application_id && a.scholarship_id === deleteSch.id)) ? " with payments" : ""}.
-                    {" "}Deleting the program also deletes {applicantCount(deleteSch.id) === 1 ? "it" : "them"} and their documents, notes and payment records. To keep the records, turn off &ldquo;Accepting applications&rdquo; instead.
+                    {" "}Deleting the program also deletes {applicantCount(deleteSch.id) === 1 ? "it" : "them"} with their uploaded files, notes, notifications and payment records. To keep the records, turn off &ldquo;Accepting applications&rdquo; instead.
                   </DialogNote>
                 )}
                 {deleteSch && (
