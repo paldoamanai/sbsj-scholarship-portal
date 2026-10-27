@@ -59,6 +59,7 @@ import { MoneyInput } from "@/components/MoneyInput";
 import type { Tables, Json } from "@/integrations/supabase/types";
 import DashboardSkeleton from "@/components/DashboardSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
+import { fetchAll } from "@/lib/fetch-all";
 
 // The house map only loads in the browser, and only when a pinned house is shown.
 const HouseMap = dynamic(() => import("@/components/student/HouseMap"), {
@@ -153,6 +154,9 @@ function AdminDashboard() {
   // Deleting a program is permanent, so the super admin types its name to confirm.
   const [deleteSchText, setDeleteSchText] = useState("");
   const [deletingSch, setDeletingSch] = useState(false);
+  // Guards against a double click saving twice (two programs, two payments).
+  const [savingSch, setSavingSch] = useState(false);
+  const [savingPay, setSavingPay] = useState(false);
   const [fundPeriod, setFundPeriod] = useState("all"); // shared by Fund Management and Reports
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -365,6 +369,13 @@ function AdminDashboard() {
     return apps.map((a) => ({ ...a, profiles: byId.get(a.user_id) ?? null }));
   };
 
+  // The tables that grow with every applicant, read in full (ordered by id as well, so pages don't overlap).
+  const fetchAllApps = () => fetchAll((f, t) => supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }).order("id").range(f, t));
+  const fetchAllPayments = () => fetchAll((f, t) => supabase.from("payments").select("*").order("created_at", { ascending: false }).order("id").range(f, t));
+  const fetchAllProfiles = () => fetchAll((f, t) => supabase.from("profiles").select("*").order("id").range(f, t));
+  const fetchAllDocs = () => fetchAll((f, t) => supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at").order("id").range(f, t));
+  const fetchAllReceiptNos = () => fetchAll((f, t) => supabase.from("payment_receipt_numbers").select("payment_id, receipt_no").order("payment_id").range(f, t));
+
   const loadData = async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
     // The middleware has already verified the session for /admin, so read it locally instead of
@@ -382,20 +393,20 @@ function AdminDashboard() {
       supabase.from("user_roles").select("*").eq("user_id", user.id).single(),
       supabase.rpc("can_manage_settings", { _user_id: user.id }),
       staffRoles(),
-      supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
+      fetchAllApps(),
       supabase.from("scholarships").select("*").order("created_at", { ascending: false }),
-      supabase.from("profiles").select("*"),
-      supabase.from("payments").select("*").order("created_at", { ascending: false }),
+      fetchAllProfiles(),
+      fetchAllPayments(),
       supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(1000),
       supabase.from("system_settings").select("*"),
       supabase.from("profiles").select("*").eq("id", user.id).single(),
       supabase.from("notifications").select("*").eq("user_id", user.id).eq("muted", false).order("created_at", { ascending: false }).limit(NOTIFICATION_PAGE),
       supabase.from("notifications").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("muted", false).eq("read", false),
-      supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at"),
-      supabase.from("payment_issues").select("*").order("created_at", { ascending: false }),
-      supabase.from("grade_updates").select("*").order("created_at", { ascending: false }),
+      fetchAllDocs(),
+      fetchAll((f, t) => supabase.from("payment_issues").select("*").order("created_at", { ascending: false }).order("id").range(f, t)),
+      fetchAll((f, t) => supabase.from("grade_updates").select("*").order("created_at", { ascending: false }).order("id").range(f, t)),
       supabase.from("data_requests").select("*").order("created_at", { ascending: false }),
-      supabase.from("payment_receipt_numbers").select("payment_id, receipt_no"),
+      fetchAllReceiptNos(),
     ]);
 
     const role = (roleRes.data as { role?: string } | null)?.role;
@@ -429,11 +440,7 @@ function AdminDashboard() {
   // used when a live change comes in over realtime.
   const silentRefreshAdmin = async () => {
     const [appsRes, paymentsRes, profilesRes, docsRes, receiptNosRes] = await Promise.all([
-      supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
-      supabase.from("payments").select("*").order("created_at", { ascending: false }),
-      supabase.from("profiles").select("*"),
-      supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at"),
-      supabase.from("payment_receipt_numbers").select("payment_id, receipt_no"),
+      fetchAllApps(), fetchAllPayments(), fetchAllProfiles(), fetchAllDocs(), fetchAllReceiptNos(),
     ]);
     if (receiptNosRes.data) setReceiptNos(Object.fromEntries(receiptNosRes.data.map((r) => [r.payment_id, r.receipt_no])));
     if (docsRes.data) setAllDocs(docsRes.data);
@@ -457,6 +464,9 @@ function AdminDashboard() {
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "applications" }, () => silentRefreshAdmin())
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "payments" }, () => silentRefreshAdmin())
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "payments" }, () => silentRefreshAdmin())
+      // A program deleted elsewhere takes its applications and payments with it.
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "applications" }, () => silentRefreshAdmin())
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "payments" }, () => silentRefreshAdmin())
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "profiles" },
@@ -620,7 +630,9 @@ function AdminDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewStudent?.id, docsVersion]);
 
-  const isClosed = (sch: Tables<"scholarships">) => !!sch.deadline && sch.deadline < new Date().toISOString().slice(0, 10);
+  // Today's date where the admin is (Philippine time), not UTC's, which is still yesterday until 8 AM.
+  const localDate = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const isClosed = (sch: Tables<"scholarships">) => !!sch.deadline && sch.deadline < localDate();
   // Slots and budgets are per academic year: they count that year's approvals (the current one by default).
   const currentAY = parseSettings(systemSettings).academic_year;
   const approvedCount = (schId: string, ay = currentAY) => applications.filter((a) => a.scholarship_id === schId && a.status === "Approved" && a.academic_year === ay).length;
@@ -694,8 +706,13 @@ function AdminDashboard() {
     return true;
   });
 
+  // Row-level security skips rows the account may not change without an error, so an update that
+  // matched nothing has to be caught by counting the rows it returned.
+  const NOT_SAVED = "Nothing was changed: your account may not edit this record, or it was deleted. Refresh and try again.";
+
   const saveScholarship = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (savingSch) return;
     const fd = new FormData(e.currentTarget);
     const text = (k: string) => String(fd.get(k) ?? "");
     const num = (k: string) => (text(k).trim() === "" ? 0 : Number(text(k)));
@@ -713,7 +730,7 @@ function AdminDashboard() {
     // Office staff's programs always belong to their office (the database sets it); the rest pick one.
     const payload = { ...parsed.data, ...(fd.has("office") ? { office: text("office") || null } : {}) };
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDate();
     if (payload.deadline && payload.deadline < today && (!editing || payload.deadline !== editing.deadline)) {
       toast.error("The deadline cannot be in the past"); return;
     }
@@ -728,20 +745,26 @@ function AdminDashboard() {
     const saveError = (error: { message: string }) => error.message.includes("scholarships_release_schedule_check")
       ? toast.error("The database doesn't support this release schedule yet", { description: "Run migration 069_one_time_release.sql in the Supabase SQL Editor, then save again." })
       : toast.error(error.message);
-    if (editing) {
-      const { error } = await supabase.from("scholarships").update(payload).eq("id", editing.id);
-      if (error) { saveError(error); return; }
-      // Log every field that can change, not just a few.
-      const before = Object.fromEntries(Object.keys(payload).map((k) => [k, editing[k as keyof typeof editing] ?? null]));
-      await logAudit("update_scholarship", "scholarships", editing.id, before as Json, payload as unknown as Json);
-      toast.success("Scholarship updated");
-    } else {
-      const { data, error } = await supabase.from("scholarships").insert(payload).select().single();
-      if (error) { saveError(error); return; }
-      await logAudit("create_scholarship", "scholarships", data.id, null, payload as unknown as Json);
-      toast.success("Scholarship added");
+    setSavingSch(true);
+    try {
+      if (editing) {
+        const { data: rows, error } = await supabase.from("scholarships").update(payload).eq("id", editing.id).select("id");
+        if (error) { saveError(error); return; }
+        if (!rows?.length) { toast.error(NOT_SAVED); loadData(true); return; }
+        // Log every field that can change, not just a few.
+        const before = Object.fromEntries(Object.keys(payload).map((k) => [k, editing[k as keyof typeof editing] ?? null]));
+        await logAudit("update_scholarship", "scholarships", editing.id, before as Json, payload as unknown as Json);
+        toast.success("Scholarship updated");
+      } else {
+        const { data, error } = await supabase.from("scholarships").insert(payload).select().single();
+        if (error) { saveError(error); return; }
+        await logAudit("create_scholarship", "scholarships", data.id, null, payload as unknown as Json);
+        toast.success("Scholarship added");
+      }
+      setSchDialog(null); loadData();
+    } finally {
+      setSavingSch(false);
     }
-    setSchDialog(null); loadData();
   };
 
   // Start next year's program from an existing one: same rules, disabled and undated until reviewed.
@@ -761,8 +784,9 @@ function AdminDashboard() {
   };
 
   const toggleScholarship = async (sch: Tables<"scholarships">) => {
-    const { error } = await supabase.from("scholarships").update({ is_active: !sch.is_active }).eq("id", sch.id);
+    const { data: rows, error } = await supabase.from("scholarships").update({ is_active: !sch.is_active }).eq("id", sch.id).select("id");
     if (error) { toast.error(error.message); return; }
+    if (!rows?.length) { toast.error(NOT_SAVED); loadData(true); return; }
     await logAudit(sch.is_active ? "disable_scholarship" : "enable_scholarship", "scholarships", sch.id, { is_active: sch.is_active }, { is_active: !sch.is_active });
     toast.success(`${sch.name} ${sch.is_active ? "disabled" : "enabled"}`); loadData();
   };
@@ -821,6 +845,7 @@ function AdminDashboard() {
 
   const savePayment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (savingPay) return;
     const fd = new FormData(e.currentTarget);
     const amount = Number(fd.get("amount") || 0);
     if (!Number.isFinite(amount) || amount <= 0) { toast.error("Enter an amount greater than 0"); return; }
@@ -832,26 +857,38 @@ function AdminDashboard() {
       notes: String(fd.get("notes") || "").trim() || null,
       ...(payTerm ? { term: payTerm } : {}),
     };
-    if (payDialog && payDialog !== "new") {
-      const { error } = await supabase.from("payments").update(fields).eq("id", payDialog.id);
-      if (error) { toast.error(error.message); return; }
-      await logAudit("update_payment", "payments", payDialog.id, { amount: payDialog.amount, method: payDialog.method, reference: payDialog.reference, scheduled_date: payDialog.scheduled_date, term: payDialog.term }, fields);
-      toast.success("Payment updated");
-    } else {
-      const app = applications.find((a) => a.id === payAppId);
-      if (!app) { toast.error("Select an approved applicant"); return; }
-      const { data, error } = await supabase.from("payments").insert({ ...fields, application_id: app.id, user_id: app.user_id, status: "Pending" }).select().single();
-      if (error) { toast.error(error.message); return; }
-      await logAudit("create_payment", "payments", data.id, null, fields);
-      toast.success("Payment scheduled");
+    setSavingPay(true);
+    try {
+      if (payDialog && payDialog !== "new") {
+        const { data: rows, error } = await supabase.from("payments").update(fields).eq("id", payDialog.id).select("id");
+        if (error) { toast.error(error.message); return; }
+        if (!rows?.length) { toast.error(NOT_SAVED); loadData(true); return; }
+        await logAudit("update_payment", "payments", payDialog.id, { amount: payDialog.amount, method: payDialog.method, reference: payDialog.reference, scheduled_date: payDialog.scheduled_date, term: payDialog.term }, fields);
+        toast.success("Payment updated");
+      } else {
+        const app = applications.find((a) => a.id === payAppId);
+        if (!app) { toast.error("Select an approved applicant"); return; }
+        const { data, error } = await supabase.from("payments").insert({ ...fields, application_id: app.id, user_id: app.user_id, status: "Pending" }).select().single();
+        if (error) { toast.error(error.message); return; }
+        await logAudit("create_payment", "payments", data.id, null, fields);
+        toast.success("Payment scheduled");
+      }
+      setPayDialog(null); loadData();
+    } finally {
+      setSavingPay(false);
     }
-    setPayDialog(null); loadData();
   };
 
   const setPaymentStatus = async (p: Tables<"payments">, status: "Processing" | "Cancelled", reason?: string) => {
+    if (savingPay) return false;
     const cancel_reason = status === "Cancelled" ? reason?.trim() || null : null;
-    const { error } = await supabase.from("payments").update(status === "Cancelled" ? { status, cancel_reason } : { status }).eq("id", p.id);
+    setSavingPay(true);
+    // Only from a status it can still leave, so a stale screen can't reopen a cancelled payment.
+    const { data: rows, error } = await supabase.from("payments").update(status === "Cancelled" ? { status, cancel_reason } : { status })
+      .eq("id", p.id).in("status", status === "Cancelled" ? ["Pending", "Processing"] : ["Pending"]).select("id");
+    setSavingPay(false);
     if (error) { toast.error(error.message); return false; }
+    if (!rows?.length) { toast.error("This payment was changed elsewhere. The list has been refreshed."); loadData(true); return false; }
     await logAudit(status === "Cancelled" ? "cancel_payment" : "process_payment", "payments", p.id, { status: p.status }, { status, ...(cancel_reason ? { cancel_reason } : {}) });
     toast.success(status === "Cancelled" ? "Payment cancelled" : "Marked as processing");
     loadData();
@@ -941,10 +978,11 @@ function AdminDashboard() {
       const { error: uploadError } = await supabase.storage.from("documents").upload(path, disbReceipt);
       if (uploadError) { toast.error("Receipt upload failed", { description: uploadError.message }); return; }
       const update = { status: "Disbursed", method: disbMethod, reference: disbRef.trim() || null, receipt_path: path, disbursed_at: new Date().toISOString() };
-      const { error } = await supabase.from("payments").update(update).eq("id", payment.id);
-      if (error) {
+      const { data: rows, error } = await supabase.from("payments").update(update).eq("id", payment.id).neq("status", "Disbursed").select("id");
+      if (error || !rows?.length) {
         await supabase.storage.from("documents").remove([path]);
-        toast.error(error.message);
+        toast.error(error?.message ?? "This payment was already disbursed or changed elsewhere. The list has been refreshed.");
+        if (!error) loadData(true);
         return;
       }
       await logAudit("disburse_payment", "payments", payment.id, { status: payment.status }, { status: "Disbursed", method: disbMethod, reference: update.reference });
@@ -1084,9 +1122,10 @@ function AdminDashboard() {
     if (editDisbStatus !== pm.status) update.status = editDisbStatus;
     if (editDisbStatus === "Cancelled" && pm.status !== "Cancelled") update.cancel_reason = editDisbReason.trim() || null;
     setPayBusy(true);
-    const { error } = await supabase.from("payments").update(update).eq("id", pm.id);
+    const { data: rows, error } = await supabase.from("payments").update(update).eq("id", pm.id).select("id");
     setPayBusy(false);
     if (error) { toast.error(error.message); return; }
+    if (!rows?.length) { toast.error(NOT_SAVED); loadData(true); return; }
     await logAudit("update_payment", "payments", pm.id, { status: pm.status, reference: pm.reference }, update);
     toast.success("Disbursement updated");
     setEditDisb(null);
@@ -1305,8 +1344,8 @@ function AdminDashboard() {
     setNewAppNote("");
   };
   const deleteAppNote = async (n: Tables<"application_notes">) => {
-    const { error } = await supabase.from("application_notes").delete().eq("id", n.id);
-    if (error) { toast.error("Couldn't delete the note", { description: error.message }); return; }
+    const { data: rows, error } = await supabase.from("application_notes").delete().eq("id", n.id).select("id");
+    if (error || !rows?.length) { toast.error("Couldn't delete the note", { description: error?.message ?? "Only the staff member who wrote it can delete it." }); return; }
     setAppNotes((prev) => prev.filter((x) => x.id !== n.id));
   };
 
@@ -1332,7 +1371,7 @@ function AdminDashboard() {
   const defaultScheduledDate = (() => {
     const d = new Date();
     d.setDate(d.getDate() + parseSettings(systemSettings).default_payment_lead_days);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return localDate(d);
   })();
   // Keep the selected methods valid when a method gets turned off in Settings.
   useEffect(() => {
@@ -1348,8 +1387,8 @@ function AdminDashboard() {
     const saved: [string, Json][] = [];
     let failed: string | null = null;
     for (const [key, value] of changed) {
-      const { error } = await supabase.from("system_settings").upsert({ key, value: value as Json }, { onConflict: "key" });
-      if (error) { failed = error.message; break; }
+      const { data: rows, error } = await supabase.from("system_settings").upsert({ key, value: value as Json }, { onConflict: "key" }).select("key");
+      if (error || !rows?.length) { failed = error?.message ?? "Only the Mayor Office can change settings."; break; }
       saved.push([key, value as Json]);
     }
 
@@ -2305,7 +2344,7 @@ function AdminDashboard() {
                     onSubmit={saveScholarship} formKey={cur?.id ?? "new"}
                     footer={<>
                       <Button type="button" variant="outline" onClick={() => setSchDialog(null)}>Cancel</Button>
-                      <Button type="submit" className="bg-gradient-primary">{cur ? "Save Changes" : "Add Scholarship"}</Button>
+                      <Button type="submit" className="bg-gradient-primary" disabled={savingSch}>{cur ? "Save Changes" : "Add Scholarship"}</Button>
                     </>}>
                     <ScholarshipFormFields
                       cur={cur}
@@ -2768,7 +2807,7 @@ function AdminDashboard() {
                             {open && can.finance && (<>
                               <Button size="icon" variant="ghost" title="Edit" onClick={() => { setPayMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash"); setPayTerm((p.term as PaymentTerm | null) ?? null); setPayDialog(p); }}><Pencil className="h-4 w-4" /></Button>
                               {p.status === "Pending" && (
-                                <Button size="sm" variant="outline" onClick={() => setPaymentStatus(p, "Processing")}>Process</Button>
+                                <Button size="sm" variant="outline" disabled={savingPay} onClick={() => setPaymentStatus(p, "Processing")}>Process</Button>
                               )}
                               <Button size="sm" onClick={() => {
                                 setDisbPaymentId(p.id);
@@ -2809,7 +2848,7 @@ function AdminDashboard() {
                     onSubmit={savePayment} formKey={cur?.id ?? `new-${payAppId}`}
                     footer={<>
                       <Button type="button" variant="outline" onClick={() => setPayDialog(null)}>Cancel</Button>
-                      <Button type="submit" className="bg-gradient-primary" disabled={!cur && !payAppId}>{cur ? "Save Changes" : "Schedule Payment"}</Button>
+                      <Button type="submit" className="bg-gradient-primary" disabled={savingPay || (!cur && !payAppId)}>{cur ? "Save Changes" : "Schedule Payment"}</Button>
                     </>}>
                     {!cur && (
                       <DialogField label="Scholar">

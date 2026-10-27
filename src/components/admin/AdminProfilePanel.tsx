@@ -89,9 +89,9 @@ export default function AdminProfilePanel({ profile, email, userId, role, office
     setInfoErrors({});
     setInfoBusy(true);
     const prev = { first_name: profile?.first_name, last_name: profile?.last_name, phone: profile?.phone };
-    const { error } = await supabase.from("profiles").update(parsed.data).eq("id", userId);
+    const { data: rows, error } = await supabase.from("profiles").update(parsed.data).eq("id", userId).select("id");
     setInfoBusy(false);
-    if (error) { toast.error("Could not save profile", { description: error.message }); return; }
+    if (error || !rows?.length) { toast.error("Could not save profile", { description: error?.message ?? "Nothing was changed. Refresh and try again." }); return; }
     await logAudit("update_profile", "profiles", userId, prev, parsed.data);
     toast.success("Profile updated");
     onChanged();
