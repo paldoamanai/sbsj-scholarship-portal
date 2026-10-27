@@ -689,10 +689,9 @@ function AdminDashboard() {
       scheduled_date: bulkDate || null, status: "Pending",
     }));
     setBulkPayBusy(true);
-    const { data, error } = await supabase.from("payments").insert(rows).select("id");
+    const { error } = await supabase.from("payments").insert(rows);
     setBulkPayBusy(false);
     if (error) { toast.error("Couldn't schedule the payments", { description: error.message }); return; }
-    await logAudit("bulk_schedule_payments", "payments", undefined, null, { term: bulkTerm, academic_year: currentAY, count: rows.length, payment_ids: (data ?? []).map((d) => d.id) });
     toast.success(`Scheduled ${rows.length} ${bulkTerm} payment${rows.length === 1 ? "" : "s"}`);
     setBulkOpen(false); loadData();
   };
@@ -751,14 +750,10 @@ function AdminDashboard() {
         const { data: rows, error } = await supabase.from("scholarships").update(payload).eq("id", editing.id).select("id");
         if (error) { saveError(error); return; }
         if (!rows?.length) { toast.error(NOT_SAVED); loadData(true); return; }
-        // Log every field that can change, not just a few.
-        const before = Object.fromEntries(Object.keys(payload).map((k) => [k, editing[k as keyof typeof editing] ?? null]));
-        await logAudit("update_scholarship", "scholarships", editing.id, before as Json, payload as unknown as Json);
         toast.success("Scholarship updated");
       } else {
-        const { data, error } = await supabase.from("scholarships").insert(payload).select().single();
+        const { error } = await supabase.from("scholarships").insert(payload);
         if (error) { saveError(error); return; }
-        await logAudit("create_scholarship", "scholarships", data.id, null, payload as unknown as Json);
         toast.success("Scholarship added");
       }
       setSchDialog(null); loadData();
@@ -776,9 +771,8 @@ function AdminDashboard() {
       release_schedule: sch.release_schedule, release_months: sch.release_months,
       ...("office" in sch ? { office: sch.office } : {}),
     };
-    const { data, error } = await supabase.from("scholarships").insert(copy).select().single();
+    const { error } = await supabase.from("scholarships").insert(copy);
     if (error) { toast.error(error.message); return; }
-    await logAudit("duplicate_scholarship", "scholarships", data.id, { source: sch.id } as Json, copy as unknown as Json);
     toast.success(`Created "${copy.name}"`, { description: "It's disabled and has no dates yet. Edit it to set them and enable it." });
     loadData();
   };
@@ -787,7 +781,6 @@ function AdminDashboard() {
     const { data: rows, error } = await supabase.from("scholarships").update({ is_active: !sch.is_active }).eq("id", sch.id).select("id");
     if (error) { toast.error(error.message); return; }
     if (!rows?.length) { toast.error(NOT_SAVED); loadData(true); return; }
-    await logAudit(sch.is_active ? "disable_scholarship" : "enable_scholarship", "scholarships", sch.id, { is_active: sch.is_active }, { is_active: !sch.is_active });
     toast.success(`${sch.name} ${sch.is_active ? "disabled" : "enabled"}`); loadData();
   };
 
@@ -863,14 +856,12 @@ function AdminDashboard() {
         const { data: rows, error } = await supabase.from("payments").update(fields).eq("id", payDialog.id).select("id");
         if (error) { toast.error(error.message); return; }
         if (!rows?.length) { toast.error(NOT_SAVED); loadData(true); return; }
-        await logAudit("update_payment", "payments", payDialog.id, { amount: payDialog.amount, method: payDialog.method, reference: payDialog.reference, scheduled_date: payDialog.scheduled_date, term: payDialog.term }, fields);
         toast.success("Payment updated");
       } else {
         const app = applications.find((a) => a.id === payAppId);
         if (!app) { toast.error("Select an approved applicant"); return; }
-        const { data, error } = await supabase.from("payments").insert({ ...fields, application_id: app.id, user_id: app.user_id, status: "Pending" }).select().single();
+        const { error } = await supabase.from("payments").insert({ ...fields, application_id: app.id, user_id: app.user_id, status: "Pending" });
         if (error) { toast.error(error.message); return; }
-        await logAudit("create_payment", "payments", data.id, null, fields);
         toast.success("Payment scheduled");
       }
       setPayDialog(null); loadData();
@@ -889,7 +880,6 @@ function AdminDashboard() {
     setSavingPay(false);
     if (error) { toast.error(error.message); return false; }
     if (!rows?.length) { toast.error("This payment was changed elsewhere. The list has been refreshed."); loadData(true); return false; }
-    await logAudit(status === "Cancelled" ? "cancel_payment" : "process_payment", "payments", p.id, { status: p.status }, { status, ...(cancel_reason ? { cancel_reason } : {}) });
     toast.success(status === "Cancelled" ? "Payment cancelled" : "Marked as processing");
     loadData();
     return true;
@@ -985,7 +975,6 @@ function AdminDashboard() {
         if (!error) loadData(true);
         return;
       }
-      await logAudit("disburse_payment", "payments", payment.id, { status: payment.status }, { status: "Disbursed", method: disbMethod, reference: update.reference });
       toast.success("Payment marked as disbursed");
       setDisbDialog(false);
       loadData();
@@ -1126,7 +1115,6 @@ function AdminDashboard() {
     setPayBusy(false);
     if (error) { toast.error(error.message); return; }
     if (!rows?.length) { toast.error(NOT_SAVED); loadData(true); return; }
-    await logAudit("update_payment", "payments", pm.id, { status: pm.status, reference: pm.reference }, update);
     toast.success("Disbursement updated");
     setEditDisb(null);
     loadData();
@@ -1281,11 +1269,7 @@ function AdminDashboard() {
       silentRefreshAdmin();
       return "This application was changed elsewhere (another reviewer, or the student withdrew it). The list has been refreshed.";
     }
-    const auditAction = status === "Pending"
-      ? (a.status === "Approved" ? "revoke_approval" : "reopen_application")
-      : { Approved: "approve_application", Disapproved: "disapprove_application", Waitlisted: "waitlist_application" }[status];
-    await logAudit(auditAction, "applications", a.id, { status: a.status, notes: a.notes }, update);
-    // The student is notified by a database trigger (see migrations 031 and 041).
+    // The database notifies the student (migrations 031 and 041) and writes the audit entry (080).
     return null;
   };
   const decideApplication = async (a: AppRow, status: AppDecision, note?: string | null, award?: number | null) => {
@@ -1327,7 +1311,6 @@ function AdminDashboard() {
       .eq("id", a.id).eq("status", "Approved").select("id");
     if (error) { toast.error("Couldn't update the award", { description: error.message }); return; }
     if (!data?.length) { toast.error("This application is no longer approved"); silentRefreshAdmin(); return; }
-    await logAudit("update_award", "applications", a.id, { amount_approved: a.amount_approved }, { amount_approved: amount });
     toast.success("Award updated — the student was notified");
     loadData(true);
   };
@@ -1384,20 +1367,9 @@ function AdminDashboard() {
     const changed = Object.entries(changes).filter(([k, v]) => JSON.stringify(prev[k]) !== JSON.stringify(v));
     if (!changed.length) { toast.info("No changes to save"); return true; }
 
-    const saved: [string, Json][] = [];
-    let failed: string | null = null;
-    for (const [key, value] of changed) {
-      const { data: rows, error } = await supabase.from("system_settings").upsert({ key, value: value as Json }, { onConflict: "key" }).select("key");
-      if (error || !rows?.length) { failed = error?.message ?? "Only the Mayor Office can change settings."; break; }
-      saved.push([key, value as Json]);
-    }
-
-    if (action === "reset_settings" && saved.length) {
-      await logAudit("reset_settings", "system_settings", undefined,
-        Object.fromEntries(saved.map(([k]) => [k, prev[k]])) as Json, Object.fromEntries(saved) as Json);
-    } else {
-      for (const [key, value] of saved) await logAudit("update_setting", "system_settings", undefined, { key, value: prev[key] }, { key, value });
-    }
+    // All changed keys in one transaction, audited by the database (migration 080): if one is refused, none are saved.
+    const { error } = await supabase.rpc("save_settings", { _changes: Object.fromEntries(changed) as Json, _reset: action === "reset_settings" });
+    const failed = error ? (error.code === "PGRST202" ? "The database is missing save_settings. Run migration 080 in Supabase." : error.message) : null;
 
     const [settingsRes, logsRes] = await Promise.all([
       supabase.from("system_settings").select("*"),
@@ -1406,7 +1378,7 @@ function AdminDashboard() {
     if (settingsRes.data) setSystemSettings(settingsRes.data);
     if (logsRes.data) setAuditLogs(logsRes.data);
 
-    if (failed) { toast.error("Some settings were not saved", { description: failed }); return false; }
+    if (failed) { toast.error("Settings not saved", { description: failed }); return false; }
     toast.success(action === "reset_settings" ? "Settings reset to defaults" : "Settings saved");
     return true;
   };
@@ -2256,7 +2228,6 @@ function AdminDashboard() {
                               .eq("id", viewApp.id).eq("status", viewApp.status).select("id");
                             if (error) { toast.error(error.message); return; }
                             if (!data?.length) { toast.error("This application was changed elsewhere. The list has been refreshed."); silentRefreshAdmin(); return; }
-                            await logAudit("update_application_remarks", "applications", viewApp.id, { notes: viewApp.notes }, { notes });
                             setViewApp({ ...viewApp, notes });
                             // For a disapproved application the database notifies the student (see migration 040).
                             toast.success(viewApp.status === "Disapproved" ? "Reason updated — the student was notified" : "Message saved");

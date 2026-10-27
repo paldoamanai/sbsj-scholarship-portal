@@ -8,7 +8,8 @@ import { linkResult, sendLinkEmail, serviceClient, siteUrl } from "@/lib/admin-a
 //   POST { action: "reset_mfa" | "sign_out" | "reset_password", userId }
 //   POST { action: "delete_account", userId, requestId? }   Mayor Office only; files, login and records go.
 //                                                            Refused while the student has disbursed payments.
-// Admins (staff_may 'manage') may use all but delete_account. If the caller uses 2FA, they must have passed it.
+// Admins (staff_may 'manage') may use all but delete_account; an office Admin only on their office's students.
+// If the caller uses 2FA, they must have passed it.
 
 // About a hundred years: Supabase Auth has no "banned forever".
 const BAN_FOREVER = "876000h";
@@ -65,6 +66,12 @@ export async function POST(request: Request) {
   const { data: roleRow } = await admin.from("user_roles").select("role").eq("user_id", userId).maybeSingle();
   if (!roleRow) return NextResponse.json({ error: "Account not found" }, { status: 404 });
   if (roleRow.role !== "student") return NextResponse.json({ error: "That account is not a student. Manage staff under Staff." }, { status: 400 });
+
+  // Office Admins act only on students who applied to their office's programs (061's office_ok_person;
+  // true for the Mayor Office and staff without an office).
+  const { data: inOffice, error: officeErr } = await supabase.rpc("office_ok_person", { _person: userId });
+  if (officeErr) return NextResponse.json({ error: officeErr.message }, { status: 500 });
+  if (inOffice !== true) return NextResponse.json({ error: "This student has not applied to your office's programs" }, { status: 403 });
 
   if (action === "set_active") {
     const active = body?.active === true;

@@ -1102,6 +1102,19 @@ export type Database = {
         }
         Returns: string | null
       }
+      office_ok_person: {
+        Args: {
+          _person: string
+        }
+        Returns: boolean
+      }
+      save_settings: {
+        Args: {
+          _changes: Json
+          _reset?: boolean
+        }
+        Returns: undefined
+      }
       set_staff_access: {
         Args: {
           _user_id: string
