@@ -2344,6 +2344,7 @@ function AdminDashboard() {
                       active={schActive} setActive={setSchActive}
                       committedNote={cur && cur.total_budget > 0 ? `${formatPHP(committedFor(cur))} of ${formatPHP(cur.total_budget)} committed in ${currentAY}.` : null}
                       office={myOffice ?? (officesReady ? "choose" : undefined)}
+                      programs={scholarships}
                     />
                   </AppDialog>
                 );

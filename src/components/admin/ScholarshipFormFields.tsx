@@ -36,6 +36,8 @@ type Props = {
    * an office: the signer belongs to it, so the program does too; undefined: offices aren't set up.
    */
   office?: "choose" | string;
+  /** Existing programs; a new program's name suggests the names of its own office's programs. */
+  programs?: Pick<Tables<"scholarships">, "name" | "office">[];
 };
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
@@ -94,9 +96,13 @@ function LongTextField({ id, name, label, hint, placeholder, defaultValue }: {
 }
 
 export function ScholarshipFormFields({
-  cur, yearLevels, setYearLevels, barangays, setBarangays, barangaySearch, setBarangaySearch, active, setActive, committedNote, office,
+  cur, yearLevels, setYearLevels, barangays, setBarangays, barangaySearch, setBarangaySearch, active, setActive, committedNote, office, programs = [],
 }: Props) {
   const [programOffice, setProgramOffice] = useState<string>(cur?.office ?? "");
+  // The office the new program will belong to: the signer's own, or the one picked below ("" is the Mayor Office).
+  const nameOffice = isOffice(office) ? office : programOffice;
+  const nameSuggestions = cur ? [] : [...new Set(programs.filter((p) => (p.office ?? "") === nameOffice).map((p) => p.name.trim()).filter(Boolean))]
+    .sort((x, y) => x.localeCompare(y));
   // The form remounts per program (it's keyed by id), so this starts from the program's schedule.
   const [schedule, setSchedule] = useState(asSchedule(cur?.release_schedule));
   const [months, setMonths] = useState(String(asMonths(cur?.release_months)));
@@ -111,7 +117,11 @@ export function ScholarshipFormFields({
       <Section title="Program">
         <div className={cn("grid gap-4", office && "sm:grid-cols-[minmax(0,1fr)_16rem]")}>
           <Field label="Name" htmlFor="sch-name">
-            <Input id="sch-name" name="name" required defaultValue={cur?.name ?? ""} placeholder="e.g. Academic Excellence Scholarship" />
+            <Input id="sch-name" name="name" required defaultValue={cur?.name ?? ""} placeholder="e.g. Academic Excellence Scholarship"
+              list={nameSuggestions.length ? "sch-name-suggestions" : undefined} autoComplete="off" />
+            {nameSuggestions.length > 0 && (
+              <datalist id="sch-name-suggestions">{nameSuggestions.map((n) => <option key={n} value={n} />)}</datalist>
+            )}
           </Field>
           {office === "choose" && (
             <Field label="Office" hint="Its staff handle the program's applicants and payments">
