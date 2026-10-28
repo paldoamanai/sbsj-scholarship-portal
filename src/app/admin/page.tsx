@@ -18,8 +18,8 @@ import {
   Plus, Pencil, Trash2, CheckCircle, XCircle, Clock, Eye,
   Menu, X, Search, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock,
-  FileDown, Receipt, Loader2, User, Upload, ArrowRight,
-   ChevronRight, ChevronLeft, ExternalLink, Printer, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2, MapPin,
+  FileDown, Receipt, Loader2, User, ArrowRight,
+   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2, MapPin, CalendarClock,
 } from "@/components/icons";
 import { createClient } from "@/lib/supabase/client";
 import { scholarshipSchema } from "@/validations/scholarship";
@@ -48,7 +48,6 @@ import {
 import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
 import { asMonths, asSchedule, isMonthTerm, openTerms, secondSemesterGradeWarning, termLabel, termsFor, yearlyAward, type PaymentTerm } from "@/lib/release-schedule";
 import { OFFICE_FULL_NAME, OFFICE_LABEL, STAFF_OFFICES, isOffice, officeLogo, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
-import { printReceiptSlip } from "@/lib/receipt-slip";
 import { LETTER_OF_INTENT, MOA } from "@/lib/documents";
 import { approvalDocuments, needsHomeVisit, needsHousePin, needsMoa } from "@/lib/office-requirements";
 import { directionsLink, distanceKm, earthLink, fmtDistance, googleMapsLink, streetViewLink } from "@/lib/geo";
@@ -93,7 +92,7 @@ const hiddenSections: Record<string, string[]> = {
 
 
 // ── Status badge (pastel pill + icon, mirrors student-dashboard's pattern) ──────
-function StatusBadge({ status }: { status: string | null | undefined }) {
+function StatusBadge({ status, label }: { status: string | null | undefined; label?: string }) {
   if (!status || status === "—") return <span className="text-sm text-muted-foreground">—</span>;
   const map: Record<string, { icon: typeof CheckCircle; cls: string }> = {
     Approved:   { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
@@ -106,11 +105,11 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
     Withdrawn:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
   };
   const m = map[status];
-  if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{status}</span>;
+  if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{label ?? status}</span>;
   const Icon = m.icon;
   return (
     <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${m.cls}`}>
-      <Icon className="h-3 w-3" />{status}
+      <Icon className="h-3 w-3" />{label ?? status}
     </span>
   );
 }
@@ -187,8 +186,6 @@ function AdminDashboard() {
   const [payIssues, setPayIssues] = useState<Tables<"payment_issues">[]>([]);
   const [issueDialog, setIssueDialog] = useState<Tables<"payments"> | null>(null);
   const [issueResponse, setIssueResponse] = useState("");
-  const [disapproveReceipt, setDisapproveReceipt] = useState<Tables<"payments"> | null>(null);
-  const [receiptNote, setReceiptNote] = useState("");
   const [payBusy, setPayBusy] = useState(false);
   const [gradeReviews, setGradeReviews] = useState<Tables<"grade_updates">[]>([]);
   const [dataReqs, setDataReqs] = useState<Tables<"data_requests">[]>([]);
@@ -338,16 +335,16 @@ function AdminDashboard() {
   };
   useUnreadTitle(unreadTotal);
 
-  // Disburse dialog state
+  // Mark-received dialog (one payment), the payments picked for a batch, and the list or schedule view.
   const [disbDialog, setDisbDialog] = useState(false);
   const [disbPaymentId, setDisbPaymentId] = useState<string>("");
   const [disbMethod, setDisbMethod] = useState<"Cheque" | "Cash">("Cash");
   const [disbRef, setDisbRef] = useState("");
-  const [disbReceipt, setDisbReceipt] = useState<File | null>(null);
+  const [payPicked, setPayPicked] = useState<Set<string>>(new Set());
+  const [batchReceive, setBatchReceive] = useState<Tables<"payments">[] | null>(null);
+  const [payView, setPayView] = useState<"list" | "schedule">("list");
   // A stored receipt being viewed: its signed link and whether it's an image or a PDF (shown in the page).
   const [fileView, setFileView] = useState<{ title: string; url: string; kind: "image" | "pdf" | "other" } | null>(null);
-  // Portal-issued receipt numbers (staff-only): printed on the acknowledgment slip, typed back by the student.
-  const [receiptNos, setReceiptNos] = useState<Record<string, string>>({});
   const [disbLoading, setDisbLoading] = useState(false);
 
   useEffect(() => { loadData(); }, []);
@@ -380,7 +377,6 @@ function AdminDashboard() {
   const fetchAllPayments = () => fetchAll((f, t) => supabase.from("payments").select("*").order("created_at", { ascending: false }).order("id").range(f, t));
   const fetchAllProfiles = () => fetchAll((f, t) => supabase.from("profiles").select("*").order("id").range(f, t));
   const fetchAllDocs = () => fetchAll((f, t) => supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at").order("id").range(f, t));
-  const fetchAllReceiptNos = () => fetchAll((f, t) => supabase.from("payment_receipt_numbers").select("payment_id, receipt_no").order("payment_id").range(f, t));
 
   const loadData = async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
@@ -395,7 +391,7 @@ function AdminDashboard() {
 
     // Everything is fetched in one parallel batch: each query is a full round trip to Supabase,
     // so running them one after another made the dashboard several seconds slower to open.
-    const [roleRes, canManageRes, staffRolesRes, appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes, receiptNosRes] = await Promise.all([
+    const [roleRes, canManageRes, staffRolesRes, appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes] = await Promise.all([
       supabase.from("user_roles").select("*").eq("user_id", user.id).single(),
       supabase.rpc("can_manage_settings", { _user_id: user.id }),
       staffRoles(),
@@ -412,7 +408,6 @@ function AdminDashboard() {
       fetchAll((f, t) => supabase.from("payment_issues").select("*").order("created_at", { ascending: false }).order("id").range(f, t)),
       fetchAll((f, t) => supabase.from("grade_updates").select("*").order("created_at", { ascending: false }).order("id").range(f, t)),
       supabase.from("data_requests").select("*").order("created_at", { ascending: false }),
-      fetchAllReceiptNos(),
     ]);
 
     const role = (roleRes.data as { role?: string } | null)?.role;
@@ -436,7 +431,6 @@ function AdminDashboard() {
     if (issuesRes.data) setPayIssues(issuesRes.data);
     if (gradesRes.data) setGradeReviews(gradesRes.data);
     if (reqsRes.data) setDataReqs(reqsRes.data);
-    if (receiptNosRes.data) setReceiptNos(Object.fromEntries(receiptNosRes.data.map((r) => [r.payment_id, r.receipt_no])));
     setLastUpdated(new Date());
     setLoading(false);
     setRefreshing(false);
@@ -445,10 +439,9 @@ function AdminDashboard() {
   // Re-fetch applications/payments in the background (no loading flicker) —
   // used when a live change comes in over realtime.
   const silentRefreshAdmin = async () => {
-    const [appsRes, paymentsRes, profilesRes, docsRes, receiptNosRes] = await Promise.all([
-      fetchAllApps(), fetchAllPayments(), fetchAllProfiles(), fetchAllDocs(), fetchAllReceiptNos(),
+    const [appsRes, paymentsRes, profilesRes, docsRes] = await Promise.all([
+      fetchAllApps(), fetchAllPayments(), fetchAllProfiles(), fetchAllDocs(),
     ]);
-    if (receiptNosRes.data) setReceiptNos(Object.fromEntries(receiptNosRes.data.map((r) => [r.payment_id, r.receipt_no])));
     if (docsRes.data) setAllDocs(docsRes.data);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (paymentsRes.data) setPayments(paymentsRes.data);
@@ -827,9 +820,11 @@ function AdminDashboard() {
     return prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() || prof.email || "Unknown" : "Unknown";
   };
   const payProgram = (p: Tables<"payments">) => applications.find((a) => a.id === p.application_id)?.scholarships?.name || "—";
+  // Scheduled and not yet received. ("Processing" is from before; it's treated like scheduled.)
+  const isOpenPayment = (p: Tables<"payments">) => p.status === "Pending" || p.status === "Processing";
   const filteredPayments = payments.filter((p) => {
     if (payFilter === "issues") { if (!openIssueFor(p.id)) return false; }
-    else if (payFilter === "receipts") { if (!(p.student_receipt_at && p.receipt_review_status === "Pending")) return false; }
+    else if (payFilter === "open") { if (!isOpenPayment(p)) return false; }
     else if (payFilter !== "all" && p.status !== payFilter) return false;
     const q = paySearch.trim().toLowerCase();
     return !q || `${payStudent(p)} ${payProgram(p)} ${p.reference || ""}`.toLowerCase().includes(q);
@@ -902,15 +897,6 @@ function AdminDashboard() {
     setFileView({ title, url: data.signedUrl, kind });
   };
   const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment", `Disbursement receipt · ${payStudent(p)}`);
-  // Compare reference numbers the way people type them: case, spaces and dashes don't matter.
-  const refKey = (r: string) => r.toUpperCase().replace(/[\s\-_./#]/g, "");
-  const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The scholar hasn't submitted a receipt", `Scholar's receipt · ${payStudent(p)}`);
-  // Office + student copy of the acknowledgment slip, for the student to sign when the money is released.
-  const printSlip = (p: Tables<"payments">, method = p.method, reference = p.reference) => {
-    const receiptNo = receiptNos[p.id];
-    if (!receiptNo) { toast.error("This payment has no receipt number"); return; }
-    printReceiptSlip({ receiptNo, studentName: payStudent(p), program: payProgram(p), period: termLabel(p.term, p.academic_year) || null, amount: p.amount, method, reference });
-  };
 
   // Verify or disapprove a grade a student submitted. Verifying replaces their average grade; the student is notified.
   const reviewGrade = async (g: Tables<"grade_updates">, status: "Verified" | "Disapproved", note?: string) => {
@@ -937,17 +923,6 @@ function AdminDashboard() {
     loadData();
   };
 
-  // Accept or disapprove the receipt a student submitted. The student is notified by the database.
-  const reviewReceipt = async (p: Tables<"payments">, status: "Accepted" | "Disapproved", note?: string) => {
-    setPayBusy(true);
-    const { error } = await supabase.rpc("review_student_receipt", { _payment_id: p.id, _status: status, _note: note ?? null });
-    setPayBusy(false);
-    if (error) { toast.error(error.message); return false; }
-    toast.success(status === "Accepted" ? "Receipt accepted" : "Receipt disapproved — the scholar was asked to resubmit");
-    loadData();
-    return true;
-  };
-
   const resolveIssue = async (issue: Tables<"payment_issues">) => {
     setPayBusy(true);
     const { error } = await supabase.rpc("resolve_payment_issue", { _issue_id: issue.id, _response: issueResponse });
@@ -962,36 +937,38 @@ function AdminDashboard() {
   const disbPay = payments.find((pm) => pm.id === disbPaymentId);
   const disbLocked = !!disbPay?.preferred_method; // student chose the method; it is final
 
-  const confirmDisbursement = async () => {
-    if (!disbReceipt) return;
-    const payment = payments.find((pm) => pm.id === disbPaymentId);
-    if (!payment) return;
-    const moa = moaBlocker(payment.application_id);
-    if (moa) { toast.error("Can't release this payment yet", { description: moa }); return; }
-    const maxMb = parseSettings(systemSettings).max_upload_mb;
-    if (disbReceipt.size > maxMb * 1024 * 1024) { toast.error(`Receipt is too large (max ${maxMb} MB)`); return; }
+  // Marks payments received (released to the scholar): one from the dialog, with the method and number set
+  // there, or a batch, each with the method and number it was scheduled with. Payments that can't be
+  // released yet (MOA not verified, cheque without a number) are skipped and listed.
+  const markReceived = async (list: Tables<"payments">[], single?: { method: "Cash" | "Cheque"; reference: string | null }) => {
+    if (disbLoading) return false;
     setDisbLoading(true);
+    let done = 0;
+    const skipped: string[] = [];
     try {
-      const safeName = disbReceipt.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const path = `receipts/${payment.id}/${Date.now()}-${safeName}`;
-      const { error: uploadError } = await supabase.storage.from("documents").upload(path, disbReceipt);
-      if (uploadError) { toast.error("Receipt upload failed", { description: uploadError.message }); return; }
-      const update = { status: "Disbursed", method: disbMethod, reference: disbRef.trim() || null, receipt_path: path, disbursed_at: new Date().toISOString() };
-      const { data: rows, error } = await supabase.from("payments").update(update).eq("id", payment.id).neq("status", "Disbursed").select("id");
-      if (error || !rows?.length) {
-        await supabase.storage.from("documents").remove([path]);
-        toast.error(error?.message ?? "This payment was already disbursed or changed elsewhere. The list has been refreshed.");
-        if (!error) loadData(true);
-        return;
+      for (const p of list) {
+        const method = single?.method ?? p.method;
+        const reference = (single ? single.reference : p.reference)?.trim() || null;
+        const moa = moaBlocker(p.application_id);
+        if (moa) { skipped.push(`${payStudent(p)}: ${moa}`); continue; }
+        if (method === "Cheque" && !reference) { skipped.push(`${payStudent(p)}: add the cheque number first (Edit)`); continue; }
+        const { data: rows, error } = await supabase.from("payments")
+          .update({ status: "Disbursed", method, reference, disbursed_at: new Date().toISOString() })
+          .eq("id", p.id).in("status", ["Pending", "Processing"]).select("id");
+        if (error) skipped.push(`${payStudent(p)}: ${error.message}`);
+        else if (!rows?.length) skipped.push(`${payStudent(p)}: already received or changed elsewhere`);
+        else done++;
       }
-      toast.success("Payment marked as disbursed");
-      setDisbDialog(false);
-      loadData();
-    } catch {
-      toast.error("Failed to process disbursement");
     } finally {
       setDisbLoading(false);
     }
+    if (done) toast.success(`${done} payment${done === 1 ? "" : "s"} marked received`);
+    if (skipped.length) toast.error(`${skipped.length} payment${skipped.length === 1 ? "" : "s"} not marked received`, {
+      description: skipped.slice(0, 5).join("\n") + (skipped.length > 5 ? `\n…and ${skipped.length - 5} more` : ""),
+    });
+    setPayPicked(new Set());
+    loadData();
+    return skipped.length === 0;
   };
 
   // ── Audit log browsing ──
@@ -1104,14 +1081,13 @@ function AdminDashboard() {
     const pm = payments.find((x) => x.id === editDisbPayId);
     if (!pm) return;
     const reference = editDisbRef.trim() || null;
-    // Marking disbursed needs a receipt upload, so hand off to the disbursement dialog.
+    // Marking received goes through the mark-received dialog.
     if (editDisbStatus === "Disbursed") {
       const moa = moaBlocker(pm.application_id);
       if (moa) { toast.error("Can't release this payment yet", { description: moa }); return; }
       setDisbPaymentId(pm.id);
       setDisbMethod((pm.preferred_method ?? pm.method) === "Cheque" ? "Cheque" : "Cash");
       setDisbRef(reference ?? "");
-      setDisbReceipt(null);
       setEditDisb(null);
       setDisbDialog(true);
       return;
@@ -1418,7 +1394,9 @@ function AdminDashboard() {
 
   const statusBadge = (status: string) => <StatusBadge status={status} />;
 
-  const disbStatusBadge = (status: string) => <StatusBadge status={status} />;
+  // Payments read as scheduled → received.
+  const PAY_STATUS_LABEL: Record<string, string> = { Pending: "Scheduled", Disbursed: "Received" };
+  const disbStatusBadge = (status: string) => <StatusBadge status={status} label={PAY_STATUS_LABEL[status]} />;
 
   // Notification deep links look like /admin?section=disbursement
   const goToLink = (link: string) => {
@@ -2677,11 +2655,9 @@ function AdminDashboard() {
                     <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All status</SelectItem>
-                      <SelectItem value="Pending">Pending</SelectItem>
-                      <SelectItem value="Processing">Processing</SelectItem>
-                      <SelectItem value="Disbursed">Disbursed</SelectItem>
+                      <SelectItem value="open">Scheduled</SelectItem>
+                      <SelectItem value="Disbursed">Received</SelectItem>
                       <SelectItem value="Cancelled">Cancelled</SelectItem>
-                      <SelectItem value="receipts">Receipts to review</SelectItem>
                       <SelectItem value="issues">Open problems</SelectItem>
                     </SelectContent>
                   </Select>
@@ -2700,20 +2676,109 @@ function AdminDashboard() {
               <Card className="border-warning/30 bg-warning/5">
                 <CardContent className="py-3 flex items-start gap-2">
                   <Lock className="h-4 w-4 text-warning mt-0.5" />
-                  <p className="text-sm text-muted-foreground">Payments can only be created for <strong className="text-foreground">approved</strong> applications. Disbursed payments are <strong className="text-foreground">locked</strong>. Only the methods enabled in <strong className="text-foreground">Settings</strong> ({enabledMethods.join(" and ")}) are accepted, and a receipt upload is required before marking as disbursed.</p>
+                  <p className="text-sm text-muted-foreground"><strong className="text-foreground">Schedule</strong> a payment for an approved scholar, then <strong className="text-foreground">mark it received</strong> once it&apos;s released, one at a time or in a batch. Received payments are <strong className="text-foreground">locked</strong>. Only the methods enabled in <strong className="text-foreground">Settings</strong> ({enabledMethods.join(" and ")}) are accepted; a cheque needs its number.</p>
                 </CardContent>
               </Card>
+              {(() => {
+                const pageOpen = pagedPayments.filter(isOpenPayment);
+                const picked = payments.filter((p) => payPicked.has(p.id) && isOpenPayment(p));
+                const allPicked = pageOpen.length > 0 && pageOpen.every((p) => payPicked.has(p.id));
+                const toggle = (id: string, on: boolean) => setPayPicked((prev) => { const n = new Set(prev); if (on) n.add(id); else n.delete(id); return n; });
+                // The schedule: payments not yet received, by scheduled date (soonest first; no date last).
+                const today = localDate();
+                const byDate = new Map<string, Tables<"payments">[]>();
+                payments.filter(isOpenPayment).forEach((p) => { const k = p.scheduled_date ?? ""; byDate.set(k, [...(byDate.get(k) ?? []), p]); });
+                const days = [...byDate.entries()].sort(([a], [b]) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)));
+                const markOne = (p: Tables<"payments">) => {
+                  setDisbPaymentId(p.id);
+                  setDisbMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash");
+                  setDisbRef(p.reference || "");
+                  setDisbDialog(true);
+                };
+                return (<>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div role="tablist" aria-label="Disbursement view" className="inline-flex rounded-lg border bg-muted/40 p-0.5">
+                  {([["list", "Payments"], ["schedule", "Schedule"]] as const).map(([k, label]) => (
+                    <button key={k} type="button" role="tab" aria-selected={payView === k} onClick={() => setPayView(k)}
+                      className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer ${payView === k ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                      {label}{k === "schedule" && byDate.size > 0 && <span className="ml-1.5 text-xs text-muted-foreground">{payments.filter(isOpenPayment).length}</span>}
+                    </button>
+                  ))}
+                </div>
+                {payView === "list" && can.finance && picked.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">{picked.length} selected · {formatPHP(picked.reduce((t, p) => t + Number(p.amount || 0), 0))}</span>
+                    <Button size="sm" variant="ghost" onClick={() => setPayPicked(new Set())}>Clear</Button>
+                    <Button size="sm" className="bg-gradient-primary" onClick={() => setBatchReceive(picked)}><CheckCircle className="mr-1 h-4 w-4" /> Mark {picked.length} received</Button>
+                  </div>
+                )}
+              </div>
+
+              {payView === "schedule" ? (
+                days.length === 0 ? (
+                  <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">No payments scheduled. Use Schedule Payment or Schedule payments in bulk.</CardContent></Card>
+                ) : (
+                  <div className="space-y-3">
+                    {days.map(([date, list]) => {
+                      const overdue = !!date && date < today;
+                      return (
+                        <Card key={date || "none"}>
+                          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 py-3">
+                            <div className="min-w-0">
+                              <CardTitle className="text-base flex items-center gap-2">
+                                <CalendarClock className="h-4 w-4 text-primary" />
+                                {date ? new Date(`${date}T00:00:00`).toLocaleDateString("en-PH", { weekday: "short", month: "long", day: "numeric", year: "numeric" }) : "No date set"}
+                                {date === today && <Badge>Today</Badge>}
+                                {overdue && <Badge variant="destructive">Overdue</Badge>}
+                              </CardTitle>
+                              <p className="text-xs text-muted-foreground mt-0.5">{list.length} scholar{list.length === 1 ? "" : "s"} · {formatPHP(list.reduce((t, p) => t + Number(p.amount || 0), 0))}</p>
+                            </div>
+                            {can.finance && <Button size="sm" variant="outline" onClick={() => setBatchReceive(list)}>Mark all received</Button>}
+                          </CardHeader>
+                          <CardContent className="pt-0">
+                            <ul className="divide-y rounded-md border">
+                              {list.map((p) => (
+                                <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                                  <span className="min-w-0">
+                                    <span className="font-medium">{payStudent(p)}</span>
+                                    <span className="block text-xs text-muted-foreground truncate">{payProgram(p)}{termLabel(p.term, p.academic_year) && ` · ${termLabel(p.term, p.academic_year)}`} · {p.method}{p.reference ? ` ${p.reference}` : ""}</span>
+                                  </span>
+                                  <span className="flex shrink-0 items-center gap-2">
+                                    <span className="tabular-nums font-medium">{formatPHP(Number(p.amount))}</span>
+                                    {can.finance && <Button size="sm" variant="ghost" onClick={() => markOne(p)}>Received</Button>}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )
+              ) : (<>
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Scholar</TableHead><TableHead>Reference / Cheque No.</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Scholar prefers</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead>Scholar receipt</TableHead><TableHead className="text-right">Actions</TableHead>
+                    {can.finance && (
+                      <TableHead className="w-10">
+                        <Checkbox aria-label="Select all scheduled payments on this page" checked={allPicked} disabled={pageOpen.length === 0}
+                          onCheckedChange={(v) => setPayPicked((prev) => { const n = new Set(prev); pageOpen.forEach((p) => (v ? n.add(p.id) : n.delete(p.id))); return n; })} />
+                      </TableHead>
+                    )}
+                    <TableHead>Scholar</TableHead><TableHead>Reference / Cheque No.</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Scholar prefers</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {pagedPayments.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No payments found</TableCell></TableRow>}
+                    {pagedPayments.length === 0 && <TableRow><TableCell colSpan={can.finance ? 9 : 8} className="text-center py-8 text-muted-foreground">No payments found</TableCell></TableRow>}
                     {pagedPayments.map((p) => {
-                      const open = p.status === "Pending" || p.status === "Processing";
+                      const open = isOpenPayment(p);
                       return (
                         <TableRow key={p.id} className={p.status === "Cancelled" ? "opacity-60" : undefined}>
+                          {can.finance && (
+                            <TableCell>
+                              {open && <Checkbox aria-label={`Select ${payStudent(p)}`} checked={payPicked.has(p.id)} onCheckedChange={(v) => toggle(p.id, !!v)} />}
+                            </TableCell>
+                          )}
                           <TableCell><p className="font-medium">{payStudent(p)}</p><p className="text-xs text-muted-foreground">{payProgram(p)}{termLabel(p.term, p.academic_year) && ` · ${termLabel(p.term, p.academic_year)}`}</p></TableCell>
                           <TableCell className="font-mono text-xs">{p.reference || "—"}</TableCell>
                           <TableCell className="font-medium">{formatPHP(p.amount)}</TableCell>
@@ -2734,54 +2799,9 @@ function AdminDashboard() {
                             ) : <span className="text-muted-foreground">—</span>}
                           </TableCell>
                           <TableCell>{p.scheduled_date || "—"}</TableCell>
-                          <TableCell>{disbStatusBadge(p.status)}</TableCell>
                           <TableCell>
-                            {p.status !== "Disbursed" ? <span className="text-muted-foreground">—</span>
-                              : p.student_receipt_at ? (
-                                <div className="space-y-1">
-                                  {p.student_receipt_ref ? (
-                                    <div className="space-y-0.5">
-                                      <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
-                                        <CheckCircle className="h-3.5 w-3.5" /> Ref. <span className="font-mono">{p.student_receipt_ref}</span> · {new Date(p.student_receipt_at).toLocaleDateString()}
-                                      </span>
-                                      {receiptNos[p.id] ? (
-                                        refKey(receiptNos[p.id]) === refKey(p.student_receipt_ref)
-                                          ? <p className="text-[11px] text-success">Matches the receipt number{p.receipt_review_status === "Accepted" && !p.receipt_reviewed_by ? " · accepted automatically" : ""}</p>
-                                          : <p className="text-[11px] text-destructive">Doesn&apos;t match receipt no. <span className="font-mono">{receiptNos[p.id]}</span></p>
-                                      ) : p.reference && (
-                                        refKey(p.reference) === refKey(p.student_receipt_ref)
-                                          ? <p className="text-[11px] text-success">Matches the payment reference</p>
-                                          : <p className="text-[11px] text-muted-foreground">Payment reference: <span className="font-mono">{p.reference}</span></p>
-                                      )}
-                                    </div>
-                                  ) : p.student_receipt_path ? (
-                                    <button type="button" onClick={() => viewStudentReceipt(p)} className="inline-flex items-center gap-1 text-xs font-medium text-success hover:underline cursor-pointer">
-                                      <CheckCircle className="h-3.5 w-3.5" /> Received · {new Date(p.student_receipt_at).toLocaleDateString()}
-                                    </button>
-                                  ) : (
-                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-success" title="Scholar confirmed receiving the cash without a receipt number (before reference numbers were required)">
-                                      <CheckCircle className="h-3.5 w-3.5" /> Confirmed (no file) · {new Date(p.student_receipt_at).toLocaleDateString()}
-                                    </span>
-                                  )}
-                                  <div className="flex items-center gap-1.5">
-                                    <Badge variant={p.receipt_review_status === "Accepted" ? "default" : "secondary"} className={p.receipt_review_status === "Disapproved" ? "text-destructive" : undefined}>
-                                      {p.receipt_review_status === "Pending" ? "To review" : p.receipt_review_status}
-                                    </Badge>
-                                    {p.receipt_review_status !== "Accepted" && can.finance && (
-                                      <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={payBusy} onClick={() => reviewReceipt(p, "Accepted")}>Accept</Button>
-                                    )}
-                                    {p.receipt_review_status !== "Disapproved" && can.finance && (
-                                      <Button size="sm" variant="outline" className="h-6 px-2 text-xs text-destructive" disabled={payBusy} onClick={() => { setReceiptNote(""); setDisapproveReceipt(p); }}>Disapprove</Button>
-                                    )}
-                                  </div>
-                                  {p.receipt_review_status === "Disapproved" && p.receipt_review_note && <p className="text-xs text-destructive">{p.receipt_review_note}</p>}
-                                </div>
-                              ) : (
-                                <div className="space-y-0.5">
-                                  <Badge variant="secondary">Awaiting</Badge>
-                                  {receiptNos[p.id] && <p className="text-[11px] text-muted-foreground">Receipt no. <span className="font-mono">{receiptNos[p.id]}</span></p>}
-                                </div>
-                              )}
+                            {disbStatusBadge(p.status)}
+                            {p.status === "Disbursed" && p.disbursed_at && <p className="mt-0.5 text-[11px] text-muted-foreground">Received {new Date(p.disbursed_at).toLocaleDateString()}</p>}
                           </TableCell>
                           <TableCell className="text-right space-x-1 whitespace-nowrap">
                             {payIssues.some((i) => i.payment_id === p.id) && (
@@ -2789,26 +2809,12 @@ function AdminDashboard() {
                                 <AlertTriangle className={`h-4 w-4 ${openIssueFor(p.id) ? "text-warning" : "text-muted-foreground"}`} />
                               </Button>
                             )}
-                            {p.status !== "Cancelled" && receiptNos[p.id] && can.finance && (
-                              <Button size="icon" variant="ghost" title={`Print acknowledgment slip (${receiptNos[p.id]})`} onClick={() => printSlip(p)}><Printer className="h-4 w-4" /></Button>
-                            )}
-                            {p.status === "Disbursed" && (
+                            {p.status === "Disbursed" && p.receipt_path && (
                               <Button size="icon" variant="ghost" title="View receipt" onClick={() => viewReceipt(p)}><Receipt className="h-4 w-4" /></Button>
                             )}
                             {open && can.finance && (<>
-                              <Button size="icon" variant="ghost" title="Edit" onClick={() => { setPayMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash"); setPayTerm((p.term as PaymentTerm | null) ?? null); setPayDialog(p); }}><Pencil className="h-4 w-4" /></Button>
-                              {p.status === "Pending" && (
-                                <Button size="sm" variant="outline" disabled={savingPay} onClick={() => setPaymentStatus(p, "Processing")}>Process</Button>
-                              )}
-                              <Button size="sm" onClick={() => {
-                                setDisbPaymentId(p.id);
-                                setDisbMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash");
-                                setDisbRef(p.reference || "");
-                                setDisbReceipt(null);
-                                setDisbDialog(true);
-                              }}>
-                                Mark Disbursed
-                              </Button>
+                              <Button size="icon" variant="ghost" title="Edit schedule" onClick={() => { setPayMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash"); setPayTerm((p.term as PaymentTerm | null) ?? null); setPayDialog(p); }}><Pencil className="h-4 w-4" /></Button>
+                              <Button size="sm" onClick={() => markOne(p)}>Mark received</Button>
                               <Button size="icon" variant="ghost" title="Cancel payment" onClick={() => { setCancelReason(""); setCancelPay(p); }}><XCircle className="h-4 w-4 text-destructive" /></Button>
                             </>)}
                           </TableCell>
@@ -2826,6 +2832,9 @@ function AdminDashboard() {
                   <Button size="sm" variant="outline" disabled={currentPayPage >= payPages} onClick={() => setPayPage(currentPayPage + 1)}><ChevronRight className="h-4 w-4" /></Button>
                 </div>
               </div>
+              </>)}
+                </>);
+              })()}
 
               {/* Create / edit payment dialog */}
               {(() => {
@@ -3212,13 +3221,13 @@ function AdminDashboard() {
                 <Input id="edit-disb-ref" value={editDisbRef} onChange={(e) => setEditDisbRef(e.target.value)} disabled={locked} placeholder={pm?.method === "Cheque" ? "e.g. CHK-2026-001" : "e.g. REF-001"} />
               </DialogField>
               <DialogField label="Disbursement status"
-                hint={!locked && editDisbStatus === "Disbursed" ? "Next, you'll upload the signed receipt or voucher to confirm the disbursement." : undefined}>
+                hint={!locked && editDisbStatus === "Disbursed" ? "Next, you'll confirm the scholar received it." : undefined}>
                 <Select value={editDisbStatus} onValueChange={setEditDisbStatus} disabled={locked}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {pm?.status === "Pending" && <SelectItem value="Pending">Pending</SelectItem>}
-                    <SelectItem value="Processing">Processing</SelectItem>
-                    <SelectItem value="Disbursed">Disbursed</SelectItem>
+                    {pm?.status === "Pending" && <SelectItem value="Pending">Scheduled</SelectItem>}
+                    {pm?.status === "Processing" && <SelectItem value="Processing">Processing</SelectItem>}
+                    <SelectItem value="Disbursed">Received</SelectItem>
                     <SelectItem value="Cancelled">Cancelled</SelectItem>
                   </SelectContent>
                 </Select>
@@ -3234,14 +3243,15 @@ function AdminDashboard() {
         );
       })()}
 
-      {/* Disburse dialog */}
+      {/* Mark received: one payment */}
       <AppDialog open={disbDialog} onOpenChange={setDisbDialog} size="md"
-        title="Confirm Disbursement"
+        title="Mark as received"
         description={disbPay ? `${payStudent(disbPay)} · ${formatPHP(Number(disbPay.amount))}${disbPay.term ? ` · ${termLabel(disbPay.term, disbPay.academic_year)}` : ""}` : undefined}
         footer={<>
           <Button variant="outline" onClick={() => setDisbDialog(false)}>Cancel</Button>
-          <Button className="bg-gradient-primary" disabled={disbLoading || !disbReceipt || (disbMethod === "Cheque" && !disbRef.trim())} onClick={confirmDisbursement}>
-            {disbLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Confirm Disbursement
+          <Button className="bg-gradient-primary" disabled={disbLoading || !disbPay || (disbMethod === "Cheque" && !disbRef.trim())}
+            onClick={async () => { if (disbPay && await markReceived([disbPay], { method: disbMethod, reference: disbRef })) setDisbDialog(false); }}>
+            {disbLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Mark received
           </Button>
         </>}>
         <DialogField label="Payment method" hint={disbLocked ? `The scholar chose ${disbPay?.preferred_method} for this payment, so the method is fixed.` : undefined}>
@@ -3256,30 +3266,29 @@ function AdminDashboard() {
         <DialogField label={disbMethod === "Cheque" ? "Cheque number" : "Reference number"} htmlFor="disb-ref" hint={disbMethod === "Cheque" ? "Required for cheques." : "Optional."}>
           <Input id="disb-ref" placeholder={disbMethod === "Cheque" ? "e.g. CHK-2026-001" : "e.g. REF-001"} value={disbRef} onChange={(e) => setDisbRef(e.target.value)} />
         </DialogField>
-        {disbPay && receiptNos[disbPay.id] && (
-          <div className="space-y-2 rounded-lg border bg-muted/40 p-3">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-xs text-muted-foreground">Receipt No.</p>
-                <p className="font-mono text-sm font-semibold">{receiptNos[disbPay.id]}</p>
-              </div>
-              <Button type="button" size="sm" variant="outline" onClick={() => printSlip(disbPay, disbMethod, disbRef.trim() || null)}>
-                <Printer className="mr-1 h-3.5 w-3.5" /> Print slip
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">Print the acknowledgment slip, have the scholar sign both copies and give them the scholar copy. They enter this number in the portal to confirm they received the money.</p>
-          </div>
-        )}
-        <DialogField label="Signed receipt or voucher" hint="Upload the signed acknowledgment slip (office copy) or the disbursement voucher. PDF, JPG or PNG.">
-          <label className={`flex cursor-pointer items-center gap-3 rounded-lg border border-dashed p-3 transition-colors hover:bg-muted/30 ${disbReceipt ? "border-primary/40 bg-primary/5" : ""}`}>
-            <Upload className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className={`min-w-0 truncate text-sm ${disbReceipt ? "font-medium text-foreground" : "text-muted-foreground"}`}>
-              {disbReceipt ? disbReceipt.name : "Choose a file"}
-            </span>
-            {disbReceipt && <span className="ml-auto shrink-0 text-xs text-primary">Change</span>}
-            <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={(e) => setDisbReceipt(e.target.files?.[0] ?? null)} />
-          </label>
-        </DialogField>
+        <DialogNote icon={<Lock className="h-3.5 w-3.5" />}>Once marked received, the payment is locked and the scholar is notified.</DialogNote>
+      </AppDialog>
+
+      {/* Mark received: a batch */}
+      <AppDialog open={!!batchReceive} onOpenChange={(o) => !o && setBatchReceive(null)} size="md"
+        title={`Mark ${batchReceive?.length ?? 0} payment${batchReceive?.length === 1 ? "" : "s"} as received`}
+        description={batchReceive ? `${formatPHP(batchReceive.reduce((t, p) => t + Number(p.amount || 0), 0))} in all` : undefined}
+        footer={<>
+          <Button variant="outline" onClick={() => setBatchReceive(null)}>Cancel</Button>
+          <Button className="bg-gradient-primary" disabled={disbLoading || !batchReceive?.length}
+            onClick={async () => { if (batchReceive) { await markReceived(batchReceive); setBatchReceive(null); } }}>
+            {disbLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Mark received
+          </Button>
+        </>}>
+        <ul className="max-h-64 divide-y overflow-auto rounded-md border text-sm">
+          {batchReceive?.map((p) => (
+            <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-1.5">
+              <span className="min-w-0 truncate">{payStudent(p)} <span className="text-xs text-muted-foreground">· {payProgram(p)} · {p.method}{p.reference ? ` ${p.reference}` : ""}</span></span>
+              <span className="shrink-0 tabular-nums font-medium">{formatPHP(Number(p.amount))}</span>
+            </li>
+          ))}
+        </ul>
+        <DialogNote icon={<Lock className="h-3.5 w-3.5" />}>Each payment keeps the method and number it was scheduled with. Cheques without a number and payments still waiting for a verified MOA are skipped. Received payments are locked and the scholars are notified.</DialogNote>
       </AppDialog>
 
       <AppDialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)} size="lg"
@@ -3358,7 +3367,7 @@ function AdminDashboard() {
                                   <span className="text-xs text-muted-foreground"> · {pm.method || "—"} · Ref: <span className="font-mono">{pm.reference || "—"}</span></span>
                                 </span>
                                 <span className="flex items-center gap-1.5">
-                                  {pm.status === "Disbursed" && (
+                                  {pm.status === "Disbursed" && pm.receipt_path && (
                                     <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => viewReceipt(pm)}><Receipt className="mr-1 h-3.5 w-3.5" /> Receipt</Button>
                                   )}
                                   {disbStatusBadge(pm.status)}
@@ -3458,15 +3467,6 @@ function AdminDashboard() {
         confirmLabel="Decline request"
         confirmVariant="default"
         onConfirm={respondToRequest} />
-
-      <ReasonDialog open={!!disapproveReceipt} onClose={() => setDisapproveReceipt(null)}
-        title="Disapprove scholar's receipt"
-        description="The scholar is notified and asked to submit their receipt again."
-        hint="Shown to the scholar."
-        placeholder="e.g. The signature is missing. Please upload the signed voucher."
-        value={receiptNote} onChange={setReceiptNote} busy={payBusy}
-        confirmLabel="Disapprove receipt"
-        onConfirm={async () => { if (disapproveReceipt && await reviewReceipt(disapproveReceipt, "Disapproved", receiptNote)) setDisapproveReceipt(null); }} />
 
       {/* Stored file viewer (receipts, grade reports) */}
       <AppDialog open={!!fileView} onOpenChange={(o) => !o && setFileView(null)} size="lg" title={fileView?.title ?? "Receipt"}
