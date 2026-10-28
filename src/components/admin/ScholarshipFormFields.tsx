@@ -36,6 +36,8 @@ type Props = {
    * an office: the signer belongs to it, so the program does too; undefined: offices aren't set up.
    */
   office?: "choose" | string;
+  /** Existing program names, offered as the name of a new program (e.g. the same program for a new year). */
+  nameSuggestions?: string[];
 };
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
@@ -94,7 +96,7 @@ function LongTextField({ id, name, label, hint, placeholder, defaultValue }: {
 }
 
 export function ScholarshipFormFields({
-  cur, yearLevels, setYearLevels, barangays, setBarangays, barangaySearch, setBarangaySearch, active, setActive, committedNote, office,
+  cur, yearLevels, setYearLevels, barangays, setBarangays, barangaySearch, setBarangaySearch, active, setActive, committedNote, office, nameSuggestions = [],
 }: Props) {
   const [programOffice, setProgramOffice] = useState<string>(cur?.office ?? "");
   // The form remounts per program (it's keyed by id), so this starts from the program's schedule.
@@ -111,7 +113,11 @@ export function ScholarshipFormFields({
       <Section title="Program">
         <div className={cn("grid gap-4", office && "sm:grid-cols-[minmax(0,1fr)_16rem]")}>
           <Field label="Name" htmlFor="sch-name">
-            <Input id="sch-name" name="name" required defaultValue={cur?.name ?? ""} placeholder="e.g. Academic Excellence Scholarship" />
+            <Input id="sch-name" name="name" required defaultValue={cur?.name ?? ""} placeholder="e.g. Academic Excellence Scholarship"
+              list={!cur && nameSuggestions.length ? "sch-name-suggestions" : undefined} autoComplete="off" />
+            {!cur && nameSuggestions.length > 0 && (
+              <datalist id="sch-name-suggestions">{nameSuggestions.map((n) => <option key={n} value={n} />)}</datalist>
+            )}
           </Field>
           {office === "choose" && (
             <Field label="Office" hint="Its staff handle the program's applicants and payments">
