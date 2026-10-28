@@ -301,12 +301,12 @@ export default function OverviewPanel({
 
   const stats = [
     // Ordered like the applicant pipeline: registered → applied → decided → scholar → paid.
-    { label: "Total Applicants", value: data.applicants, sub: "registered students", icon: FileText, color: "text-primary", trend: <Trend current={data.applicants} previous={data.applicantsPrev} />, go: () => onNavigate("applications", { status: "all" }) },
+    { label: "Total Applicants", value: data.applicants, sub: "registered scholars", icon: FileText, color: "text-primary", trend: <Trend current={data.applicants} previous={data.applicantsPrev} />, go: () => onNavigate("applications", { status: "all" }) },
     { label: "Not Yet Applied", value: data.notYetApplied, sub: "registered, no application", icon: UserX, color: "text-warning", trend: <Trend current={data.notYetApplied} previous={data.notYetAppliedPrev} />, go: () => onNavigate("applications", { status: "not_applied" }) },
     { label: "Pending", value: data.pending, sub: data.waitlisted ? `+ ${data.waitlisted} waitlisted` : "Needs review", icon: Clock, color: "text-warning", trend: <Trend current={data.pending} previous={data.prevPending} />, go: () => onNavigate("applications", { status: data.waitlisted ? "open" : "pending" }) },
     { label: "Approved", value: data.approved, sub: `${data.approvalRate}% approval rate`, icon: CheckCircle, color: "text-success", trend: <Trend current={data.approved} previous={data.prevApproved} />, go: () => onNavigate("applications", { status: "approved" }) },
     { label: "Disapproved", value: data.disapproved, sub: `${data.disapprovalRate}% disapproval rate`, icon: XCircle, color: "text-destructive", trend: <Trend current={data.disapproved} previous={data.prevDisapproved} />, go: () => onNavigate("applications", { status: "disapproved" }) },
-    { label: "Students", value: profiles.length, sub: `${data.activeStudents} active · ${data.newStudents} new`, icon: Users, color: "text-primary", trend: <Trend current={data.newStudents} previous={data.newStudentsPrev} />, go: () => onNavigate("students") },
+    { label: "Scholars", value: profiles.length, sub: `${data.activeStudents} active · ${data.newStudents} new`, icon: Users, color: "text-primary", trend: <Trend current={data.newStudents} previous={data.newStudentsPrev} />, go: () => onNavigate("students") },
     { label: "Disbursed", value: formatPHP(data.disbCur), sub: `${data.paidScholars} scholar${data.paidScholars === 1 ? "" : "s"} paid · ${scope}`, icon: Banknote, color: "text-success", trend: <Trend current={data.disbCur} previous={data.disbPrev} />, go: () => onNavigate("disbursement"), small: true },
   ];
 
@@ -566,11 +566,11 @@ export default function OverviewPanel({
           <RankedBars rows={data.distribution} unit="applications" />
         </ChartCard>
 
-        <ChartCard title="Students" subtitle="Active vs inactive accounts"
-          table={{ head: ["Group", "Students"], rows: [["Active", data.activeStudents], ["Inactive", profiles.length - data.activeStudents]] }} empty={profiles.length === 0}>
+        <ChartCard title="Scholars" subtitle="Active vs inactive accounts"
+          table={{ head: ["Group", "Scholars"], rows: [["Active", data.activeStudents], ["Inactive", profiles.length - data.activeStudents]] }} empty={profiles.length === 0}>
           <div className="pt-2">
             <p className="mb-3 text-3xl font-bold font-display tabular-nums">{profiles.length ? Math.round((data.activeStudents / profiles.length) * 100) : 0}%<span className="ml-2 text-sm font-normal text-muted-foreground">active</span></p>
-            <SegmentedBar total={profiles.length} ariaLabel={`${data.activeStudents} active and ${profiles.length - data.activeStudents} inactive students`}
+            <SegmentedBar total={profiles.length} ariaLabel={`${data.activeStudents} active and ${profiles.length - data.activeStudents} inactive scholars`}
               segments={[{ name: "Active", value: data.activeStudents, color: "hsl(var(--success))" }, { name: "Inactive", value: profiles.length - data.activeStudents, color: "hsl(var(--muted-foreground))" }]} />
           </div>
         </ChartCard>

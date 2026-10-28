@@ -5,12 +5,12 @@ export const STAFF_ROLES = ["super_admin", "admin", "reviewer", "finance_admin"]
 export type StaffRole = (typeof STAFF_ROLES)[number];
 
 export const ROLE_LABEL: Record<string, string> = {
-  super_admin: "Mayor Office", admin: "Admin", reviewer: "Reviewer", finance_admin: "Finance", student: "Student",
+  super_admin: "Mayor Office", admin: "Admin", reviewer: "Reviewer", finance_admin: "Finance", student: "Scholar",
 };
 
 export const ROLE_DESCRIPTION: Record<StaffRole, string> = {
-  super_admin: "Oversight: sees every office, runs programs, staff, settings, student accounts and deletion requests. Applicant decisions and payments are left to the other roles.",
-  admin: "Runs the office: programs, applicants, students, payments and announcements.",
+  super_admin: "Oversight: sees every office, runs programs, staff, settings, scholar accounts and deletion requests. Applicant decisions and payments are left to the other roles.",
+  admin: "Runs the office: programs, applicants, scholars, payments and announcements.",
   reviewer: "Applicants only: documents, grades, approving or disapproving, notes and messages.",
   finance_admin: "Money only: creating and disbursing payments, receipts and payment problems.",
 };

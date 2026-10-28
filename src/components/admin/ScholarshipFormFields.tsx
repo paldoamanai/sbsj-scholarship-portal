@@ -146,7 +146,7 @@ export function ScholarshipFormFields({
           hint="Shown on the program card and its details. Leave a blank line between paragraphs." />
         <LongTextField id="sch-eligibility" name="eligibility" label="Who can apply" defaultValue={cur?.eligibility ?? ""}
           placeholder={"e.g.\nEnrolled full-time in a state university or college\nFamily income of ₱250,000 or less a year\nNo other government scholarship"}
-          hint="Put each requirement on its own line: students see them as a bulleted list. Grade, year level and barangay rules below are added automatically." />
+          hint="Put each requirement on its own line: scholars see them as a bulleted list. Grade, year level and barangay rules below are added automatically." />
       </Section>
 
       <Section title="Award and capacity" hint="Slots and budget refill when a new academic year starts.">
@@ -228,7 +228,7 @@ export function ScholarshipFormFields({
         </div>
       </Section>
 
-      <Section title="Eligibility rules" hint={`Checked when a student applies. Every program is for ${HOME_MUNICIPALITY} residents.`}>
+      <Section title="Eligibility rules" hint={`Checked when a scholar applies. Every program is for ${HOME_MUNICIPALITY} residents.`}>
         <Field label="Minimum average grade" htmlFor="sch-min-grade" hint="Leave blank to use the global minimum" className="sm:max-w-[calc((100%-2rem)/3)]">
           <Input id="sch-min-grade" name="min_grade" type="number" min={0} max={100} step="0.01" defaultValue={cur?.min_grade ?? ""} placeholder="e.g. 85" />
         </Field>

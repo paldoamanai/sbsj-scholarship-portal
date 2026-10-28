@@ -195,7 +195,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity, managerO
       toast.error("Role not changed", { description: pending.to === "student" ? `${error.message} They were signed out, but still have staff access.` : error.message });
       return;
     }
-    toast.success(`${pending.person.name} is now ${pending.to === "student" ? "a student account" : staffLabel(pending.to, pending.office)}`);
+    toast.success(`${pending.person.name} is now ${pending.to === "student" ? "a scholar account" : staffLabel(pending.to, pending.office)}`);
     setFound(null);
     setResults(null);
     setEmail("");
@@ -266,7 +266,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity, managerO
   };
 
   const describe = (p: Pending) => {
-    if (p.to === "student") return `${p.person.name} loses access to the admin panel straight away, is signed out everywhere and becomes a regular student account.`;
+    if (p.to === "student") return `${p.person.name} loses access to the admin panel straight away, is signed out everywhere and becomes a regular scholar account.`;
     if (p.to === "super_admin" && p.person.id === userId) {
       return "You become the first Mayor Office account. From then on, only Mayor Office accounts can change settings and manage staff.";
     }
@@ -487,7 +487,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity, managerO
           {givableRoles.map((r) => <p key={r}><strong>{ROLE_LABEL[r]}</strong>: {ROLE_DESCRIPTION[r]}</p>)}
           {scoped ? <p>Staff you add belong to {OFFICE_FULL_NAME[managerOffice as keyof typeof OFFICE_FULL_NAME]} and only see its programs, and their applicants, documents and payments. For an Admin account or a move to another office, ask the Mayor Office.</p> : <>
           <p><strong>Office</strong>: an Admin, Reviewer or Finance account can belong to {STAFF_OFFICES.map((o) => OFFICE_FULL_NAME[o]).join(" or ")}. It keeps its role&apos;s permissions, but only sees that office&apos;s programs and their applicants, documents and payments. &ldquo;All offices&rdquo; works across the whole municipality.</p>
-          <p className="text-xs text-muted-foreground">Every staff role can view programs, applicants, students and payments. Keep one or two Mayor Office accounts, so someone can still manage staff if one person loses access. Every change on this page is recorded in the audit log.</p>
+          <p className="text-xs text-muted-foreground">Every staff role can view programs, applicants, scholars and payments. Keep one or two Mayor Office accounts, so someone can still manage staff if one person loses access. Every change on this page is recorded in the audit log.</p>
           </>}
         </CardContent>
       </Card>

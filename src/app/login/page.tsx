@@ -191,7 +191,7 @@ export default function LoginPage() {
       toast.error("Login failed", {
         description: accountIsAdmin
           ? "This is an admin account. Use Login as Admin instead."
-          : "This is a student account. Use Login as Student instead.",
+          : "This is a scholar account. Use Login as Scholar instead.",
       });
       setLoading(false);
       return;
@@ -220,7 +220,7 @@ export default function LoginPage() {
               </div>
             </div>
             <CardTitle className="font-display text-2xl">
-              {isAdmin ? "Admin Login" : "Student Login"}
+              {isAdmin ? "Admin Login" : "Scholar Login"}
             </CardTitle>
             <CardDescription>Enter your credentials to access the system.</CardDescription>
           </CardHeader>
@@ -305,7 +305,7 @@ export default function LoginPage() {
                 onClick={() => setIsAdmin(!isAdmin)}
                 className="text-sm text-primary hover:underline"
               >
-                {isAdmin ? "Login as Student" : "Login as Admin"}
+                {isAdmin ? "Login as Scholar" : "Login as Admin"}
               </button>
               <p className="text-sm text-muted-foreground">
                 Don&apos;t have an account?{" "}

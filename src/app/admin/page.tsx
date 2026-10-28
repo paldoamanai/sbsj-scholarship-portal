@@ -74,7 +74,7 @@ const sidebarItems = [
   { icon: GraduationCap, label: "Scholarships", key: "scholarships", group: "Process" },
   { icon: FileText, label: "Applicants", key: "applications", group: "Process" },
   { icon: MapPin, label: "Home Visits", key: "visits", group: "Process" },
-  { icon: Users, label: "Students", key: "students", group: "Process" },
+  { icon: Users, label: "Scholars", key: "students", group: "Process" },
   { icon: Banknote, label: "Disbursement", key: "disbursement", group: "Process" },
   { icon: Wallet, label: "Funds", key: "funds", group: "Monitoring" },
   { icon: BarChart3, label: "Reports", key: "reports", group: "Monitoring" },
@@ -478,8 +478,8 @@ function AdminDashboard() {
         { event: "INSERT", schema: "public", table: "profiles" },
         (payload) => {
           const p = payload.new as Tables<"profiles">;
-          const name = `${p.first_name || ""} ${p.last_name || ""}`.trim() || p.email || "A new student";
-          toast.info("New student registered", { description: name });
+          const name = `${p.first_name || ""} ${p.last_name || ""}`.trim() || p.email || "A new scholar";
+          toast.info("New scholar registered", { description: name });
           silentRefreshAdmin();
         }
       )
@@ -904,7 +904,7 @@ function AdminDashboard() {
   const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment", `Disbursement receipt · ${payStudent(p)}`);
   // Compare reference numbers the way people type them: case, spaces and dashes don't matter.
   const refKey = (r: string) => r.toUpperCase().replace(/[\s\-_./#]/g, "");
-  const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The student hasn't submitted a receipt", `Student's receipt · ${payStudent(p)}`);
+  const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The scholar hasn't submitted a receipt", `Scholar's receipt · ${payStudent(p)}`);
   // Office + student copy of the acknowledgment slip, for the student to sign when the money is released.
   const printSlip = (p: Tables<"payments">, method = p.method, reference = p.reference) => {
     const receiptNo = receiptNos[p.id];
@@ -918,7 +918,7 @@ function AdminDashboard() {
     const { error } = await supabase.rpc("review_grade_update", { _id: g.id, _status: status, _note: note ?? null });
     setPayBusy(false);
     if (error) { toast.error(error.message); return false; }
-    toast.success(status === "Verified" ? "Grade verified" : "Grade disapproved — the student was asked to resubmit");
+    toast.success(status === "Verified" ? "Grade verified" : "Grade disapproved — the scholar was asked to resubmit");
     if (status === "Verified") {
       setViewStudent((v) => (v && v.id === g.user_id ? { ...v, average_grade: g.grade, grade_verified_at: new Date().toISOString(), grade_term: g.term } : v));
     }
@@ -943,7 +943,7 @@ function AdminDashboard() {
     const { error } = await supabase.rpc("review_student_receipt", { _payment_id: p.id, _status: status, _note: note ?? null });
     setPayBusy(false);
     if (error) { toast.error(error.message); return false; }
-    toast.success(status === "Accepted" ? "Receipt accepted" : "Receipt disapproved — the student was asked to resubmit");
+    toast.success(status === "Accepted" ? "Receipt accepted" : "Receipt disapproved — the scholar was asked to resubmit");
     loadData();
     return true;
   };
@@ -953,7 +953,7 @@ function AdminDashboard() {
     const { error } = await supabase.rpc("resolve_payment_issue", { _issue_id: issue.id, _response: issueResponse });
     setPayBusy(false);
     if (error) { toast.error(error.message); return; }
-    toast.success("Response sent to the student");
+    toast.success("Response sent to the scholar");
     setIssueResponse("");
     loadData();
   };
@@ -1087,7 +1087,7 @@ function AdminDashboard() {
     }).catch(() => null);
     const body = await res?.json().catch(() => null);
     if (!res?.ok) { toast.error((body?.error as string) ?? "Request failed"); if (res) loadData(); return; }
-    toast.success(`${p.first_name || "Student"} ${next ? "activated" : "deactivated"}`);
+    toast.success(`${p.first_name || "Scholar"} ${next ? "activated" : "deactivated"}`);
     setViewStudent((cur) => (cur && cur.id === p.id ? { ...cur, is_active: next } : cur));
     loadData();
   };
@@ -1155,8 +1155,8 @@ function AdminDashboard() {
       };
     });
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Students");
-    XLSX.writeFile(wb, `students${fileOffice}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Scholars");
+    XLSX.writeFile(wb, `scholars${fileOffice}.xlsx`);
     toast.success("Excel downloaded");
   };
 
@@ -1168,7 +1168,7 @@ function AdminDashboard() {
     const { error } = await supabase.rpc("set_home_visit", { _application_id: a.id, _at: at, _note: visitNote.trim() || null });
     setVisitBusy(false);
     if (error) { toast.error("Couldn't save the home visit", { description: error.message }); return; }
-    toast.success(clear ? "Home visit cleared" : "Home visit scheduled — the student was notified");
+    toast.success(clear ? "Home visit cleared" : "Home visit scheduled — the scholar was notified");
     setViewApp({ ...a, home_visit_at: at, home_visit_note: at ? visitNote.trim() || null : null, home_visit_done_at: null });
     loadData(true);
   };
@@ -1225,7 +1225,7 @@ function AdminDashboard() {
     const moa = allDocs.filter((d) => d.application_id === app.id && d.document_type === MOA)
       .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
     if (moa?.status === "Verified") return null;
-    return `Verify the student's signed MOA agreement letter first (${moa ? moa.status.toLowerCase() : "not uploaded yet"}).`;
+    return `Verify the scholar's signed MOA agreement letter first (${moa ? moa.status.toLowerCase() : "not uploaded yet"}).`;
   };
 
   // Slots and budget left in the application's program for its academic year. The database enforces the same limits.
@@ -1276,7 +1276,7 @@ function AdminDashboard() {
     if (error) return error.message;
     if (!data?.length) {
       silentRefreshAdmin();
-      return "This application was changed elsewhere (another reviewer, or the student withdrew it). The list has been refreshed.";
+      return "This application was changed elsewhere (another reviewer, or the scholar withdrew it). The list has been refreshed.";
     }
     // The database notifies the student (migrations 031 and 041) and writes the audit entry (080).
     return null;
@@ -1320,7 +1320,7 @@ function AdminDashboard() {
       .eq("id", a.id).eq("status", "Approved").select("id");
     if (error) { toast.error("Couldn't update the award", { description: error.message }); return; }
     if (!data?.length) { toast.error("This application is no longer approved"); silentRefreshAdmin(); return; }
-    toast.success("Award updated — the student was notified");
+    toast.success("Award updated — the scholar was notified");
     loadData(true);
   };
 
@@ -1493,12 +1493,12 @@ function AdminDashboard() {
   const pipelineStrip = (
     <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-2">
       {([
-        { label: "Total applicants", value: pipeline.total, sub: "registered students", go: () => showApplicants("all") },
+        { label: "Total applicants", value: pipeline.total, sub: "registered scholars", go: () => showApplicants("all") },
         { label: "Not yet applied", value: pipeline.notApplied, sub: "registered, no application", go: () => showApplicants("not_applied"), warn: pipeline.notApplied > 0 },
         { label: "Pending", value: pipeline.pending, sub: pipeline.waitlisted ? `+ ${pipeline.waitlisted} waitlisted` : "awaiting review", go: () => showApplicants(pipeline.waitlisted ? "open" : "pending") },
         { label: "Approved", value: pipeline.approved, sub: "applications", go: () => showApplicants("approved") },
         { label: "Disapproved", value: pipeline.disapproved, sub: "applications", go: () => showApplicants("disapproved") },
-        { label: "Students", value: pipeline.scholars, sub: "approved scholars", go: () => setActiveSection("students") },
+        { label: "Scholars", value: pipeline.scholars, sub: "approved scholars", go: () => setActiveSection("students") },
         { label: "Disbursed", value: pipeline.disbursed, sub: "scholars paid", go: () => setActiveSection("disbursement") },
       ] as { label: string; value: number; sub: string; go: () => void; warn?: boolean }[]).map((t) => (
         <button key={t.label} type="button" onClick={t.go}
@@ -1604,7 +1604,7 @@ function AdminDashboard() {
     });
     setMessaging(false);
     if (error) { toast.error("Couldn't send the request", { description: error.message }); return; }
-    toast.success("Request sent — the student was notified");
+    toast.success("Request sent — the scholar was notified");
     setChangesFor(null);
   };
 
@@ -2012,7 +2012,7 @@ function AdminDashboard() {
                           if (await decideApplication(va, "Waitlisted", remarks)) { toast.info("Waitlisted"); close(); loadData(true); }
                         }}><Hourglass className="mr-1 h-4 w-4" /> Waitlist</Button>
                       )}
-                      <Button variant="destructive" disabled={!remarks.trim()} title={remarks.trim() ? undefined : "Write the reason in the message first — it is shown to the student"} onClick={async () => {
+                      <Button variant="destructive" disabled={!remarks.trim()} title={remarks.trim() ? undefined : "Write the reason in the message first — it is shown to the scholar"} onClick={async () => {
                         if (await decideApplication(va, "Disapproved", remarks)) { toast.error("Disapproved"); close(); loadData(true); }
                       }}><XCircle className="mr-1 h-4 w-4" /> Disapprove</Button>
                       <Button disabled={!!blocker} title={blocker ?? undefined} onClick={async () => {
@@ -2108,7 +2108,7 @@ function AdminDashboard() {
                               <div className="flex flex-wrap items-center gap-2">
                                 <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
                                 {!mapAccess ? (
-                                  <span className="text-muted-foreground">{pin ? "The student has pinned their house. Only MSWDO staff can see where." : "The student hasn\u2019t pinned their house yet."}</span>
+                                  <span className="text-muted-foreground">{pin ? "The scholar has pinned their house. Only MSWDO staff can see where." : "The scholar hasn\u2019t pinned their house yet."}</span>
                                 ) : pin ? (
                                   <>
                                     <span>{pr?.home_landmark || "No landmark given"}</span>
@@ -2118,7 +2118,7 @@ function AdminDashboard() {
                                       </a>
                                     ))}
                                   </>
-                                ) : <span className="text-muted-foreground">The student hasn&apos;t pinned their house yet.</span>}
+                                ) : <span className="text-muted-foreground">The scholar hasn&apos;t pinned their house yet.</span>}
                               </div>
                               {mapAccess && pin && <HouseMap pin={pin} readOnly className="h-56" />}
                               {mapAccess && (() => {
@@ -2132,7 +2132,7 @@ function AdminDashboard() {
                                     {movedAfterVisit && (
                                       <p className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-800">
                                         <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                                        The student {latest.home_lat == null ? "removed" : "changed"} their house pin after the visit was done
+                                        The scholar {latest.home_lat == null ? "removed" : "changed"} their house pin after the visit was done
                                         {latest.home_lat != null && before?.home_lat != null && before.home_lng != null
                                           ? ` (moved ${fmtDistance(distanceKm({ lat: before.home_lat, lng: before.home_lng }, { lat: latest.home_lat, lng: latest.home_lng! }))})` : ""}.
                                       </p>
@@ -2169,7 +2169,7 @@ function AdminDashboard() {
                                     <div className="space-y-2">
                                       <div className="grid gap-2 sm:grid-cols-2">
                                         <Input type="datetime-local" value={visitAt} onChange={(e) => setVisitAt(e.target.value)} aria-label="Visit date and time" />
-                                        <Input value={visitNote} maxLength={500} onChange={(e) => setVisitNote(e.target.value)} placeholder="Note for the student (optional)" />
+                                        <Input value={visitNote} maxLength={500} onChange={(e) => setVisitNote(e.target.value)} placeholder="Note for the scholar (optional)" />
                                       </div>
                                       <div className="flex flex-wrap gap-2">
                                         <Button size="sm" variant="outline" disabled={visitBusy || !visitAt} onClick={() => saveHomeVisit(viewApp)}>
@@ -2198,7 +2198,7 @@ function AdminDashboard() {
                         {!docsLoading && olderDocs.length > 0 && (
                           <details className="mt-2 text-sm">
                             <summary className="cursor-pointer text-xs text-muted-foreground">
-                              {olderDocs.length} document{olderDocs.length === 1 ? "" : "s"} filed with the student&apos;s other applications or not yet filed (don&apos;t count for this one)
+                              {olderDocs.length} document{olderDocs.length === 1 ? "" : "s"} filed with the scholar&apos;s other applications or not yet filed (don&apos;t count for this one)
                             </summary>
                             {docList(olderDocs, false)}
                           </details>
@@ -2213,7 +2213,7 @@ function AdminDashboard() {
                             {can.manage && <Button variant="outline" disabled={hasDisbursed(viewApp.id)} onClick={() => saveAward(viewApp)}>Save award</Button>}
                           </div>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            {!can.manage ? "Only an admin can change an award after approval." : hasDisbursed(viewApp.id) ? "Locked: a payment for this award has been disbursed." : "The student is notified. Payments already scheduled keep their amount."}
+                            {!can.manage ? "Only an admin can change an award after approval." : hasDisbursed(viewApp.id) ? "Locked: a payment for this award has been disbursed." : "The scholar is notified. Payments already scheduled keep their amount."}
                           </p>
                         </div>
                       )}
@@ -2227,14 +2227,14 @@ function AdminDashboard() {
 
                       {!can.review ? (viewApp.notes && (
                         <div>
-                          <h3 className="mb-1.5 text-sm font-semibold">{viewApp.status === "Disapproved" ? "Reason (shown to the student)" : "Message to the student"}</h3>
+                          <h3 className="mb-1.5 text-sm font-semibold">{viewApp.status === "Disapproved" ? "Reason (shown to the scholar)" : "Message to the scholar"}</h3>
                           <p className="whitespace-pre-wrap rounded-md border bg-muted/40 px-3 py-2 text-sm">{viewApp.notes}</p>
                         </div>
                       )) : (
                       <div>
-                        <h3 className="mb-1.5 text-sm font-semibold">{viewApp.status === "Disapproved" ? "Reason (shown to the student)" : "Message to the student"}</h3>
+                        <h3 className="mb-1.5 text-sm font-semibold">{viewApp.status === "Disapproved" ? "Reason (shown to the scholar)" : "Message to the scholar"}</h3>
                         <Textarea value={remarks} onChange={(e) => setRemarks(e.target.value)}
-                          placeholder={open ? "Sent with your decision and shown on the student's application. Required to disapprove." : "Shown on the student's application."} />
+                          placeholder={open ? "Sent with your decision and shown on the scholar's application. Required to disapprove." : "Shown on the scholar's application."} />
                         {open && viewApp.notes && (
                           <p className="mt-1 text-xs text-muted-foreground">Last message sent: “{viewApp.notes}”. It isn&apos;t sent again unless you write it here.</p>
                         )}
@@ -2249,7 +2249,7 @@ function AdminDashboard() {
                             if (!data?.length) { toast.error("This application was changed elsewhere. The list has been refreshed."); silentRefreshAdmin(); return; }
                             setViewApp({ ...viewApp, notes });
                             // For a disapproved application the database notifies the student (see migration 040).
-                            toast.success(viewApp.status === "Disapproved" ? "Reason updated — the student was notified" : "Message saved");
+                            toast.success(viewApp.status === "Disapproved" ? "Reason updated — the scholar was notified" : "Message saved");
                             loadData(true);
                           }}>{viewApp.status === "Disapproved" ? "Save reason" : "Save message"}</Button>
                         )}
@@ -2257,7 +2257,7 @@ function AdminDashboard() {
                       )}
 
                       <div>
-                        <h3 className="mb-1.5 text-sm font-semibold">Internal notes (staff only — never shown to the student)</h3>
+                        <h3 className="mb-1.5 text-sm font-semibold">Internal notes (staff only — never shown to the scholar)</h3>
                         {appNotes.length > 0 && (
                           <ul className="mt-1 space-y-2">
                             {appNotes.map((n) => (
@@ -2284,7 +2284,7 @@ function AdminDashboard() {
                       )}
                       {open && viewApp.changes_requested && (
                         <DialogNote tone="warning" icon={<Hourglass className="h-3.5 w-3.5" />}>
-                          <span className="font-semibold">Waiting on the student{viewApp.changes_requested_at ? ` since ${new Date(viewApp.changes_requested_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}` : ""}: </span>
+                          <span className="font-semibold">Waiting on the scholar{viewApp.changes_requested_at ? ` since ${new Date(viewApp.changes_requested_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}` : ""}: </span>
                           <span className="whitespace-pre-wrap">{viewApp.changes_requested}</span>
                         </DialogNote>
                       )}
@@ -2330,7 +2330,7 @@ function AdminDashboard() {
                 return (
                   <AppDialog open={schDialog !== null} onOpenChange={(o) => !o && setSchDialog(null)} size="xl"
                     title={cur ? "Edit Scholarship" : "Add New Scholarship"}
-                    description="Students see the program card once it's accepting applications."
+                    description="Scholars see the program card once it's accepting applications."
                     onSubmit={saveScholarship} formKey={cur?.id ?? "new"}
                     footer={<>
                       <Button type="button" variant="outline" onClick={() => setSchDialog(null)}>Cancel</Button>
@@ -2440,7 +2440,7 @@ function AdminDashboard() {
           {activeSection === "students" && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex items-center justify-between flex-wrap gap-3">
-                <h2 className="text-xl font-display font-bold">Student Management</h2>
+                <h2 className="text-xl font-display font-bold">Scholar Management</h2>
                 <div className="flex gap-2 flex-wrap">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -2486,14 +2486,14 @@ function AdminDashboard() {
                 <Card className="border-destructive/30">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base">Account deletion requests ({pendingDeletions.length})</CardTitle>
-                    <CardDescription>Open each student to delete their account, or decline with a reason.</CardDescription>
+                    <CardDescription>Open each scholar to delete their account, or decline with a reason.</CardDescription>
                   </CardHeader>
                   <Table>
                     <TableBody>
                       {pendingDeletions.map(({ req, profile }) => (
                         <TableRow key={req.id}>
                           <TableCell>
-                            <p className="font-medium">{profile ? personName(profile) : "Unknown student"}</p>
+                            <p className="font-medium">{profile ? personName(profile) : "Unknown scholar"}</p>
                             <p className="text-xs text-muted-foreground">{profile?.email ?? req.user_id}</p>
                           </TableCell>
                           <TableCell className="text-xs text-muted-foreground max-w-[320px]">{req.reason ? <span className="line-clamp-2" title={req.reason}>{req.reason}</span> : "No reason given"}</TableCell>
@@ -2550,7 +2550,7 @@ function AdminDashboard() {
               </Card>
               <div className="flex items-center justify-between text-sm text-muted-foreground">
                 <span>
-                  {filteredStudents.length === 0 ? "0 students" : `Showing ${(studentPage - 1) * STUDENT_PAGE_SIZE + 1}–${Math.min(studentPage * STUDENT_PAGE_SIZE, filteredStudents.length)} of ${filteredStudents.length}`}
+                  {filteredStudents.length === 0 ? "0 scholars" : `Showing ${(studentPage - 1) * STUDENT_PAGE_SIZE + 1}–${Math.min(studentPage * STUDENT_PAGE_SIZE, filteredStudents.length)} of ${filteredStudents.length}`}
                 </span>
                 <div className="flex items-center gap-2">
                   <Button size="sm" variant="outline" disabled={studentPage <= 1} onClick={() => setStudentPage((n) => n - 1)}><ChevronLeft className="h-4 w-4" /></Button>
@@ -2671,7 +2671,7 @@ function AdminDashboard() {
                 <div className="flex gap-2 flex-wrap">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Student, program, reference..." value={paySearch} onChange={(e) => { setPaySearch(e.target.value); setPayPage(1); }} className="pl-9 w-60" />
+                    <Input placeholder="Scholar, program, reference..." value={paySearch} onChange={(e) => { setPaySearch(e.target.value); setPayPage(1); }} className="pl-9 w-60" />
                   </div>
                   <Select value={payFilter} onValueChange={(v) => { setPayFilter(v); setPayPage(1); }}>
                     <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
@@ -2706,7 +2706,7 @@ function AdminDashboard() {
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Student</TableHead><TableHead>Reference / Cheque No.</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Student prefers</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead>Student receipt</TableHead><TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Scholar</TableHead><TableHead>Reference / Cheque No.</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Scholar prefers</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead>Scholar receipt</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {pagedPayments.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No payments found</TableCell></TableRow>}
@@ -2728,7 +2728,7 @@ function AdminDashboard() {
                           </TableCell>
                           <TableCell>
                             {p.preferred_method ? (
-                              <Badge variant={p.preferred_method === p.method ? "default" : "secondary"} title="Chosen by the student — the payment method is fixed">
+                              <Badge variant={p.preferred_method === p.method ? "default" : "secondary"} title="Chosen by the scholar — the payment method is fixed">
                                 {p.preferred_method}
                               </Badge>
                             ) : <span className="text-muted-foreground">—</span>}
@@ -2759,7 +2759,7 @@ function AdminDashboard() {
                                       <CheckCircle className="h-3.5 w-3.5" /> Received · {new Date(p.student_receipt_at).toLocaleDateString()}
                                     </button>
                                   ) : (
-                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-success" title="Student confirmed receiving the cash without a receipt number (before reference numbers were required)">
+                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-success" title="Scholar confirmed receiving the cash without a receipt number (before reference numbers were required)">
                                       <CheckCircle className="h-3.5 w-3.5" /> Confirmed (no file) · {new Date(p.student_receipt_at).toLocaleDateString()}
                                     </span>
                                   )}
@@ -2785,7 +2785,7 @@ function AdminDashboard() {
                           </TableCell>
                           <TableCell className="text-right space-x-1 whitespace-nowrap">
                             {payIssues.some((i) => i.payment_id === p.id) && (
-                              <Button size="icon" variant="ghost" title={openIssueFor(p.id) ? "Open problem reported by the student" : "Problem reports"} onClick={() => { setIssueResponse(""); setIssueDialog(p); }}>
+                              <Button size="icon" variant="ghost" title={openIssueFor(p.id) ? "Open problem reported by the scholar" : "Problem reports"} onClick={() => { setIssueResponse(""); setIssueDialog(p); }}>
                                 <AlertTriangle className={`h-4 w-4 ${openIssueFor(p.id) ? "text-warning" : "text-muted-foreground"}`} />
                               </Button>
                             )}
@@ -2836,7 +2836,7 @@ function AdminDashboard() {
                 return (
                   <AppDialog open={payDialog !== null} onOpenChange={(o) => !o && setPayDialog(null)} size="md"
                     title={cur ? "Edit Payment" : "Schedule Payment"}
-                    description={cur ? `${payStudent(cur)} · ${payProgram(cur)}` : "For an approved scholar. The student is notified."}
+                    description={cur ? `${payStudent(cur)} · ${payProgram(cur)}` : "For an approved scholar. The scholar is notified."}
                     onSubmit={savePayment} formKey={cur?.id ?? `new-${payAppId}`}
                     footer={<>
                       <Button type="button" variant="outline" onClick={() => setPayDialog(null)}>Cancel</Button>
@@ -2882,7 +2882,7 @@ function AdminDashboard() {
                         <Input id="pay-date" name="scheduled_date" type="date" defaultValue={cur ? (cur.scheduled_date ?? "") : defaultScheduledDate} />
                       </DialogField>
                     </div>
-                    <DialogField label="Method" hint={cur?.preferred_method ? `The student chose ${cur.preferred_method}, so the method is fixed.` : undefined}>
+                    <DialogField label="Method" hint={cur?.preferred_method ? `The scholar chose ${cur.preferred_method}, so the method is fixed.` : undefined}>
                       <div role="radiogroup" aria-label="Method" className="grid grid-cols-2 gap-3">
                         {enabledMethods.map((m) => (
                           <ChoiceButton key={m} selected={payMethod === m} disabled={!!cur?.preferred_method} onClick={() => setPayMethod(m)}>
@@ -2975,8 +2975,8 @@ function AdminDashboard() {
               {/* Cancel confirmation */}
               <ReasonDialog open={!!cancelPay} onClose={() => setCancelPay(null)}
                 title="Cancel this payment?"
-                description={cancelPay ? `${formatPHP(cancelPay.amount)} for ${payStudent(cancelPay)} is cancelled and the student notified. This can't be undone, but you can schedule a new payment.` : undefined}
-                label="Reason" hint="Optional. Shown to the student." rows={2} maxLength={300} required={false}
+                description={cancelPay ? `${formatPHP(cancelPay.amount)} for ${payStudent(cancelPay)} is cancelled and the scholar notified. This can't be undone, but you can schedule a new payment.` : undefined}
+                label="Reason" hint="Optional. Shown to the scholar." rows={2} maxLength={300} required={false}
                 placeholder="e.g. Rescheduled to next month."
                 value={cancelReason} onChange={setCancelReason}
                 cancelLabel="Keep payment" confirmLabel="Cancel payment"
@@ -3225,7 +3225,7 @@ function AdminDashboard() {
               </DialogField>
               {locked && <DialogNote icon={<Lock className="h-3.5 w-3.5" />}>{pm?.status} payments are locked and can&apos;t be edited.</DialogNote>}
               {!locked && editDisbStatus === "Cancelled" && (
-                <DialogField label="Cancellation reason" htmlFor="edit-disb-reason" hint="Optional. Shown to the student.">
+                <DialogField label="Cancellation reason" htmlFor="edit-disb-reason" hint="Optional. Shown to the scholar.">
                   <Textarea id="edit-disb-reason" rows={2} maxLength={300} value={editDisbReason} onChange={(e) => setEditDisbReason(e.target.value)} />
                 </DialogField>
               )}
@@ -3244,7 +3244,7 @@ function AdminDashboard() {
             {disbLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Confirm Disbursement
           </Button>
         </>}>
-        <DialogField label="Payment method" hint={disbLocked ? `The student chose ${disbPay?.preferred_method} for this payment, so the method is fixed.` : undefined}>
+        <DialogField label="Payment method" hint={disbLocked ? `The scholar chose ${disbPay?.preferred_method} for this payment, so the method is fixed.` : undefined}>
           <div role="radiogroup" aria-label="Payment method" className="grid grid-cols-2 gap-3">
             {enabledMethods.map((m) => (
               <ChoiceButton key={m} selected={disbMethod === m} disabled={disbLocked} onClick={() => { setDisbMethod(m); setDisbRef(""); }}>
@@ -3267,7 +3267,7 @@ function AdminDashboard() {
                 <Printer className="mr-1 h-3.5 w-3.5" /> Print slip
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">Print the acknowledgment slip, have the student sign both copies and give them the student copy. They enter this number in the portal to confirm they received the money.</p>
+            <p className="text-xs text-muted-foreground">Print the acknowledgment slip, have the scholar sign both copies and give them the scholar copy. They enter this number in the portal to confirm they received the money.</p>
           </div>
         )}
         <DialogField label="Signed receipt or voucher" hint="Upload the signed acknowledgment slip (office copy) or the disbursement voucher. PDF, JPG or PNG.">
@@ -3283,7 +3283,7 @@ function AdminDashboard() {
       </AppDialog>
 
       <AppDialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)} size="lg"
-        title="Student Details"
+        title="Scholar Details"
         description={viewStudent ? `${`${viewStudent.first_name || ""} ${viewStudent.last_name || ""}`.trim() || viewStudent.email}` : undefined}
         footer={viewStudent && <>
           {can.manage && (
@@ -3292,7 +3292,7 @@ function AdminDashboard() {
                 <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
               </Button>
               <StudentAccountActions
-                student={{ id: viewStudent.id, name: `${viewStudent.first_name || ""} ${viewStudent.last_name || ""}`.trim() || viewStudent.email || "this student", email: viewStudent.email }}
+                student={{ id: viewStudent.id, name: `${viewStudent.first_name || ""} ${viewStudent.last_name || ""}`.trim() || viewStudent.email || "this scholar", email: viewStudent.email }}
                 canDelete={can.super}
                 disbursedPayments={studentPayments(viewStudent.id).filter((pm) => pm.status === "Disbursed").length}
                 requestId={dataReqs.find((r) => r.user_id === viewStudent.id && r.status === "Pending")?.id}
@@ -3366,7 +3366,7 @@ function AdminDashboard() {
                               </div>
                               <p className="text-xs text-muted-foreground">
                                 {pm.status === "Disbursed" && pm.disbursed_at ? `Disbursed ${new Date(pm.disbursed_at).toLocaleDateString()}` : pm.scheduled_date ? `Scheduled ${pm.scheduled_date}` : `Created ${new Date(pm.created_at).toLocaleDateString()}`}
-                                {pm.status === "Disbursed" && ` · Student receipt: ${pm.student_receipt_at ? pm.receipt_review_status : "awaiting"}`}
+                                {pm.status === "Disbursed" && ` · Scholar receipt: ${pm.student_receipt_at ? pm.receipt_review_status : "awaiting"}`}
                                 {pm.status === "Cancelled" && pm.cancel_reason && ` · ${pm.cancel_reason}`}
                               </p>
                             </li>
@@ -3421,7 +3421,7 @@ function AdminDashboard() {
                                 </span>
                               )}
                             </div>
-                            {r.reason && <p className="mt-1 text-xs text-muted-foreground">Student&apos;s reason: {r.reason}</p>}
+                            {r.reason && <p className="mt-1 text-xs text-muted-foreground">Scholar&apos;s reason: {r.reason}</p>}
                             {r.response && <p className="mt-1 text-xs"><span className="font-medium">Response: </span>{r.response}</p>}
                           </li>
                         ))}
@@ -3442,8 +3442,8 @@ function AdminDashboard() {
       </AppDialog>
       <ReasonDialog open={!!disapproveGrade} onClose={() => setDisapproveGrade(null)}
         title="Disapprove grade submission"
-        description="The student is notified and asked to submit their grade again."
-        hint="Shown to the student."
+        description="The scholar is notified and asked to submit their grade again."
+        hint="Shown to the scholar."
         placeholder="e.g. The grade report is unreadable or doesn't show the average."
         value={gradeNote} onChange={setGradeNote} busy={payBusy}
         confirmLabel="Disapprove grade"
@@ -3451,8 +3451,8 @@ function AdminDashboard() {
 
       <ReasonDialog open={!!handleReq} onClose={() => setHandleReq(null)}
         title="Decline deletion request"
-        description="The student's account and data are kept."
-        label="Message to the student"
+        description="The scholar's account and data are kept."
+        label="Message to the scholar"
         placeholder="Explain why, e.g. payment records must be kept for audit."
         value={reqResponse} onChange={setReqResponse} busy={payBusy}
         confirmLabel="Decline request"
@@ -3460,9 +3460,9 @@ function AdminDashboard() {
         onConfirm={respondToRequest} />
 
       <ReasonDialog open={!!disapproveReceipt} onClose={() => setDisapproveReceipt(null)}
-        title="Disapprove student's receipt"
-        description="The student is notified and asked to submit their receipt again."
-        hint="Shown to the student."
+        title="Disapprove scholar's receipt"
+        description="The scholar is notified and asked to submit their receipt again."
+        hint="Shown to the scholar."
         placeholder="e.g. The signature is missing. Please upload the signed voucher."
         value={receiptNote} onChange={setReceiptNote} busy={payBusy}
         confirmLabel="Disapprove receipt"
@@ -3499,7 +3499,7 @@ function AdminDashboard() {
             {i.response && <p className="mt-3 whitespace-pre-wrap border-t pt-3"><span className="font-medium">Response: </span>{i.response}</p>}
             {i.status === "Open" && can.finance && (
               <div className="mt-4 space-y-2 border-t pt-4">
-                <DialogField label="Response to the student" htmlFor={`issue-${i.id}`}>
+                <DialogField label="Response to the scholar" htmlFor={`issue-${i.id}`}>
                   <Textarea id={`issue-${i.id}`} rows={3} value={issueResponse} onChange={(e) => setIssueResponse(e.target.value)} placeholder="Explain what you found or what happens next." />
                 </DialogField>
                 <div className="flex justify-end">
@@ -3514,7 +3514,7 @@ function AdminDashboard() {
       <ReasonDialog open={!!disapproveApp} onClose={() => setDisapproveApp(null)}
         title="Disapprove application"
         description={disapproveApp ? `${personName(disapproveApp.profiles)} · ${disapproveApp.scholarships?.name || "—"}` : undefined}
-        hint="Shown to the student."
+        hint="Shown to the scholar."
         placeholder="e.g. Your average grade is below the program's minimum."
         value={disapproveAppNote} onChange={setDisapproveAppNote} busy={disapprovingApp}
         confirmLabel="Disapprove application"
@@ -3529,7 +3529,7 @@ function AdminDashboard() {
       <ReasonDialog open={!!revokeApp} onClose={() => setRevokeApp(null)}
         title="Revoke approval"
         description={`${personName(revokeApp?.profiles)}'s application for ${revokeApp?.scholarships?.name || "this program"} goes back to Pending, and its slot and award are released.`}
-        hint="Shown to the student."
+        hint="Shown to the scholar."
         placeholder="e.g. Approved by mistake: your residency could not be confirmed."
         value={revokeNote} onChange={setRevokeNote} busy={revokingApp}
         confirmLabel="Revoke approval"
@@ -3538,12 +3538,12 @@ function AdminDashboard() {
           setRevokingApp(true);
           const ok = await decideApplication(revokeApp, "Pending", revokeNote);
           setRevokingApp(false);
-          if (ok) { toast.success("Approval revoked — the student was notified"); setRevokeApp(null); loadData(true); }
+          if (ok) { toast.success("Approval revoked — the scholar was notified"); setRevokeApp(null); loadData(true); }
         }} />
 
       <ReasonDialog open={!!reminderFor} onClose={() => setReminderFor(null)}
-        title={`Send reminder${reminderFor && reminderFor.length > 1 ? ` to ${reminderFor.length} students` : reminderFor?.[0] ? ` to ${personName(profiles.find((p) => p.id === reminderFor[0]))}` : ""}`}
-        description="Sent as a notification that links to their Documents page. Each student gets at most one reminder a day."
+        title={`Send reminder${reminderFor && reminderFor.length > 1 ? ` to ${reminderFor.length} scholars` : reminderFor?.[0] ? ` to ${personName(profiles.find((p) => p.id === reminderFor[0]))}` : ""}`}
+        description="Sent as a notification that links to their Documents page. Each scholar gets at most one reminder a day."
         label="Message" rows={4} maxLength={1000}
         value={reminderText} onChange={setReminderText} busy={messaging}
         confirmLabel="Send reminder" confirmVariant="default"
@@ -3552,8 +3552,8 @@ function AdminDashboard() {
       <ReasonDialog open={!!changesFor} onClose={() => setChangesFor(null)}
         title="Request changes"
         description={`${personName(changesFor?.profiles)} is asked to fix something on their ${changesFor?.scholarships?.name || ""} application. Its status doesn't change.`}
-        label="What the student needs to do"
-        hint="To have a document re-uploaded, also mark it Disapproved so the student can replace it."
+        label="What the scholar needs to do"
+        hint="To have a document re-uploaded, also mark it Disapproved so the scholar can replace it."
         placeholder="e.g. Your Certificate of Enrollment is blurry. Please upload a clearer copy."
         maxLength={1000}
         value={changesText} onChange={setChangesText} busy={messaging}
@@ -3562,8 +3562,8 @@ function AdminDashboard() {
 
       <ReasonDialog open={bulkDisapprove} onClose={() => setBulkDisapprove(false)}
         title={`Disapprove ${selectedApps.size} application${selectedApps.size === 1 ? "" : "s"}`}
-        description="Every selected student is notified."
-        hint="Sent to every selected student."
+        description="Every selected scholar is notified."
+        hint="Sent to every selected scholar."
         placeholder="e.g. All slots for this program have been filled."
         value={bulkNote} onChange={setBulkNote} busy={bulkBusy}
         confirmLabel="Disapprove"
@@ -3571,8 +3571,8 @@ function AdminDashboard() {
 
       <ReasonDialog open={!!disapproveDoc} onClose={() => setDisapproveDoc(null)}
         title={`Disapprove ${disapproveDoc?.type ?? "document"}`}
-        description="The student is notified and can upload a replacement."
-        hint="Shown to the student."
+        description="The scholar is notified and can upload a replacement."
+        hint="Shown to the scholar."
         placeholder="e.g. The photo is blurry. Please upload a clear copy."
         value={disapproveNote} onChange={setDisapproveNote} busy={reviewingDoc}
         confirmLabel="Disapprove document"

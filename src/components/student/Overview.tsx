@@ -69,7 +69,7 @@ export default function Overview(p: OverviewProps) {
   const [showAllPrograms, setShowAllPrograms] = useState(false);
   const [program, setProgram] = useState<PublicScholarship | null>(null);
 
-  const firstName = p.displayName.split(" ")[0] || "Student";
+  const firstName = p.displayName.split(" ")[0] || "Scholar";
   const unread = p.unreadCount;
   const completeness = useMemo(() => profileCompleteness(profile), [profile]);
 
@@ -322,7 +322,7 @@ export default function Overview(p: OverviewProps) {
                 fallback={<div className="h-16 w-16 rounded-2xl bg-accent flex items-center justify-center shrink-0"><User className="h-7 w-7 text-accent-foreground" /></div>} />
               <div className="flex-1 text-center sm:text-left min-w-0">
                 <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                  <h2 className="text-lg font-display font-bold text-foreground">{p.displayName || "Student"}</h2>
+                  <h2 className="text-lg font-display font-bold text-foreground">{p.displayName || "Scholar"}</h2>
                   {p.locked && (
                     <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${p.isDisbursed ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-accent text-accent-foreground border-primary/20"}`}>
                       <Lock className="h-3 w-3" />{p.isDisbursed ? "Disbursed" : "Approved — Locked"}

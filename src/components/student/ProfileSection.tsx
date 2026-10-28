@@ -311,7 +311,7 @@ export default function ProfileSection({ profile, userId, userEmail, locked, gra
               <Field label={`Full name${guardianRequired ? " *" : ""}`} error={errors.guardian_name}><Input className={inputCls} value={form.guardian_name} onChange={(e) => set("guardian_name", e.target.value)} /></Field>
               <Field label="Relationship" error={errors.guardian_relationship}><Input className={inputCls} value={form.guardian_relationship} placeholder="e.g. Mother" onChange={(e) => set("guardian_relationship", e.target.value)} /></Field>
               <Field label={`Mobile number${guardianRequired ? " *" : ""}`} error={errors.guardian_phone}><Input className={inputCls} type="tel" inputMode="tel" autoComplete="off" value={form.guardian_phone} onChange={(e) => set("guardian_phone", e.target.value)} /></Field>
-              {guardianRequired && <p className="text-xs text-muted-foreground self-end pb-2">Required for Grade 11–12 students.</p>}
+              {guardianRequired && <p className="text-xs text-muted-foreground self-end pb-2">Required for Grade 11–12 scholars.</p>}
             </div>
           </Panel>
 

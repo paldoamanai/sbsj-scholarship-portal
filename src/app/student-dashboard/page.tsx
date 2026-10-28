@@ -559,7 +559,7 @@ export default function StudentDashboardPage() {
     try {
       await loadDataInner();
     } catch (err) {
-      console.error("Student dashboard failed to load", err);
+      console.error("Scholar dashboard failed to load", err);
       const detail = err instanceof Error ? err.message : String(err);
       setLoadError(`We couldn't reach the server. (${detail})`);
       setLoading(false);
@@ -834,7 +834,7 @@ export default function StudentDashboardPage() {
     const pg = ownMin > 0 && isRenewing && settings.renewal_enabled ? settings.renewal_min_grade : ownMin;
     if (pg > 0 && myGrade == null && minGrade < pg) applyIssues.push(`Add your average grade to your profile (${applyProgram.name} requires ${pg}).`);
     else if (pg > 0 && myGrade != null && myGrade < pg) applyIssues.push(`${applyProgram.name} requires an average grade of ${pg}; yours is ${myGrade}.`);
-    if (applyProgram.year_levels?.length && !applyProgram.year_levels.includes(profile?.year_level ?? "")) applyIssues.push(`${applyProgram.name} is open to ${applyProgram.year_levels.join(", ")} students only.`);
+    if (applyProgram.year_levels?.length && !applyProgram.year_levels.includes(profile?.year_level ?? "")) applyIssues.push(`${applyProgram.name} is open to ${applyProgram.year_levels.join(", ")} scholars only.`);
     const town = applyProgram.municipality?.trim();
     if (town && !sameTown(profile?.municipality, town)) {
       const mine = profile?.municipality?.trim();
@@ -1861,7 +1861,7 @@ export default function StudentDashboardPage() {
                 fallback={<div className="h-full w-full bg-primary flex items-center justify-center"><User className="h-4 w-4 text-primary-foreground" /></div>} />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold text-sidebar-foreground truncate">{displayName || "Student"}</p>
+              <p className="text-xs font-semibold text-sidebar-foreground truncate">{displayName || "Scholar"}</p>
               <p className="text-xs text-muted-foreground truncate">{userEmail}</p>
             </div>
           </div>

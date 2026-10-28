@@ -32,12 +32,12 @@ const REPORTS: { key: ReportKey; title: string; desc: string; icon: typeof Users
   { key: "scholars", title: "List of Scholars", desc: "Approved scholars by name with school, grades, award, amount disbursed and balance, plus contact, address and guardian details", icon: Users },
   { key: "budget", title: "Budget vs. Utilization", desc: "Each program's budget against committed, disbursed and queued funds, plus slots filled", icon: PiggyBank },
   { key: "funds", title: "Fund Utilization Report", desc: "Budget used and remaining, payment pipeline, funds by program, month, term and method, and cancelled payments with who cancelled them", icon: Wallet },
-  { key: "disbursements", title: "Disbursement Summary", desc: "Every payment with its term, method, who disbursed it, the student's receipt reference number and its review, plus totals by program and status", icon: Banknote },
+  { key: "disbursements", title: "Disbursement Summary", desc: "Every payment with its term, method, who disbursed it, the scholar's receipt reference number and its review, plus totals by program and status", icon: Banknote },
   { key: "balances", title: "Schedule of Remaining Balance Disbursement", desc: "Each scholar's yearly award, amount disbursed and remaining balance, the payouts already scheduled by date, and the periods still to schedule, plus totals by program", icon: CalendarClock },
   { key: "statistics", title: "Applicant Statistics", desc: "Applications, unique applicants and approval rates by program, month, term, type, sex, age, civil status, year level, grade, school, course, location, income and household size", icon: BarChart3 },
   { key: "operations", title: "Operations Report", desc: "Decision and payout turnaround, payment problems, receipt confirmations, missing documents and data requests", icon: Activity },
-  { key: "history", title: "Scholar History", desc: "One student's profile, applications, payments, grades and payment problems", icon: History },
-  { key: "audit", title: "Audit Trail", desc: "Recorded admin and student actions with who did it, their role, the record in words, changed fields, IP address and device, plus counts by action and user", icon: ScrollText },
+  { key: "history", title: "Scholar History", desc: "One scholar's profile, applications, payments, grades and payment problems", icon: History },
+  { key: "audit", title: "Audit Trail", desc: "Recorded admin and scholar actions with who did it, their role, the record in words, changed fields, IP address and device, plus counts by action and user", icon: ScrollText },
 ];
 
 type Props = {
@@ -330,7 +330,7 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
               <CardContent className="space-y-3">
                 {r.key === "history" && (
                   <Select value={student} onValueChange={setStudent}>
-                    <SelectTrigger><SelectValue placeholder={students.length ? "Choose a student" : "No students have applied yet"} /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder={students.length ? "Choose a scholar" : "No scholars have applied yet"} /></SelectTrigger>
                     <SelectContent>
                       {students.map((p) => <SelectItem key={p.id} value={p.id}>{personName(p)}</SelectItem>)}
                     </SelectContent>
@@ -382,7 +382,7 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
                     {exporting === `${r.key}-xlsx` ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <FileDown className="mr-1 h-4 w-4" />} Excel
                   </Button>
                   <span className="text-xs text-muted-foreground ml-auto">
-                    {busy ? <span className="inline-block h-3 w-16 animate-pulse rounded-md bg-muted align-middle" aria-label="Loading" /> : r.key === "history" && !student ? "Choose a student" : `${def.count.toLocaleString("en-PH")} ${def.countLabel}`}
+                    {busy ? <span className="inline-block h-3 w-16 animate-pulse rounded-md bg-muted align-middle" aria-label="Loading" /> : r.key === "history" && !student ? "Choose a scholar" : `${def.count.toLocaleString("en-PH")} ${def.countLabel}`}
                   </span>
                 </div>
               </CardContent>

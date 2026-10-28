@@ -48,7 +48,7 @@ export const ALL_FILTERS: ReportFilters = {
 
 export type ReportKey = "scholars" | "budget" | "funds" | "disbursements" | "balances" | "statistics" | "operations" | "history" | "audit";
 export type ReportFilterKey = "period" | "program" | "term" | "payStatus" | "student" | "audit";
-export const FILTER_LABEL: Record<ReportFilterKey, string> = { period: "Period", program: "Program", term: "Academic year", payStatus: "Payment status", student: "Student", audit: "Action, record type & user" };
+export const FILTER_LABEL: Record<ReportFilterKey, string> = { period: "Period", program: "Program", term: "Academic year", payStatus: "Payment status", student: "Scholar", audit: "Action, record type & user" };
 
 /** Which filters each report honours. Everything else is ignored (and not printed on the report). */
 export const REPORT_FILTERS: Record<ReportKey, ReportFilterKey[]> = {
@@ -181,7 +181,7 @@ export function auditContext(data?: Partial<Pick<ReportData, "applications" | "p
   const role = (l: Tables<"audit_logs">) => {
     if (!l.user_id) return "System";
     const st = staff.get(l.user_id);
-    return st ? staffLabel(st.role, st.office) : profs.has(l.user_id) ? "Student" : "—";
+    return st ? staffLabel(st.role, st.office) : profs.has(l.user_id) ? "Scholar" : "—";
   };
   return { record, user, role };
 }
@@ -337,7 +337,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
     return {
       title: "List of Scholars", filters, count: students.length, countLabel: "scholars",
       notes: [
-        "Grade at Application is the grade the student declared when applying; Current Grade is the verified average on file. Disbursed and Balance are to date, regardless of the period.",
+        "Grade at Application is the grade the scholar declared when applying; Current Grade is the verified average on file. Disbursed and Balance are to date, regardless of the period.",
         ...(multi > 0 ? [`${apps.length} approved scholarships across ${students.length} scholars: a scholar with more than one scholarship appears once per scholarship.`] : []),
       ],
       sections: [
@@ -444,7 +444,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
         },
         { name: "By Payment Method", head: ["Method", "Payments", "Amount", "Share %"], rows: [...methods.entries()].sort((x, y) => sum(y[1]) - sum(x[1])).map(([m, l]) => [m, l.length, sum(l), pct(sum(l), sum(paid))]), money: ["Amount"], totals: ["Payments", "Amount"] },
         {
-          name: "Cancelled Payments", head: ["Student", "Program", "Period", "Reference", "Created", "Cancelled On", "Cancelled By", "Amount", "Reason"],
+          name: "Cancelled Payments", head: ["Scholar", "Program", "Period", "Reference", "Created", "Cancelled On", "Cancelled By", "Amount", "Reason"],
           rows: cancelled.map((p) => [payStudent(p), payProgram(p), payPeriod(p), p.reference || "—", fmtDate(p.created_at), fmtDate(p.cancelled_at), staffName(p.cancelled_by), Number(p.amount), p.cancel_reason || "—"]),
           money: ["Amount"], totals: ["Amount"],
         },
@@ -471,12 +471,12 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
       title: "Disbursement Summary", filters, count: list.length, countLabel: "payments",
       notes: [
         "Payments fall in the period by disbursed date, else scheduled date, else the date created.",
-        "Receipt Ref. is the reference number the student typed from the receipt they signed. Matches compares it with the payment's own reference (cheque or voucher number).",
+        "Receipt Ref. is the reference number the scholar typed from the receipt they signed. Matches compares it with the payment's own reference (cheque or voucher number).",
       ],
       sections: [
         {
           name: "Payments",
-          head: ["Student", "Barangay", "Program", "Period", "Type", "Reference", "Method", "Preferred", "Status", "Scheduled", "Disbursed", "Disbursed By", "Proof on File", "Notes", "Amount"],
+          head: ["Scholar", "Barangay", "Program", "Period", "Type", "Reference", "Method", "Preferred", "Status", "Scheduled", "Disbursed", "Disbursed By", "Proof on File", "Notes", "Amount"],
           rows: list.map((p) => {
             const st = s.profById.get(p.user_id), a = s.payApp(p);
             return [payStudent(p), st?.barangay || "—", payProgram(p), payPeriod(p), a ? kind(a) : "—", p.reference || "—", p.method || "—", p.preferred_method || "—",
@@ -485,8 +485,8 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
           money: ["Amount"], totals: ["Amount"],
         },
         {
-          name: "Student Receipt Confirmation",
-          head: ["Student", "Program", "Period", "Reference", "Disbursed", "Receipt Ref.", "Matches", "Submitted", "Review", "Reviewed By", "Reviewed On", "Review Note", "Amount"],
+          name: "Scholar Receipt Confirmation",
+          head: ["Scholar", "Program", "Period", "Reference", "Disbursed", "Receipt Ref.", "Matches", "Submitted", "Review", "Reviewed By", "Reviewed On", "Review Note", "Amount"],
           rows: paid.map((p) => [payStudent(p), payProgram(p), payPeriod(p), p.reference || "—", fmtDate(p.disbursed_at), receiptText(p), matches(p), fmtDate(p.student_receipt_at),
             p.student_receipt_at ? p.receipt_review_status : "—", staffName(p.receipt_reviewed_by), fmtDate(p.receipt_reviewed_at), clip(p.receipt_review_note, 80), Number(p.amount)]),
           money: ["Amount"], totals: ["Amount"],
@@ -545,13 +545,13 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
         },
         {
           name: "Upcoming Payouts (Scheduled)",
-          head: ["Scheduled Date", "Student", "Program", "Period", "Method", "Status", "Reference", "Amount"],
+          head: ["Scheduled Date", "Scholar", "Program", "Period", "Method", "Status", "Reference", "Amount"],
           rows: upcoming.map(({ r, p }) => [fmtDate(p.scheduled_date), listName(r.a.profiles), r.a.scholarships?.name || "—", payPeriod(p), p.method || "—", p.status, p.reference || "—", Number(p.amount)]),
           money: ["Amount"], totals: ["Amount"],
         },
         {
           name: "Periods Not Yet Scheduled",
-          head: ["Student", "Program", "Academic Year", "Period", "Expected Amount"],
+          head: ["Scholar", "Program", "Academic Year", "Period", "Expected Amount"],
           rows: toSchedule.map(({ r, t, amount }) => [listName(r.a.profiles), r.a.scholarships?.name || "—", termText(r.a), termLabel(t, r.a.academic_year) || t, amount]),
           money: ["Expected Amount"], totals: ["Expected Amount"],
         },
@@ -614,14 +614,14 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
         },
         {
           name: "Payment Problem Reports",
-          head: ["Student", "Kind", "Status", "Reported", "Resolved", "Days", "Message"],
+          head: ["Scholar", "Kind", "Status", "Reported", "Resolved", "Days", "Message"],
           rows: issues.map((i) => { const d = resolveDays(i); return [personName(s.profById.get(i.user_id)), i.kind, i.status, fmtDate(i.created_at), fmtDate(i.resolved_at), d === null ? "—" : d.toFixed(1), clip(i.message)]; }),
         },
-        { name: "Student Receipt Confirmations", head: ["Status", "Disbursed Payments"], rows: receiptRows, totals: ["Disbursed Payments"] },
-        { name: "Document Completeness (open applications)", head: ["Student", "Program", "Submitted", "Required", "Uploaded", "Verified", "Disapproved", "Missing"], rows: docRows },
+        { name: "Scholar Receipt Confirmations", head: ["Status", "Disbursed Payments"], rows: receiptRows, totals: ["Disbursed Payments"] },
+        { name: "Document Completeness (open applications)", head: ["Scholar", "Program", "Submitted", "Required", "Uploaded", "Verified", "Disapproved", "Missing"], rows: docRows },
         {
           name: "Data & Deletion Requests",
-          head: ["Student", "Kind", "Status", "Requested", "Handled", "Days"],
+          head: ["Scholar", "Kind", "Status", "Requested", "Handled", "Days"],
           rows: reqs.map((r) => { const d = handleDays(r); return [personName(s.profById.get(r.user_id)), r.kind, r.status, fmtDate(r.created_at), fmtDate(r.handled_at), d === null ? "—" : d.toFixed(1)]; }),
         },
       ],
@@ -630,13 +630,13 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
 
   if (key === "history") {
     const p = s.profById.get(f.student);
-    if (!p) return { title: "Scholar History", filters: ["Student: none selected"], count: 0, countLabel: "students", sections: [] };
+    if (!p) return { title: "Scholar History", filters: ["Scholar: none selected"], count: 0, countLabel: "students", sections: [] };
     const apps = data.applications.filter((a) => a.user_id === p.id);
     const pays = data.payments.filter((x) => x.user_id === p.id).sort((x, y) => y.created_at.localeCompare(x.created_at));
     const grades = data.gradeUpdates.filter((g) => g.user_id === p.id);
     const issues = data.payIssues.filter((i) => i.user_id === p.id);
     return {
-      title: `Scholar History — ${personName(p)}`, filters: [`Student: ${personName(p)}`], count: 1, countLabel: "student",
+      title: `Scholar History — ${personName(p)}`, filters: [`Scholar: ${personName(p)}`], count: 1, countLabel: "student",
       sections: [
         {
           name: "Profile", head: ["Field", "Value"],

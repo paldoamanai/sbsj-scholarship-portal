@@ -28,7 +28,7 @@ async function authorize(): Promise<{ caller: Caller; supabase: Awaited<ReturnTy
     supabase.rpc("staff_may", { _user: user.id, _perm: "super" }),
     supabase.rpc("mfa_ok", { _user: user.id }),
   ]);
-  if (canManage !== true) return NextResponse.json({ error: "Only admins can manage student accounts" }, { status: 403 });
+  if (canManage !== true) return NextResponse.json({ error: "Only admins can manage scholar accounts" }, { status: 403 });
   if (mfaOk !== true) return NextResponse.json({ error: "Two-factor verification required" }, { status: 401 });
 
   const admin = serviceClient();
@@ -65,13 +65,13 @@ export async function POST(request: Request) {
 
   const { data: roleRow } = await admin.from("user_roles").select("role").eq("user_id", userId).maybeSingle();
   if (!roleRow) return NextResponse.json({ error: "Account not found" }, { status: 404 });
-  if (roleRow.role !== "student") return NextResponse.json({ error: "That account is not a student. Manage staff under Staff." }, { status: 400 });
+  if (roleRow.role !== "student") return NextResponse.json({ error: "That account is not a scholar. Manage staff under Staff." }, { status: 400 });
 
   // Office Admins act only on students who applied to their office's programs (061's office_ok_person;
   // true for the Mayor Office and staff without an office).
   const { data: inOffice, error: officeErr } = await supabase.rpc("office_ok_person", { _person: userId });
   if (officeErr) return NextResponse.json({ error: officeErr.message }, { status: 500 });
-  if (inOffice !== true) return NextResponse.json({ error: "This student has not applied to your office's programs" }, { status: 403 });
+  if (inOffice !== true) return NextResponse.json({ error: "This scholar has not applied to your office's programs" }, { status: 403 });
 
   if (action === "set_active") {
     const active = body?.active === true;
@@ -126,13 +126,13 @@ export async function POST(request: Request) {
   }
 
   if (action === "delete_account") {
-    if (!caller.isSuper) return NextResponse.json({ error: "Only the Mayor Office can delete student accounts" }, { status: 403 });
+    if (!caller.isSuper) return NextResponse.json({ error: "Only the Mayor Office can delete scholar accounts" }, { status: 403 });
 
     // Payments are deleted with the account, so money already released would vanish from the books.
     const { count: disbursed } = await admin.from("payments").select("id", { count: "exact", head: true })
       .eq("user_id", userId).eq("status", "Disbursed");
     if (disbursed) {
-      return NextResponse.json({ error: `This student has ${disbursed} disbursed payment${disbursed === 1 ? "" : "s"}, which would be deleted with the account. Deactivate the account instead to keep the disbursement records.` }, { status: 409 });
+      return NextResponse.json({ error: `This scholar has ${disbursed} disbursed payment${disbursed === 1 ? "" : "s"}, which would be deleted with the account. Deactivate the account instead to keep the disbursement records.` }, { status: 409 });
     }
 
     // Their deletion request goes with the account, so the audit entry is what records it was honoured.

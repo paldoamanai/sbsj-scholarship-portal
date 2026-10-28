@@ -130,7 +130,7 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
       <fieldset disabled={readOnly} className="space-y-4 min-w-0">
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Academic Year & Semester</CardTitle><CardDescription>New applications are stamped with these. Changing the academic year starts a new cycle: students can apply to every program again, earlier scholars apply as renewals, and program slots and budgets refill.</CardDescription></CardHeader>
+        <CardHeader><CardTitle className="text-base">Academic Year & Semester</CardTitle><CardDescription>New applications are stamped with these. Changing the academic year starts a new cycle: scholars can apply to every program again, earlier scholars apply as renewals, and program slots and budgets refill.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div><Label>Academic Year</Label><Input value={draft.academic_year} placeholder="2025-2026" onChange={(e) => set("academic_year", e.target.value)} /><Err k="academic_year" /></div>
@@ -146,7 +146,7 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Application Period</CardTitle><CardDescription>Students can only apply while applications are open and today falls inside the dates. Each scholarship also has its own deadline.</CardDescription></CardHeader>
+        <CardHeader><CardTitle className="text-base">Application Period</CardTitle><CardDescription>Scholars can only apply while applications are open and today falls inside the dates. Each scholarship also has its own deadline.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center justify-between">
             <div><p className="text-sm font-medium">Applications open</p><p className="text-xs text-muted-foreground">Turn off to stop all new applications.</p></div>
@@ -162,16 +162,16 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Scholarship Criteria</CardTitle><CardDescription>Enforced when a student submits an application.</CardDescription></CardHeader>
+        <CardHeader><CardTitle className="text-base">Scholarship Criteria</CardTitle><CardDescription>Enforced when a scholar submits an application.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           <div><Label>Minimum Grade Average (0 = no minimum)</Label><Input type="number" min={0} max={100} step="0.01" value={draft.min_grade_requirement} onChange={(e) => set("min_grade_requirement", e.target.value as unknown as number)} /><Err k="min_grade_requirement" /></div>
-          <p className="text-xs text-muted-foreground">Students may apply to every open program. Each program is approved on its own, once the student meets that program&apos;s requirements and their documents are verified.</p>
+          <p className="text-xs text-muted-foreground">Scholars may apply to every open program. Each program is approved on its own, once the scholar meets that program&apos;s requirements and their documents are verified.</p>
           <SaveBar id="criteria" keys={["min_grade_requirement"]} />
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Payment Methods</CardTitle><CardDescription>Only enabled methods can be chosen for new payments or by students.</CardDescription></CardHeader>
+        <CardHeader><CardTitle className="text-base">Payment Methods</CardTitle><CardDescription>Only enabled methods can be chosen for new payments or by scholars.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           {PAYMENT_METHODS.map((m) => (
             <div key={m} className="flex items-center justify-between border-b last:border-0 pb-3 last:pb-0">
@@ -186,7 +186,7 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Renewals</CardTitle><CardDescription>A student with an earlier approved application is treated as renewing. The yearly application limit still applies.</CardDescription></CardHeader>
+        <CardHeader><CardTitle className="text-base">Renewals</CardTitle><CardDescription>A scholar with an earlier approved application is treated as renewing. The yearly application limit still applies.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center justify-between">
             <div><p className="text-sm font-medium">Renewals open</p><p className="text-xs text-muted-foreground">Turn off to stop scholars from applying again.</p></div>
@@ -201,7 +201,7 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Required Documents</CardTitle><CardDescription>Students see this checklist and its progress on their dashboard. Barangay Affairs and MSWDO programs use their own lists instead, so this list covers the Sangguniang Bayan Office and programs without an office.</CardDescription></CardHeader>
+        <CardHeader><CardTitle className="text-base">Required Documents</CardTitle><CardDescription>Scholars see this checklist and its progress on their dashboard. Barangay Affairs and MSWDO programs use their own lists instead, so this list covers the Sangguniang Bayan Office and programs without an office.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2">
             {draft.required_documents.map((d) => (
@@ -224,7 +224,7 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
             <Button type="submit" variant="outline"><Plus className="mr-1 h-4 w-4" />Add</Button>
           </form>
           <Err k="required_documents" />
-          <p className="text-xs text-muted-foreground">Removing a document only hides it from the checklist. Files students already uploaded are kept.</p>
+          <p className="text-xs text-muted-foreground">Removing a document only hides it from the checklist. Files scholars already uploaded are kept.</p>
           <SaveBar id="documents" keys={["required_documents"]} />
         </CardContent>
       </Card>
@@ -241,9 +241,9 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
             </div>
             <div><Label>Schedule payments (days from today)</Label><Input type="number" min={0} max={365} step={1} value={draft.default_payment_lead_days} onChange={(e) => set("default_payment_lead_days", e.target.value as unknown as number)} /><Err k="default_payment_lead_days" /></div>
           </div>
-          <div><Label>Where students collect payments</Label><Input maxLength={500} value={draft.payment_pickup_location} onChange={(e) => set("payment_pickup_location", e.target.value)} placeholder="e.g. Treasurer's Office, Municipal Hall" /><Err k="payment_pickup_location" /></div>
-          <div><Label>What students should bring / do</Label><Textarea rows={2} maxLength={500} value={draft.payment_pickup_instructions} onChange={(e) => set("payment_pickup_instructions", e.target.value)} placeholder="e.g. Bring a valid ID and your approval notice." /><Err k="payment_pickup_instructions" /></div>
-          <p className="text-xs text-muted-foreground">Shown to students under &quot;Next payment&quot; on their Payments tab, along with the office hours.</p>
+          <div><Label>Where scholars collect payments</Label><Input maxLength={500} value={draft.payment_pickup_location} onChange={(e) => set("payment_pickup_location", e.target.value)} placeholder="e.g. Treasurer's Office, Municipal Hall" /><Err k="payment_pickup_location" /></div>
+          <div><Label>What scholars should bring / do</Label><Textarea rows={2} maxLength={500} value={draft.payment_pickup_instructions} onChange={(e) => set("payment_pickup_instructions", e.target.value)} placeholder="e.g. Bring a valid ID and your approval notice." /><Err k="payment_pickup_instructions" /></div>
+          <p className="text-xs text-muted-foreground">Shown to scholars under &quot;Next payment&quot; on their Payments tab, along with the office hours.</p>
           <SaveBar id="disbursement" keys={["default_payment_method", "default_payment_lead_days", "payment_pickup_location", "payment_pickup_instructions"]} />
         </CardContent>
       </Card>
@@ -265,10 +265,10 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
         <CardContent className="space-y-3">
           <div><Label>Max upload size for documents and receipts (MB)</Label><Input type="number" min={1} max={25} value={draft.max_upload_mb} onChange={(e) => set("max_upload_mb", e.target.value as unknown as number)} /><Err k="max_upload_mb" /></div>
           <div className="flex items-center justify-between">
-            <div><p className="text-sm font-medium">Maintenance mode</p><p className="text-xs text-muted-foreground">Blocks student applications and document uploads. Admins are not affected.</p></div>
+            <div><p className="text-sm font-medium">Maintenance mode</p><p className="text-xs text-muted-foreground">Blocks scholar applications and document uploads. Admins are not affected.</p></div>
             <Switch checked={draft.maintenance_mode} onCheckedChange={(v) => set("maintenance_mode", v)} />
           </div>
-          <div><Label>Message shown to students</Label><Textarea rows={2} maxLength={300} value={draft.maintenance_message} onChange={(e) => set("maintenance_message", e.target.value)} /></div>
+          <div><Label>Message shown to scholars</Label><Textarea rows={2} maxLength={300} value={draft.maintenance_message} onChange={(e) => set("maintenance_message", e.target.value)} /></div>
           <SaveBar id="maintenance" keys={["max_upload_mb", "maintenance_mode", "maintenance_message"]} />
         </CardContent>
       </Card>
