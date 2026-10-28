@@ -17,11 +17,7 @@ import { RELEASE_SCHEDULES, asMonths, asSchedule, yearlyAward } from "@/lib/rele
 import { pesoFixed } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { OFFICE_FULL_NAME, STAFF_OFFICES, isOffice, type StaffOffice } from "@/lib/permissions";
-
-/** The name a new program of an office starts with (it can be changed). */
-const OFFICE_DEFAULT_NAME: Partial<Record<StaffOffice, string>> = { barangay_affairs: "Financial Assistance" };
-const defaultNameFor = (office: string | null | undefined) => (isOffice(office) ? OFFICE_DEFAULT_NAME[office] : undefined);
+import { OFFICE_FULL_NAME, STAFF_OFFICES, isOffice } from "@/lib/permissions";
 
 type Props = {
   cur: Tables<"scholarships"> | null;
@@ -103,14 +99,6 @@ export function ScholarshipFormFields({
   cur, yearLevels, setYearLevels, barangays, setBarangays, barangaySearch, setBarangaySearch, active, setActive, committedNote, office, nameSuggestions = [],
 }: Props) {
   const [programOffice, setProgramOffice] = useState<string>(cur?.office ?? "");
-  // A new program starts with its office's default name; picking another office swaps it unless it was edited.
-  const [name, setName] = useState(cur?.name ?? defaultNameFor(isOffice(office) ? office : "") ?? "");
-  const pickOffice = (v: string) => {
-    if (!cur && (name.trim() === "" || Object.values(OFFICE_DEFAULT_NAME).includes(name))) setName(defaultNameFor(v) ?? "");
-    setProgramOffice(v);
-  };
-  const defaultName = defaultNameFor(isOffice(office) ? office : programOffice);
-  const suggestions = [...new Set([...(defaultName ? [defaultName] : []), ...nameSuggestions])];
   // The form remounts per program (it's keyed by id), so this starts from the program's schedule.
   const [schedule, setSchedule] = useState(asSchedule(cur?.release_schedule));
   const [months, setMonths] = useState(String(asMonths(cur?.release_months)));
@@ -125,16 +113,16 @@ export function ScholarshipFormFields({
       <Section title="Program">
         <div className={cn("grid gap-4", office && "sm:grid-cols-[minmax(0,1fr)_16rem]")}>
           <Field label="Name" htmlFor="sch-name">
-            <Input id="sch-name" name="name" required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Academic Excellence Scholarship"
-              list={!cur && suggestions.length ? "sch-name-suggestions" : undefined} autoComplete="off" />
-            {!cur && suggestions.length > 0 && (
-              <datalist id="sch-name-suggestions">{suggestions.map((n) => <option key={n} value={n} />)}</datalist>
+            <Input id="sch-name" name="name" required defaultValue={cur?.name ?? ""} placeholder="e.g. Academic Excellence Scholarship"
+              list={!cur && nameSuggestions.length ? "sch-name-suggestions" : undefined} autoComplete="off" />
+            {!cur && nameSuggestions.length > 0 && (
+              <datalist id="sch-name-suggestions">{nameSuggestions.map((n) => <option key={n} value={n} />)}</datalist>
             )}
           </Field>
           {office === "choose" && (
             <Field label="Office" hint="Its staff handle the program's applicants and payments">
               <input type="hidden" name="office" value={programOffice} />
-              <Select value={programOffice || "none"} onValueChange={(v) => pickOffice(v === "none" ? "" : v)}>
+              <Select value={programOffice || "none"} onValueChange={(v) => setProgramOffice(v === "none" ? "" : v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Mayor Office</SelectItem>
