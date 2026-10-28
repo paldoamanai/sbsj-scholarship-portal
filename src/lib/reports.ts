@@ -46,7 +46,7 @@ export const ALL_FILTERS: ReportFilters = {
   auditAction: "all", auditEntity: "all", auditUser: "all",
 };
 
-export type ReportKey = "scholars" | "budget" | "funds" | "disbursements" | "balances" | "statistics" | "grades" | "operations" | "history" | "audit";
+export type ReportKey = "scholars" | "budget" | "funds" | "disbursements" | "balances" | "statistics" | "operations" | "history" | "audit";
 export type ReportFilterKey = "period" | "program" | "term" | "payStatus" | "student" | "audit";
 export const FILTER_LABEL: Record<ReportFilterKey, string> = { period: "Period", program: "Program", term: "Academic year", payStatus: "Payment status", student: "Student", audit: "Action, record type & user" };
 
@@ -58,13 +58,12 @@ export const REPORT_FILTERS: Record<ReportKey, ReportFilterKey[]> = {
   disbursements: ["period", "program", "term", "payStatus"],
   balances: ["program", "term"],
   statistics: ["period", "program", "term"],
-  grades: ["period", "program"],
   operations: ["period"],
   history: ["student"],
   audit: ["period", "audit"],
 };
 /** Wide reports print landscape. */
-export const LANDSCAPE: ReportKey[] = ["scholars", "budget", "disbursements", "balances", "grades", "operations", "history", "audit"];
+export const LANDSCAPE: ReportKey[] = ["scholars", "budget", "disbursements", "balances", "operations", "history", "audit"];
 
 // ── Small helpers ──
 export const formatPHP = pesoFixed;
@@ -563,33 +562,6 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
           money: ["Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled"],
           totals: ["Scholars", "Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled"],
         },
-      ],
-    };
-  }
-
-  if (key === "grades") {
-    const scholars = data.applications.filter((a) => a.status === "Approved" && s.progOk(a.scholarship_id));
-    const scholarIds = new Set(scholars.map((a) => a.user_id));
-    const subs = data.gradeUpdates.filter((g) => s.within(g.created_at) && (f.program === "all" || scholarIds.has(g.user_id)));
-    const programOfUser = (uid: string) => scholars.filter((a) => a.user_id === uid).map((a) => a.scholarships?.name).filter(Boolean).join(", ") || "—";
-    const required = (a: ReportApp) => Number(data.scholarships.find((sc) => sc.id === a.scholarship_id)?.min_grade ?? data.minGrade);
-    const current = (uid: string) => s.profById.get(uid)?.average_grade ?? null;
-    const below = scholars.filter((a) => { const g = current(a.user_id); return g === null || Number(g) < required(a); });
-    const byProgram = data.scholarships.filter((sc) => s.progOk(sc.id)).map((sc) => {
-      const l = scholars.filter((a) => a.scholarship_id === sc.id);
-      const grades = l.map((a) => current(a.user_id)).filter((g): g is number => g !== null).map(Number);
-      const avg = mean(grades);
-      return [sc.name, l.length, grades.length, avg === null ? "—" : avg.toFixed(2), grades.length ? Math.min(...grades) : "—", below.filter((a) => a.scholarship_id === sc.id).length];
-    }).filter((r) => (r[1] as number) > 0);
-    const statusCounts = ["Pending", "Approved", "Disapproved"].map((st) => [st, subs.filter((g) => g.status === st).length]);
-    return {
-      title: "Grades & Retention", filters, count: subs.length + scholars.length, countLabel: "records",
-      notes: ["Current grade is the scholar's verified average on file. The required grade is the program minimum, or the portal minimum when the program has none."],
-      sections: [
-        { name: "Average Grade by Program", head: ["Scholarship", "Scholars", "With Grade", "Average", "Lowest", "Below Minimum"], rows: byProgram, totals: ["Scholars", "With Grade", "Below Minimum"] },
-        { name: "Scholars Below Minimum", head: ["Student", "Program", "Current Grade", "Required", "Grade Term"], rows: below.map((a) => [personName(a.profiles), a.scholarships?.name || "—", current(a.user_id) ?? "No grade on file", required(a), s.profById.get(a.user_id)?.grade_term || "—"]) },
-        { name: "Grade Submissions by Status", head: ["Status", "Submissions"], rows: statusCounts, totals: ["Submissions"] },
-        { name: "Grade Submissions", head: ["Student", "Program", "Term", "Grade", "Status", "Submitted", "Reviewed", "Note"], rows: subs.map((g) => [personName(s.profById.get(g.user_id)), programOfUser(g.user_id), g.term, Number(g.grade), g.status, fmtDate(g.created_at), fmtDate(g.reviewed_at), clip(g.review_note)]) },
       ],
     };
   }

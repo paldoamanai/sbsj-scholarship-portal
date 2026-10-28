@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import {
-  Users, Wallet, Banknote, BarChart3, ScrollText, FileDown, Eye, PiggyBank, GraduationCap, Activity, History, AlertTriangle, Loader2, CalendarClock,
+  Users, Wallet, Banknote, BarChart3, ScrollText, FileDown, Eye, PiggyBank, Activity, History, AlertTriangle, Loader2, CalendarClock,
 } from "@/components/icons";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,7 +35,6 @@ const REPORTS: { key: ReportKey; title: string; desc: string; icon: typeof Users
   { key: "disbursements", title: "Disbursement Summary", desc: "Every payment with its term, method, who disbursed it, the student's receipt reference number and its review, plus totals by program and status", icon: Banknote },
   { key: "balances", title: "Schedule of Remaining Balance Disbursement", desc: "Each scholar's yearly award, amount disbursed and remaining balance, the payouts already scheduled by date, and the periods still to schedule, plus totals by program", icon: CalendarClock },
   { key: "statistics", title: "Applicant Statistics", desc: "Applications, unique applicants and approval rates by program, month, term, type, sex, age, civil status, year level, grade, school, course, location, income and household size", icon: BarChart3 },
-  { key: "grades", title: "Grades & Retention", desc: "Grade submissions, average grade per program and scholars below the minimum", icon: GraduationCap },
   { key: "operations", title: "Operations Report", desc: "Decision and payout turnaround, payment problems, receipt confirmations, missing documents and data requests", icon: Activity },
   { key: "history", title: "Scholar History", desc: "One student's profile, applications, payments, grades and payment problems", icon: History },
   { key: "audit", title: "Audit Trail", desc: "Recorded admin and student actions with who did it, their role, the record in words, changed fields, IP address and device, plus counts by action and user", icon: ScrollText },
