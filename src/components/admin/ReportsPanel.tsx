@@ -42,7 +42,7 @@ const REPORTS: { key: ReportKey; title: string; desc: string; icon: typeof Users
 ];
 
 type Props = {
-  data: Omit<ReportData, "auditLogs" | "auditTruncated" | "requiredDocuments" | "minGrade">;
+  data: Omit<ReportData, "auditLogs" | "auditTruncated" | "requiredDocuments" | "minGrade" | "currentYear">;
   settings: AppSettings;
   adminEmail: string;
   // Period is shared with Fund Management.
@@ -142,8 +142,8 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
 
   const reportData: ReportData = useMemo(() => ({
     ...data, auditLogs, auditTruncated,
-    requiredDocuments: settings.required_documents, minGrade: Number(settings.min_grade_requirement),
-  }), [data, auditLogs, auditTruncated, settings.required_documents, settings.min_grade_requirement]);
+    requiredDocuments: settings.required_documents, minGrade: Number(settings.min_grade_requirement), currentYear: settings.academic_year,
+  }), [data, auditLogs, auditTruncated, settings.required_documents, settings.min_grade_requirement, settings.academic_year]);
   const filters: ReportFilters = { ...ALL_FILTERS, period, from: fromDate, to: toDate, program, payStatus, academicYear, student, auditAction, auditEntity, auditUser };
 
   const defs = useMemo(() => Object.fromEntries(REPORTS.map((r) => {

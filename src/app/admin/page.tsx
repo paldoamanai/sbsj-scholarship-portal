@@ -1396,6 +1396,7 @@ function AdminDashboard() {
   const reportData = (): ReportData => ({
     applications, scholarships, profiles, staff, payments, auditLogs, payIssues, gradeUpdates: gradeReviews, dataRequests: dataReqs, documents: allDocs,
     requiredDocuments: parseSettings(systemSettings).required_documents, minGrade: Number(parseSettings(systemSettings).min_grade_requirement),
+    currentYear: currentAY,
   });
   const exportOpts = (landscape = false) => {
     const s = parseSettings(systemSettings);

@@ -29,6 +29,8 @@ export type ReportData = {
   documents: DocSummary[];
   requiredDocuments: string[];
   minGrade: number;
+  /** The academic year in the settings; an active program's budget counts for it. */
+  currentYear: string;
 };
 
 export type ReportFilters = {
@@ -252,7 +254,12 @@ export function budgetRows(data: ReportData, f: ReportFilters) {
     const approved = data.applications.filter((a) => a.scholarship_id === sc.id && a.status === "Approved" && s.appOk(a));
     const disbursed = sum(list.filter((p) => p.status === "Disbursed"));
     const queued = sum(list.filter((p) => p.status === "Pending" || p.status === "Processing"));
-    const budget = Number(sc.total_budget || 0);
+    // Budgets are per academic year: a program's counts once for each year it had applications (and for
+    // the current year while it's active), within the academic year filter.
+    const years = new Set(data.applications.filter((a) => a.scholarship_id === sc.id && a.academic_year).map((a) => a.academic_year as string));
+    if (sc.is_active) years.add(data.currentYear);
+    if (years.size === 0) years.add(data.currentYear);
+    const budget = Number(sc.total_budget || 0) * (f.academicYear !== "all" ? (years.has(f.academicYear) ? 1 : 0) : years.size);
     return {
       id: sc.id, name: sc.name, budget, slots: Number(sc.slots || 0), approved: approved.length,
       committed: approved.reduce((t, a) => t + s.appAward(a), 0),
@@ -412,7 +419,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
     const cancelled = pays.filter((p) => p.status === "Cancelled");
     return {
       title: "Fund Utilization Report", filters, count: byProgram.length, countLabel: "programs",
-      notes: ["Budget and Remaining are each program's total budget; disbursed and queued amounts follow the period. Payments fall in the period by disbursed date, else scheduled date, else the date created."],
+      notes: ["Budget is per academic year: each program's budget counts once for every academic year it ran in (within the academic year filter); disbursed and queued amounts follow the period. Payments fall in the period by disbursed date, else scheduled date, else the date created."],
       sections: [
         {
           name: "Budget Utilization",
