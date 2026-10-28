@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import {
-  Users, Wallet, Banknote, BarChart3, ScrollText, FileDown, Eye, PiggyBank, GraduationCap, Activity, History, AlertTriangle, Loader2,
+  Users, Wallet, Banknote, BarChart3, ScrollText, FileDown, Eye, PiggyBank, GraduationCap, Activity, History, AlertTriangle, Loader2, CalendarClock,
 } from "@/components/icons";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { AppDialog } from "@/components/AppDialog";
 import { ChartCard, RankedBars } from "@/components/admin/OverviewPanel";
 import { createClient } from "@/lib/supabase/client";
-import { SEMESTERS, type AppSettings } from "@/lib/settings";
+import type { AppSettings } from "@/lib/settings";
 import {
   ALL_FILTERS, FILTER_LABEL, LANDSCAPE, REPORT_FILTERS, applicationGroups, auditContext, budgetRows, buildReport, formatPHP, getRange,
   incomeBracket, monthlyDisbursed, periodLabel, personName, renderExcel, renderPDF, totalsRow, turnaround,
@@ -33,6 +33,7 @@ const REPORTS: { key: ReportKey; title: string; desc: string; icon: typeof Users
   { key: "budget", title: "Budget vs. Utilization", desc: "Each program's budget against committed, disbursed and queued funds, plus slots filled", icon: PiggyBank },
   { key: "funds", title: "Fund Utilization Report", desc: "Budget used and remaining, payment pipeline, funds by program, month, term and method, and cancelled payments with who cancelled them", icon: Wallet },
   { key: "disbursements", title: "Disbursement Summary", desc: "Every payment with its term, method, who disbursed it, the student's receipt reference number and its review, plus totals by program and status", icon: Banknote },
+  { key: "balances", title: "Schedule of Remaining Balance Disbursement", desc: "Each scholar's yearly award, amount disbursed and remaining balance, the payouts already scheduled by date, and the periods still to schedule, plus totals by program", icon: CalendarClock },
   { key: "statistics", title: "Applicant Statistics", desc: "Applications, unique applicants and approval rates by program, month, term, type, sex, age, civil status, year level, grade, school, course, location, income and household size", icon: BarChart3 },
   { key: "grades", title: "Grades & Retention", desc: "Grade submissions, average grade per program and scholars below the minimum", icon: GraduationCap },
   { key: "operations", title: "Operations Report", desc: "Decision and payout turnaround, payment problems, receipt confirmations, missing documents and data requests", icon: Activity },
@@ -102,7 +103,6 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
   const [program, setProgram] = useState("all");
   const [payStatus, setPayStatus] = useState("all");
   const [academicYear, setAcademicYear] = useState("all");
-  const [semester, setSemester] = useState("all");
   const [student, setStudent] = useState("");
   const [auditAction, setAuditAction] = useState("all");
   const [auditEntity, setAuditEntity] = useState("all");
@@ -144,7 +144,7 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
     ...data, auditLogs, auditTruncated,
     requiredDocuments: settings.required_documents, minGrade: Number(settings.min_grade_requirement),
   }), [data, auditLogs, auditTruncated, settings.required_documents, settings.min_grade_requirement]);
-  const filters: ReportFilters = { ...ALL_FILTERS, period, from: fromDate, to: toDate, program, payStatus, academicYear, semester, student, auditAction, auditEntity, auditUser };
+  const filters: ReportFilters = { ...ALL_FILTERS, period, from: fromDate, to: toDate, program, payStatus, academicYear, student, auditAction, auditEntity, auditUser };
 
   const defs = useMemo(() => Object.fromEntries(REPORTS.map((r) => {
     const def = buildReport(r.key, reportData, filters);
@@ -152,7 +152,7 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
     return [r.key, office && r.key !== "audit" ? { ...def, filters: [`Office: ${office}`, ...def.filters] } : def];
   })) as Record<ReportKey, ReturnType<typeof buildReport>>,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [reportData, period, fromDate, toDate, program, payStatus, academicYear, semester, student, auditAction, auditEntity, auditUser, office]);
+    [reportData, period, fromDate, toDate, program, payStatus, academicYear, student, auditAction, auditEntity, auditUser, office]);
 
   // Choices for the audit filters, from the entries loaded for the period.
   const auditChoices = useMemo(() => {
@@ -189,7 +189,7 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
       t: turnaround(reportData, filters),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reportData, period, fromDate, toDate, program, academicYear, semester]);
+  }, [reportData, period, fromDate, toDate, program, academicYear]);
 
   const exportOpts = (key: ReportKey) => ({
     landscape: LANDSCAPE.includes(key), generatedBy: adminEmail, programName: settings.program_name,
@@ -210,7 +210,7 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
   };
 
   const cell = (sec: ReportSection, c: string | number, i: number) => (sec.money?.includes(sec.head[i]) && typeof c === "number" ? formatPHP(c) : String(c));
-  const scopeText = `${office ? `${office} · ` : ""}${periodLabel(filters)}${program === "all" ? "" : ` · ${data.scholarships.find((s) => s.id === program)?.name ?? ""}`}${academicYear === "all" ? "" : ` · AY ${academicYear}`}${semester === "all" ? "" : ` · ${semester}`}`;
+  const scopeText = `${office ? `${office} · ` : ""}${periodLabel(filters)}${program === "all" ? "" : ` · ${data.scholarships.find((s) => s.id === program)?.name ?? ""}`}${academicYear === "all" ? "" : ` · AY ${academicYear}`}`;
   const noSignatories = !settings.report_prepared_by && !settings.report_approved_by;
   const remaining = analytics.totalBudget - analytics.disbursed - analytics.queued;
 
@@ -255,16 +255,6 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
               <SelectContent>
                 <SelectItem value="all">All years</SelectItem>
                 {academicYears.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-xs">Semester</Label>
-            <Select value={semester} onValueChange={setSemester}>
-              <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All semesters</SelectItem>
-                {SEMESTERS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

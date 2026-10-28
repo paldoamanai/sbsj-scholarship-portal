@@ -64,7 +64,6 @@ export default function AdminProfilePanel({ profile, email, userId, role, office
     const err = await uploadAvatar(supabase, userId, file);
     setPhotoBusy(false);
     if (err) { toast.error("Could not update photo", { description: err }); return; }
-    await logAudit("update_profile_photo", "profiles", userId);
     toast.success("Profile photo updated");
     onChanged();
   };
@@ -88,11 +87,9 @@ export default function AdminProfilePanel({ profile, email, userId, role, office
     }
     setInfoErrors({});
     setInfoBusy(true);
-    const prev = { first_name: profile?.first_name, last_name: profile?.last_name, phone: profile?.phone };
-    const { error } = await supabase.from("profiles").update(parsed.data).eq("id", userId);
+    const { data: rows, error } = await supabase.from("profiles").update(parsed.data).eq("id", userId).select("id");
     setInfoBusy(false);
-    if (error) { toast.error("Could not save profile", { description: error.message }); return; }
-    await logAudit("update_profile", "profiles", userId, prev, parsed.data);
+    if (error || !rows?.length) { toast.error("Could not save profile", { description: error?.message ?? "Nothing was changed. Refresh and try again." }); return; }
     toast.success("Profile updated");
     onChanged();
   };

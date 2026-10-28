@@ -59,6 +59,7 @@ import { MoneyInput } from "@/components/MoneyInput";
 import type { Tables, Json } from "@/integrations/supabase/types";
 import DashboardSkeleton from "@/components/DashboardSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
+import { fetchAll } from "@/lib/fetch-all";
 
 // The house map only loads in the browser, and only when a pinned house is shown.
 const HouseMap = dynamic(() => import("@/components/student/HouseMap"), {
@@ -153,6 +154,9 @@ function AdminDashboard() {
   // Deleting a program is permanent, so the super admin types its name to confirm.
   const [deleteSchText, setDeleteSchText] = useState("");
   const [deletingSch, setDeletingSch] = useState(false);
+  // Guards against a double click saving twice (two programs, two payments).
+  const [savingSch, setSavingSch] = useState(false);
+  const [savingPay, setSavingPay] = useState(false);
   const [fundPeriod, setFundPeriod] = useState("all"); // shared by Fund Management and Reports
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -314,7 +318,11 @@ function AdminDashboard() {
       };
     }).filter((r) => r.programs > 0);
   }, [myOffice, officesReady, allScholarships, allApplications, allPayments]);
-  const canSee = (key: string) => (key === "staff" ? can.super || !!managedOffice : !(hiddenSections[adminRole] ?? []).includes(key));
+  // Students' house pins and the Home Visits map are for MSWDO staff only.
+  const mapAccess = myOffice === "mswdo";
+  const canSee = (key: string) => (key === "staff" ? can.super || !!managedOffice
+    : key === "visits" ? mapAccess
+    : !(hiddenSections[adminRole] ?? []).includes(key));
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -336,6 +344,8 @@ function AdminDashboard() {
   const [disbMethod, setDisbMethod] = useState<"Cheque" | "Cash">("Cash");
   const [disbRef, setDisbRef] = useState("");
   const [disbReceipt, setDisbReceipt] = useState<File | null>(null);
+  // A stored receipt being viewed: its signed link and whether it's an image or a PDF (shown in the page).
+  const [fileView, setFileView] = useState<{ title: string; url: string; kind: "image" | "pdf" | "other" } | null>(null);
   // Portal-issued receipt numbers (staff-only): printed on the acknowledgment slip, typed back by the student.
   const [receiptNos, setReceiptNos] = useState<Record<string, string>>({});
   const [disbLoading, setDisbLoading] = useState(false);
@@ -365,6 +375,13 @@ function AdminDashboard() {
     return apps.map((a) => ({ ...a, profiles: byId.get(a.user_id) ?? null }));
   };
 
+  // The tables that grow with every applicant, read in full (ordered by id as well, so pages don't overlap).
+  const fetchAllApps = () => fetchAll((f, t) => supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }).order("id").range(f, t));
+  const fetchAllPayments = () => fetchAll((f, t) => supabase.from("payments").select("*").order("created_at", { ascending: false }).order("id").range(f, t));
+  const fetchAllProfiles = () => fetchAll((f, t) => supabase.from("profiles").select("*").order("id").range(f, t));
+  const fetchAllDocs = () => fetchAll((f, t) => supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at").order("id").range(f, t));
+  const fetchAllReceiptNos = () => fetchAll((f, t) => supabase.from("payment_receipt_numbers").select("payment_id, receipt_no").order("payment_id").range(f, t));
+
   const loadData = async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
     // The middleware has already verified the session for /admin, so read it locally instead of
@@ -382,20 +399,20 @@ function AdminDashboard() {
       supabase.from("user_roles").select("*").eq("user_id", user.id).single(),
       supabase.rpc("can_manage_settings", { _user_id: user.id }),
       staffRoles(),
-      supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
+      fetchAllApps(),
       supabase.from("scholarships").select("*").order("created_at", { ascending: false }),
-      supabase.from("profiles").select("*"),
-      supabase.from("payments").select("*").order("created_at", { ascending: false }),
+      fetchAllProfiles(),
+      fetchAllPayments(),
       supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(1000),
       supabase.from("system_settings").select("*"),
       supabase.from("profiles").select("*").eq("id", user.id).single(),
       supabase.from("notifications").select("*").eq("user_id", user.id).eq("muted", false).order("created_at", { ascending: false }).limit(NOTIFICATION_PAGE),
       supabase.from("notifications").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("muted", false).eq("read", false),
-      supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at"),
-      supabase.from("payment_issues").select("*").order("created_at", { ascending: false }),
-      supabase.from("grade_updates").select("*").order("created_at", { ascending: false }),
+      fetchAllDocs(),
+      fetchAll((f, t) => supabase.from("payment_issues").select("*").order("created_at", { ascending: false }).order("id").range(f, t)),
+      fetchAll((f, t) => supabase.from("grade_updates").select("*").order("created_at", { ascending: false }).order("id").range(f, t)),
       supabase.from("data_requests").select("*").order("created_at", { ascending: false }),
-      supabase.from("payment_receipt_numbers").select("payment_id, receipt_no"),
+      fetchAllReceiptNos(),
     ]);
 
     const role = (roleRes.data as { role?: string } | null)?.role;
@@ -429,11 +446,7 @@ function AdminDashboard() {
   // used when a live change comes in over realtime.
   const silentRefreshAdmin = async () => {
     const [appsRes, paymentsRes, profilesRes, docsRes, receiptNosRes] = await Promise.all([
-      supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }),
-      supabase.from("payments").select("*").order("created_at", { ascending: false }),
-      supabase.from("profiles").select("*"),
-      supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at"),
-      supabase.from("payment_receipt_numbers").select("payment_id, receipt_no"),
+      fetchAllApps(), fetchAllPayments(), fetchAllProfiles(), fetchAllDocs(), fetchAllReceiptNos(),
     ]);
     if (receiptNosRes.data) setReceiptNos(Object.fromEntries(receiptNosRes.data.map((r) => [r.payment_id, r.receipt_no])));
     if (docsRes.data) setAllDocs(docsRes.data);
@@ -457,6 +470,9 @@ function AdminDashboard() {
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "applications" }, () => silentRefreshAdmin())
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "payments" }, () => silentRefreshAdmin())
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "payments" }, () => silentRefreshAdmin())
+      // A program deleted elsewhere takes its applications and payments with it.
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "applications" }, () => silentRefreshAdmin())
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "payments" }, () => silentRefreshAdmin())
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "profiles" },
@@ -590,13 +606,13 @@ function AdminDashboard() {
   // Where the student has pinned their house before (migration 076; empty before it runs).
   useEffect(() => {
     setPinHistory([]);
-    if (!viewApp) return;
+    if (!viewApp || !mapAccess) return;
     let cancelled = false;
     supabase.from("home_location_history").select("*").eq("user_id", viewApp.user_id).order("changed_at", { ascending: false }).limit(10)
       .then(({ data }) => { if (!cancelled) setPinHistory(data ?? []); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewApp?.id, viewApp?.user_id]);
+  }, [viewApp?.id, viewApp?.user_id, mapAccess]);
 
   // Documents: loaded on open and re-read (without a loading state) when a document changes.
   useEffect(() => {
@@ -620,7 +636,9 @@ function AdminDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewStudent?.id, docsVersion]);
 
-  const isClosed = (sch: Tables<"scholarships">) => !!sch.deadline && sch.deadline < new Date().toISOString().slice(0, 10);
+  // Today's date where the admin is (Philippine time), not UTC's, which is still yesterday until 8 AM.
+  const localDate = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const isClosed = (sch: Tables<"scholarships">) => !!sch.deadline && sch.deadline < localDate();
   // Slots and budgets are per academic year: they count that year's approvals (the current one by default).
   const currentAY = parseSettings(systemSettings).academic_year;
   const approvedCount = (schId: string, ay = currentAY) => applications.filter((a) => a.scholarship_id === schId && a.status === "Approved" && a.academic_year === ay).length;
@@ -631,7 +649,6 @@ function AdminDashboard() {
   // How an application's award is released, and which of its terms have no payment yet.
   const scheduleOf = (a: { scholarship_id: string | null }) => asSchedule(scholarships.find((x) => x.id === a.scholarship_id)?.release_schedule);
   const monthsOf = (a: { scholarship_id: string | null }) => asMonths(scholarships.find((x) => x.id === a.scholarship_id)?.release_months);
-  const termsOf = (a: { scholarship_id: string | null }) => termsFor(scheduleOf(a), monthsOf(a));
   const awardOf = (a: { scholarship_id: string | null; amount_approved: number | null }) =>
     Number(a.amount_approved ?? scholarships.find((x) => x.id === a.scholarship_id)?.amount ?? 0);
   const paymentsOf = (appId: string) => payments.filter((p) => p.application_id === appId);
@@ -653,13 +670,14 @@ function AdminDashboard() {
     const min = a.is_renewal && s.renewal_enabled ? s.renewal_min_grade : Math.max(Number(program?.min_grade ?? 0), s.min_grade_requirement);
     return secondSemesterGradeWarning(profiles.find((x) => x.id === a.user_id), a.academic_year, min);
   };
-  // The first open term of an application, preferring the semester set in Settings.
+  // The term a new payment is for: the first open one (the next month for a monthly program), preferring
+  // the semester set in Settings. null when every term already has a payment.
   const defaultTermFor = (appId: string): PaymentTerm | null => {
     const a = applications.find((x) => x.id === appId);
     if (!a) return null;
     const open = openTermsOf(a);
     const sem = parseSettings(systemSettings).current_semester as PaymentTerm;
-    return open.includes(sem) ? sem : open[0] ?? termsOf(a)[0];
+    return open.includes(sem) ? sem : open[0] ?? null;
   };
   // Periods the bulk dialog offers: both semesters, then every month a monthly program pays.
   const bulkTerms: PaymentTerm[] = [...termsFor("semester"), ...termsFor("monthly", 12)];
@@ -677,10 +695,9 @@ function AdminDashboard() {
       scheduled_date: bulkDate || null, status: "Pending",
     }));
     setBulkPayBusy(true);
-    const { data, error } = await supabase.from("payments").insert(rows).select("id");
+    const { error } = await supabase.from("payments").insert(rows);
     setBulkPayBusy(false);
     if (error) { toast.error("Couldn't schedule the payments", { description: error.message }); return; }
-    await logAudit("bulk_schedule_payments", "payments", undefined, null, { term: bulkTerm, academic_year: currentAY, count: rows.length, payment_ids: (data ?? []).map((d) => d.id) });
     toast.success(`Scheduled ${rows.length} ${bulkTerm} payment${rows.length === 1 ? "" : "s"}`);
     setBulkOpen(false); loadData();
   };
@@ -694,8 +711,13 @@ function AdminDashboard() {
     return true;
   });
 
+  // Row-level security skips rows the account may not change without an error, so an update that
+  // matched nothing has to be caught by counting the rows it returned.
+  const NOT_SAVED = "Nothing was changed: your account may not edit this record, or it was deleted. Refresh and try again.";
+
   const saveScholarship = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (savingSch) return;
     const fd = new FormData(e.currentTarget);
     const text = (k: string) => String(fd.get(k) ?? "");
     const num = (k: string) => (text(k).trim() === "" ? 0 : Number(text(k)));
@@ -713,7 +735,7 @@ function AdminDashboard() {
     // Office staff's programs always belong to their office (the database sets it); the rest pick one.
     const payload = { ...parsed.data, ...(fd.has("office") ? { office: text("office") || null } : {}) };
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDate();
     if (payload.deadline && payload.deadline < today && (!editing || payload.deadline !== editing.deadline)) {
       toast.error("The deadline cannot be in the past"); return;
     }
@@ -728,20 +750,22 @@ function AdminDashboard() {
     const saveError = (error: { message: string }) => error.message.includes("scholarships_release_schedule_check")
       ? toast.error("The database doesn't support this release schedule yet", { description: "Run migration 069_one_time_release.sql in the Supabase SQL Editor, then save again." })
       : toast.error(error.message);
-    if (editing) {
-      const { error } = await supabase.from("scholarships").update(payload).eq("id", editing.id);
-      if (error) { saveError(error); return; }
-      // Log every field that can change, not just a few.
-      const before = Object.fromEntries(Object.keys(payload).map((k) => [k, editing[k as keyof typeof editing] ?? null]));
-      await logAudit("update_scholarship", "scholarships", editing.id, before as Json, payload as unknown as Json);
-      toast.success("Scholarship updated");
-    } else {
-      const { data, error } = await supabase.from("scholarships").insert(payload).select().single();
-      if (error) { saveError(error); return; }
-      await logAudit("create_scholarship", "scholarships", data.id, null, payload as unknown as Json);
-      toast.success("Scholarship added");
+    setSavingSch(true);
+    try {
+      if (editing) {
+        const { data: rows, error } = await supabase.from("scholarships").update(payload).eq("id", editing.id).select("id");
+        if (error) { saveError(error); return; }
+        if (!rows?.length) { toast.error(NOT_SAVED); loadData(true); return; }
+        toast.success("Scholarship updated");
+      } else {
+        const { error } = await supabase.from("scholarships").insert(payload);
+        if (error) { saveError(error); return; }
+        toast.success("Scholarship added");
+      }
+      setSchDialog(null); loadData();
+    } finally {
+      setSavingSch(false);
     }
-    setSchDialog(null); loadData();
   };
 
   // Start next year's program from an existing one: same rules, disabled and undated until reviewed.
@@ -753,17 +777,16 @@ function AdminDashboard() {
       release_schedule: sch.release_schedule, release_months: sch.release_months,
       ...("office" in sch ? { office: sch.office } : {}),
     };
-    const { data, error } = await supabase.from("scholarships").insert(copy).select().single();
+    const { error } = await supabase.from("scholarships").insert(copy);
     if (error) { toast.error(error.message); return; }
-    await logAudit("duplicate_scholarship", "scholarships", data.id, { source: sch.id } as Json, copy as unknown as Json);
     toast.success(`Created "${copy.name}"`, { description: "It's disabled and has no dates yet. Edit it to set them and enable it." });
     loadData();
   };
 
   const toggleScholarship = async (sch: Tables<"scholarships">) => {
-    const { error } = await supabase.from("scholarships").update({ is_active: !sch.is_active }).eq("id", sch.id);
+    const { data: rows, error } = await supabase.from("scholarships").update({ is_active: !sch.is_active }).eq("id", sch.id).select("id");
     if (error) { toast.error(error.message); return; }
-    await logAudit(sch.is_active ? "disable_scholarship" : "enable_scholarship", "scholarships", sch.id, { is_active: sch.is_active }, { is_active: !sch.is_active });
+    if (!rows?.length) { toast.error(NOT_SAVED); loadData(true); return; }
     toast.success(`${sch.name} ${sch.is_active ? "disabled" : "enabled"}`); loadData();
   };
 
@@ -772,18 +795,28 @@ function AdminDashboard() {
   const confirmDeleteScholarship = async () => {
     if (!deleteSch || deletingSch) return;
     setDeletingSch(true);
-    // Removes the program with its applications, documents, notes and payments in one transaction.
+    // Removes the program with its applications, documents, notes, payments and notifications in one
+    // transaction, writes the audit entry, and returns the uploaded files nothing uses any more.
     const { data, error } = await supabase.rpc("delete_scholarship_cascade", { _scholarship_id: deleteSch.id });
-    setDeletingSch(false);
     if (error) {
+      setDeletingSch(false);
       toast.error("Could not delete", {
-        description: error.code === "PGRST202" ? "The database is missing delete_scholarship_cascade. Run migration 059 in Supabase." : error.message,
+        description: error.code === "PGRST202" ? "The database is missing delete_scholarship_cascade. Run migrations 059 and 079 in Supabase." : error.message,
       });
       return;
     }
-    const removed = (data ?? {}) as { applications?: number; payments?: number };
-    await logAudit("delete_scholarship", "scholarships", deleteSch.id, { name: deleteSch.name, applications: removed.applications ?? 0, payments: removed.payments ?? 0 }, null);
+    const removed = (data ?? {}) as { applications?: number; payments?: number; paths?: string[] };
+    // Before 079 the function neither wrote the audit entry nor returned the files.
+    if (!removed.paths) await logAudit("delete_scholarship", "scholarships", deleteSch.id, { name: deleteSch.name, applications: removed.applications ?? 0, payments: removed.payments ?? 0 }, null);
+    let filesLeft = 0;
+    for (let i = 0; i < (removed.paths?.length ?? 0); i += 100) {
+      const chunk = removed.paths!.slice(i, i + 100);
+      const { error: rmError } = await supabase.storage.from("documents").remove(chunk);
+      if (rmError) filesLeft += chunk.length;
+    }
+    setDeletingSch(false);
     toast.success("Scholarship deleted", removed.applications ? { description: `Also removed ${removed.applications} application${removed.applications === 1 ? "" : "s"} and ${removed.payments ?? 0} payment${removed.payments === 1 ? "" : "s"}.` } : undefined);
+    if (filesLeft) toast.warning(`${filesLeft} uploaded file${filesLeft === 1 ? " was" : "s were"} not removed from storage`, { description: "The records are gone; the files can be cleared from the Supabase Storage dashboard." });
     setDeleteSch(null); setDeleteSchText(""); loadData();
   };
 
@@ -811,6 +844,7 @@ function AdminDashboard() {
 
   const savePayment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (savingPay) return;
     const fd = new FormData(e.currentTarget);
     const amount = Number(fd.get("amount") || 0);
     if (!Number.isFinite(amount) || amount <= 0) { toast.error("Enter an amount greater than 0"); return; }
@@ -822,43 +856,55 @@ function AdminDashboard() {
       notes: String(fd.get("notes") || "").trim() || null,
       ...(payTerm ? { term: payTerm } : {}),
     };
-    if (payDialog && payDialog !== "new") {
-      const { error } = await supabase.from("payments").update(fields).eq("id", payDialog.id);
-      if (error) { toast.error(error.message); return; }
-      await logAudit("update_payment", "payments", payDialog.id, { amount: payDialog.amount, method: payDialog.method, reference: payDialog.reference, scheduled_date: payDialog.scheduled_date, term: payDialog.term }, fields);
-      toast.success("Payment updated");
-    } else {
-      const app = applications.find((a) => a.id === payAppId);
-      if (!app) { toast.error("Select an approved applicant"); return; }
-      const { data, error } = await supabase.from("payments").insert({ ...fields, application_id: app.id, user_id: app.user_id, status: "Pending" }).select().single();
-      if (error) { toast.error(error.message); return; }
-      await logAudit("create_payment", "payments", data.id, null, fields);
-      toast.success("Payment scheduled");
+    setSavingPay(true);
+    try {
+      if (payDialog && payDialog !== "new") {
+        const { data: rows, error } = await supabase.from("payments").update(fields).eq("id", payDialog.id).select("id");
+        if (error) { toast.error(error.message); return; }
+        if (!rows?.length) { toast.error(NOT_SAVED); loadData(true); return; }
+        toast.success("Payment updated");
+      } else {
+        const app = applications.find((a) => a.id === payAppId);
+        if (!app) { toast.error("Select an approved applicant"); return; }
+        const { error } = await supabase.from("payments").insert({ ...fields, application_id: app.id, user_id: app.user_id, status: "Pending" });
+        if (error) { toast.error(error.message); return; }
+        toast.success("Payment scheduled");
+      }
+      setPayDialog(null); loadData();
+    } finally {
+      setSavingPay(false);
     }
-    setPayDialog(null); loadData();
   };
 
   const setPaymentStatus = async (p: Tables<"payments">, status: "Processing" | "Cancelled", reason?: string) => {
+    if (savingPay) return false;
     const cancel_reason = status === "Cancelled" ? reason?.trim() || null : null;
-    const { error } = await supabase.from("payments").update(status === "Cancelled" ? { status, cancel_reason } : { status }).eq("id", p.id);
+    setSavingPay(true);
+    // Only from a status it can still leave, so a stale screen can't reopen a cancelled payment.
+    const { data: rows, error } = await supabase.from("payments").update(status === "Cancelled" ? { status, cancel_reason } : { status })
+      .eq("id", p.id).in("status", status === "Cancelled" ? ["Pending", "Processing"] : ["Pending"]).select("id");
+    setSavingPay(false);
     if (error) { toast.error(error.message); return false; }
-    await logAudit(status === "Cancelled" ? "cancel_payment" : "process_payment", "payments", p.id, { status: p.status }, { status, ...(cancel_reason ? { cancel_reason } : {}) });
+    if (!rows?.length) { toast.error("This payment was changed elsewhere. The list has been refreshed."); loadData(true); return false; }
     toast.success(status === "Cancelled" ? "Payment cancelled" : "Marked as processing");
     loadData();
     return true;
   };
 
-  const openStoredFile = async (path: string | null, missingMsg: string) => {
+  // Shown in a dialog rather than a new tab: opening a blank tab and pointing it at the file once the link
+  // was signed got blocked or left an empty tab in some browsers.
+  const openStoredFile = async (path: string | null, missingMsg: string, title = "Receipt") => {
     if (!path) { toast.error(missingMsg); return; }
-    const win = window.open("", "_blank");
     const { data, error } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
-    if (error || !data?.signedUrl) { win?.close(); toast.error("Could not open receipt", { description: error?.message }); return; }
-    if (win) win.location.href = data.signedUrl; else window.location.href = data.signedUrl;
+    if (error || !data?.signedUrl) { toast.error("Could not open the file", { description: error?.message ?? "The file wasn't found in storage." }); return; }
+    const ext = path.split(".").pop()?.toLowerCase() ?? "";
+    const kind = ["jpg", "jpeg", "png", "gif", "webp"].includes(ext) ? "image" : ext === "pdf" ? "pdf" : "other";
+    setFileView({ title, url: data.signedUrl, kind });
   };
-  const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment");
+  const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment", `Disbursement receipt · ${payStudent(p)}`);
   // Compare reference numbers the way people type them: case, spaces and dashes don't matter.
   const refKey = (r: string) => r.toUpperCase().replace(/[\s\-_./#]/g, "");
-  const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The student hasn't submitted a receipt");
+  const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The student hasn't submitted a receipt", `Student's receipt · ${payStudent(p)}`);
   // Office + student copy of the acknowledgment slip, for the student to sign when the money is released.
   const printSlip = (p: Tables<"payments">, method = p.method, reference = p.reference) => {
     const receiptNo = receiptNos[p.id];
@@ -931,13 +977,13 @@ function AdminDashboard() {
       const { error: uploadError } = await supabase.storage.from("documents").upload(path, disbReceipt);
       if (uploadError) { toast.error("Receipt upload failed", { description: uploadError.message }); return; }
       const update = { status: "Disbursed", method: disbMethod, reference: disbRef.trim() || null, receipt_path: path, disbursed_at: new Date().toISOString() };
-      const { error } = await supabase.from("payments").update(update).eq("id", payment.id);
-      if (error) {
+      const { data: rows, error } = await supabase.from("payments").update(update).eq("id", payment.id).neq("status", "Disbursed").select("id");
+      if (error || !rows?.length) {
         await supabase.storage.from("documents").remove([path]);
-        toast.error(error.message);
+        toast.error(error?.message ?? "This payment was already disbursed or changed elsewhere. The list has been refreshed.");
+        if (!error) loadData(true);
         return;
       }
-      await logAudit("disburse_payment", "payments", payment.id, { status: payment.status }, { status: "Disbursed", method: disbMethod, reference: update.reference });
       toast.success("Payment marked as disbursed");
       setDisbDialog(false);
       loadData();
@@ -1074,10 +1120,10 @@ function AdminDashboard() {
     if (editDisbStatus !== pm.status) update.status = editDisbStatus;
     if (editDisbStatus === "Cancelled" && pm.status !== "Cancelled") update.cancel_reason = editDisbReason.trim() || null;
     setPayBusy(true);
-    const { error } = await supabase.from("payments").update(update).eq("id", pm.id);
+    const { data: rows, error } = await supabase.from("payments").update(update).eq("id", pm.id).select("id");
     setPayBusy(false);
     if (error) { toast.error(error.message); return; }
-    await logAudit("update_payment", "payments", pm.id, { status: pm.status, reference: pm.reference }, update);
+    if (!rows?.length) { toast.error(NOT_SAVED); loadData(true); return; }
     toast.success("Disbursement updated");
     setEditDisb(null);
     loadData();
@@ -1232,11 +1278,7 @@ function AdminDashboard() {
       silentRefreshAdmin();
       return "This application was changed elsewhere (another reviewer, or the student withdrew it). The list has been refreshed.";
     }
-    const auditAction = status === "Pending"
-      ? (a.status === "Approved" ? "revoke_approval" : "reopen_application")
-      : { Approved: "approve_application", Disapproved: "disapprove_application", Waitlisted: "waitlist_application" }[status];
-    await logAudit(auditAction, "applications", a.id, { status: a.status, notes: a.notes }, update);
-    // The student is notified by a database trigger (see migrations 031 and 041).
+    // The database notifies the student (migrations 031 and 041) and writes the audit entry (080).
     return null;
   };
   const decideApplication = async (a: AppRow, status: AppDecision, note?: string | null, award?: number | null) => {
@@ -1278,7 +1320,6 @@ function AdminDashboard() {
       .eq("id", a.id).eq("status", "Approved").select("id");
     if (error) { toast.error("Couldn't update the award", { description: error.message }); return; }
     if (!data?.length) { toast.error("This application is no longer approved"); silentRefreshAdmin(); return; }
-    await logAudit("update_award", "applications", a.id, { amount_approved: a.amount_approved }, { amount_approved: amount });
     toast.success("Award updated — the student was notified");
     loadData(true);
   };
@@ -1295,8 +1336,8 @@ function AdminDashboard() {
     setNewAppNote("");
   };
   const deleteAppNote = async (n: Tables<"application_notes">) => {
-    const { error } = await supabase.from("application_notes").delete().eq("id", n.id);
-    if (error) { toast.error("Couldn't delete the note", { description: error.message }); return; }
+    const { data: rows, error } = await supabase.from("application_notes").delete().eq("id", n.id).select("id");
+    if (error || !rows?.length) { toast.error("Couldn't delete the note", { description: error?.message ?? "Only the staff member who wrote it can delete it." }); return; }
     setAppNotes((prev) => prev.filter((x) => x.id !== n.id));
   };
 
@@ -1322,7 +1363,7 @@ function AdminDashboard() {
   const defaultScheduledDate = (() => {
     const d = new Date();
     d.setDate(d.getDate() + parseSettings(systemSettings).default_payment_lead_days);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return localDate(d);
   })();
   // Keep the selected methods valid when a method gets turned off in Settings.
   useEffect(() => {
@@ -1335,20 +1376,9 @@ function AdminDashboard() {
     const changed = Object.entries(changes).filter(([k, v]) => JSON.stringify(prev[k]) !== JSON.stringify(v));
     if (!changed.length) { toast.info("No changes to save"); return true; }
 
-    const saved: [string, Json][] = [];
-    let failed: string | null = null;
-    for (const [key, value] of changed) {
-      const { error } = await supabase.from("system_settings").upsert({ key, value: value as Json }, { onConflict: "key" });
-      if (error) { failed = error.message; break; }
-      saved.push([key, value as Json]);
-    }
-
-    if (action === "reset_settings" && saved.length) {
-      await logAudit("reset_settings", "system_settings", undefined,
-        Object.fromEntries(saved.map(([k]) => [k, prev[k]])) as Json, Object.fromEntries(saved) as Json);
-    } else {
-      for (const [key, value] of saved) await logAudit("update_setting", "system_settings", undefined, { key, value: prev[key] }, { key, value });
-    }
+    // All changed keys in one transaction, audited by the database (migration 080): if one is refused, none are saved.
+    const { error } = await supabase.rpc("save_settings", { _changes: Object.fromEntries(changed) as Json, _reset: action === "reset_settings" });
+    const failed = error ? (error.code === "PGRST202" ? "The database is missing save_settings. Run migration 080 in Supabase." : error.message) : null;
 
     const [settingsRes, logsRes] = await Promise.all([
       supabase.from("system_settings").select("*"),
@@ -1357,7 +1387,7 @@ function AdminDashboard() {
     if (settingsRes.data) setSystemSettings(settingsRes.data);
     if (logsRes.data) setAuditLogs(logsRes.data);
 
-    if (failed) { toast.error("Some settings were not saved", { description: failed }); return false; }
+    if (failed) { toast.error("Settings not saved", { description: failed }); return false; }
     toast.success(action === "reset_settings" ? "Settings reset to defaults" : "Settings saved");
     return true;
   };
@@ -1758,6 +1788,7 @@ function AdminDashboard() {
               deletionRequests={can.super ? pendingDeletions.length : 0}
               officeBreakdown={officeView === "all" ? officeBreakdown : []}
               onViewOffice={setOfficeView}
+              currentYear={currentAY}
               onNavigate={(section, opts) => {
                 setActiveSection(section);
                 if (opts?.status !== undefined) { setStatusFilter(opts.status); setAppPage(1); }
@@ -1766,7 +1797,7 @@ function AdminDashboard() {
           )}
 
           {/* APPLICATIONS */}
-          {activeSection === "visits" && (
+          {activeSection === "visits" && mapAccess && (
             <HomeVisitsPanel applications={applications} scholarships={scholarships} onOpen={(a) => setViewApp(a)} />
           )}
 
@@ -2057,6 +2088,12 @@ function AdminDashboard() {
                             </li>
                           ))}
                         </ul>
+                        {/* Barangay Affairs: disapproved automatically once this passes with requirements still open (migration 082). */}
+                        {viewApp.status === "Pending" && viewApp.requirements_due_at && (
+                          <p className={`mt-1.5 text-xs ${new Date(viewApp.requirements_due_at).getTime() - Date.now() < 3 * 86400000 ? "text-destructive" : "text-muted-foreground"}`}>
+                            Requirements due {new Date(viewApp.requirements_due_at).toLocaleDateString("en-PH", { dateStyle: "medium" })}. If any are still open then, the application is disapproved automatically.
+                          </p>
+                        )}
                       </div>
                       {(() => {
                         const office = scholarships.find((sc) => sc.id === viewApp.scholarship_id)?.office;
@@ -2069,7 +2106,9 @@ function AdminDashboard() {
                             <div className="space-y-3 rounded-md border px-3 py-3 text-sm">
                               <div className="flex flex-wrap items-center gap-2">
                                 <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                {pin ? (
+                                {!mapAccess ? (
+                                  <span className="text-muted-foreground">{pin ? "The student has pinned their house. Only MSWDO staff can see where." : "The student hasn\u2019t pinned their house yet."}</span>
+                                ) : pin ? (
                                   <>
                                     <span>{pr?.home_landmark || "No landmark given"}</span>
                                     {[["Google Maps", googleMapsLink(pin)], ["Directions", directionsLink(pin)], ["Street View", streetViewLink(pin)], ["Google Earth (3D)", earthLink(pin)]].map(([label, href]) => (
@@ -2080,8 +2119,8 @@ function AdminDashboard() {
                                   </>
                                 ) : <span className="text-muted-foreground">The student hasn&apos;t pinned their house yet.</span>}
                               </div>
-                              {pin && <HouseMap pin={pin} readOnly className="h-56" />}
-                              {(() => {
+                              {mapAccess && pin && <HouseMap pin={pin} readOnly className="h-56" />}
+                              {mapAccess && (() => {
                                 // Moved since the visit was done (or, without a visit, just the history).
                                 const latest = pinHistory[0];
                                 const before = pinHistory.slice(1).find((h) => h.home_lat != null && h.home_lng != null);
@@ -2207,7 +2246,6 @@ function AdminDashboard() {
                               .eq("id", viewApp.id).eq("status", viewApp.status).select("id");
                             if (error) { toast.error(error.message); return; }
                             if (!data?.length) { toast.error("This application was changed elsewhere. The list has been refreshed."); silentRefreshAdmin(); return; }
-                            await logAudit("update_application_remarks", "applications", viewApp.id, { notes: viewApp.notes }, { notes });
                             setViewApp({ ...viewApp, notes });
                             // For a disapproved application the database notifies the student (see migration 040).
                             toast.success(viewApp.status === "Disapproved" ? "Reason updated — the student was notified" : "Message saved");
@@ -2295,7 +2333,7 @@ function AdminDashboard() {
                     onSubmit={saveScholarship} formKey={cur?.id ?? "new"}
                     footer={<>
                       <Button type="button" variant="outline" onClick={() => setSchDialog(null)}>Cancel</Button>
-                      <Button type="submit" className="bg-gradient-primary">{cur ? "Save Changes" : "Add Scholarship"}</Button>
+                      <Button type="submit" className="bg-gradient-primary" disabled={savingSch}>{cur ? "Save Changes" : "Add Scholarship"}</Button>
                     </>}>
                     <ScholarshipFormFields
                       cur={cur}
@@ -2323,7 +2361,7 @@ function AdminDashboard() {
                   <DialogNote tone="warning" icon={<AlertTriangle className="h-3.5 w-3.5" />}>
                     It has {applicantCount(deleteSch.id)} application{applicantCount(deleteSch.id) === 1 ? "" : "s"}
                     {payments.some((p) => applications.some((a) => a.id === p.application_id && a.scholarship_id === deleteSch.id)) ? " with payments" : ""}.
-                    {" "}Deleting the program also deletes {applicantCount(deleteSch.id) === 1 ? "it" : "them"} and their documents, notes and payment records. To keep the records, turn off &ldquo;Accepting applications&rdquo; instead.
+                    {" "}Deleting the program also deletes {applicantCount(deleteSch.id) === 1 ? "it" : "them"} with their uploaded files, notes, notifications and payment records. To keep the records, turn off &ldquo;Accepting applications&rdquo; instead.
                   </DialogNote>
                 )}
                 {deleteSch && (
@@ -2758,7 +2796,7 @@ function AdminDashboard() {
                             {open && can.finance && (<>
                               <Button size="icon" variant="ghost" title="Edit" onClick={() => { setPayMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash"); setPayTerm((p.term as PaymentTerm | null) ?? null); setPayDialog(p); }}><Pencil className="h-4 w-4" /></Button>
                               {p.status === "Pending" && (
-                                <Button size="sm" variant="outline" onClick={() => setPaymentStatus(p, "Processing")}>Process</Button>
+                                <Button size="sm" variant="outline" disabled={savingPay} onClick={() => setPaymentStatus(p, "Processing")}>Process</Button>
                               )}
                               <Button size="sm" onClick={() => {
                                 setDisbPaymentId(p.id);
@@ -2792,6 +2830,7 @@ function AdminDashboard() {
                 const cur = payDialog && payDialog !== "new" ? payDialog : null;
                 const payApp = applications.find((a) => a.id === (cur ? cur.application_id : payAppId));
                 const payWarning = payApp ? gradeWarningFor(payApp, payTerm) : null;
+                const noOpenTerm = !cur && !!payApp && openTermsOf(payApp).length === 0;
                 return (
                   <AppDialog open={payDialog !== null} onOpenChange={(o) => !o && setPayDialog(null)} size="md"
                     title={cur ? "Edit Payment" : "Schedule Payment"}
@@ -2799,7 +2838,7 @@ function AdminDashboard() {
                     onSubmit={savePayment} formKey={cur?.id ?? `new-${payAppId}`}
                     footer={<>
                       <Button type="button" variant="outline" onClick={() => setPayDialog(null)}>Cancel</Button>
-                      <Button type="submit" className="bg-gradient-primary" disabled={!cur && !payAppId}>{cur ? "Save Changes" : "Schedule Payment"}</Button>
+                      <Button type="submit" className="bg-gradient-primary" disabled={savingPay || (!cur && (!payAppId || noOpenTerm))}>{cur ? "Save Changes" : "Schedule Payment"}</Button>
                     </>}>
                     {!cur && (
                       <DialogField label="Scholar">
@@ -2815,20 +2854,21 @@ function AdminDashboard() {
                         </Select>
                       </DialogField>
                     )}
-                    {payApp && (
-                      <DialogField label="Period">
-                        <div role="radiogroup" aria-label="Period" className={`grid gap-3 ${scheduleOf(payApp) === "monthly" ? "grid-cols-3 sm:grid-cols-4" : "grid-cols-2"}`}>
-                          {termsOf(payApp).map((t) => {
-                            const taken = t !== cur?.term && !openTermsOf(payApp).includes(t);
-                            return (
-                              <ChoiceButton key={t} selected={payTerm === t} disabled={taken || cur?.status === "Disbursed"} onClick={() => setPayTerm(t)}>
-                                {t === "Yearly" ? `Whole year${payApp.academic_year ? ` ${payApp.academic_year}` : ""}` : t}{taken && " · scheduled"}
-                              </ChoiceButton>
-                            );
-                          })}
-                        </div>
+                    {/* The period isn't picked: a new payment takes the next one without a payment (the next month
+                        for a monthly program), and an edited payment keeps its own. The receipt shows it. */}
+                    {payApp && (cur || noOpenTerm ? (
+                      cur ? (
+                        <DialogField label="Period">
+                          <p className="text-sm font-medium">{termLabel(cur.term, payApp.academic_year) || "—"}</p>
+                        </DialogField>
+                      ) : (
+                        <DialogNote tone="warning" icon={<AlertTriangle className="h-3.5 w-3.5" />}>Every {scheduleOf(payApp) === "monthly" ? "month" : "period"} of this scholar&apos;s award already has a payment.</DialogNote>
+                      )
+                    ) : (
+                      <DialogField label="Period" hint={`Set automatically: the next ${scheduleOf(payApp) === "monthly" ? "month" : "period"} without a payment.`}>
+                        <p className="text-sm font-medium">{termLabel(payTerm, payApp.academic_year) || "—"}</p>
                       </DialogField>
-                    )}
+                    ))}
                     {payWarning && (
                       <DialogNote tone="warning" icon={<AlertTriangle className="h-3.5 w-3.5" />}>{payWarning}. You can still schedule this payment if the office approves it.</DialogNote>
                     )}
@@ -3347,7 +3387,7 @@ function AdminDashboard() {
                               <span><span className="font-medium">{g.grade}</span> · {g.term} · {new Date(g.created_at).toLocaleDateString()}</span>
                               <span className="flex items-center gap-1.5">
                                 <Badge variant={g.status === "Verified" ? "default" : "secondary"} className={g.status === "Disapproved" ? "text-destructive" : undefined}>{g.status}</Badge>
-                                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openStoredFile(g.file_path, "No grade report on file")}>View report</Button>
+                                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openStoredFile(g.file_path, "No grade report on file", "Grade report")}>View report</Button>
                                 {g.status === "Pending" && can.review && (<>
                                   <Button size="sm" className="h-7 text-xs" disabled={payBusy} onClick={() => reviewGrade(g, "Verified")}>Verify</Button>
                                   <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={payBusy} onClick={() => { setGradeNote(""); setDisapproveGrade(g); }}>Disapprove</Button>
@@ -3425,6 +3465,22 @@ function AdminDashboard() {
         value={receiptNote} onChange={setReceiptNote} busy={payBusy}
         confirmLabel="Disapprove receipt"
         onConfirm={async () => { if (disapproveReceipt && await reviewReceipt(disapproveReceipt, "Disapproved", receiptNote)) setDisapproveReceipt(null); }} />
+
+      {/* Stored file viewer (receipts, grade reports) */}
+      <AppDialog open={!!fileView} onOpenChange={(o) => !o && setFileView(null)} size="lg" title={fileView?.title ?? "Receipt"}
+        footer={fileView && <>
+          <Button variant="outline" asChild>
+            <a href={fileView.url} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-1 h-4 w-4" /> Open in new tab</a>
+          </Button>
+          <Button onClick={() => setFileView(null)}>Close</Button>
+        </>}>
+        {fileView?.kind === "image" && (
+          // eslint-disable-next-line @next/next/no-img-element -- a short-lived signed link, not an optimisable asset
+          <img src={fileView.url} alt={fileView.title} className="mx-auto max-h-[70vh] w-auto rounded-lg border object-contain" />
+        )}
+        {fileView?.kind === "pdf" && <iframe src={fileView.url} title={fileView.title} className="h-[70vh] w-full rounded-lg border" />}
+        {fileView?.kind === "other" && <p className="text-sm text-muted-foreground">This file can&apos;t be previewed here. Use <strong>Open in new tab</strong> to see or download it.</p>}
+      </AppDialog>
 
       <AppDialog open={!!issueDialog} onOpenChange={(o) => { if (!o) setIssueDialog(null); }} size="md"
         title="Payment problem reports"

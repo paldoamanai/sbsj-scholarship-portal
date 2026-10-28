@@ -73,6 +73,7 @@ export default function StudentAccountActions({ student, canDelete, disbursedPay
     if (!res?.ok) { toast.error("Not done", { description: (body?.error as string) ?? "Request failed" }); return; }
     if (body?.link) setShareLink({ link: body.link, reason: body.reason });
     else toast.success(COPY[done].done, { description: done === "reset_password" ? `Emailed to ${student.email}` : undefined });
+    if (body?.warning) toast.warning("Account deleted with a problem", { description: body.warning as string });
     if (done === "delete_account") onDeleted();
   };
 

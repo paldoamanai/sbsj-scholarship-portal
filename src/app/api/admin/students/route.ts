@@ -8,7 +8,8 @@ import { linkResult, sendLinkEmail, serviceClient, siteUrl } from "@/lib/admin-a
 //   POST { action: "reset_mfa" | "sign_out" | "reset_password", userId }
 //   POST { action: "delete_account", userId, requestId? }   Mayor Office only; files, login and records go.
 //                                                            Refused while the student has disbursed payments.
-// Admins (staff_may 'manage') may use all but delete_account. If the caller uses 2FA, they must have passed it.
+// Admins (staff_may 'manage') may use all but delete_account; an office Admin only on their office's students.
+// If the caller uses 2FA, they must have passed it.
 
 // About a hundred years: Supabase Auth has no "banned forever".
 const BAN_FOREVER = "876000h";
@@ -42,8 +43,13 @@ const audit = (admin: SupabaseClient, caller: Caller, action: string, entityId: 
 
 /** Every object path under `prefix` in a bucket (Storage lists one folder level at a time). */
 async function listFiles(admin: SupabaseClient, bucket: string, prefix: string): Promise<string[]> {
-  const { data } = await admin.storage.from(bucket).list(prefix, { limit: 1000 });
-  const paths = await Promise.all((data ?? []).map((o) =>
+  const entries: { id: string | null; name: string }[] = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data } = await admin.storage.from(bucket).list(prefix, { limit: 1000, offset });
+    entries.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  const paths = await Promise.all(entries.map((o) =>
     // Folders come back without an id.
     o.id ? Promise.resolve([`${prefix}/${o.name}`]) : listFiles(admin, bucket, `${prefix}/${o.name}`)));
   return paths.flat();
@@ -60,6 +66,12 @@ export async function POST(request: Request) {
   const { data: roleRow } = await admin.from("user_roles").select("role").eq("user_id", userId).maybeSingle();
   if (!roleRow) return NextResponse.json({ error: "Account not found" }, { status: 404 });
   if (roleRow.role !== "student") return NextResponse.json({ error: "That account is not a student. Manage staff under Staff." }, { status: 400 });
+
+  // Office Admins act only on students who applied to their office's programs (061's office_ok_person;
+  // true for the Mayor Office and staff without an office).
+  const { data: inOffice, error: officeErr } = await supabase.rpc("office_ok_person", { _person: userId });
+  if (officeErr) return NextResponse.json({ error: officeErr.message }, { status: 500 });
+  if (inOffice !== true) return NextResponse.json({ error: "This student has not applied to your office's programs" }, { status: 403 });
 
   if (action === "set_active") {
     const active = body?.active === true;
@@ -130,26 +142,32 @@ export async function POST(request: Request) {
       admin.auth.admin.getUserById(userId),
       admin.from("profiles").select("first_name, last_name").eq("id", userId).maybeSingle(),
     ]);
+    // Deleting the login removes their profile, applications, documents and notifications with it.
+    // It goes first: if it fails, the student still has their account and every file it points to.
+    const { error } = await admin.auth.admin.deleteUser(userId);
+    if (error) return NextResponse.json({ error: `The account was not deleted: ${error.message}` }, { status: 500 });
+
     let filesRemoved = 0;
+    let filesError: string | null = null;
     for (const bucket of USER_BUCKETS) {
       const paths = await listFiles(admin, bucket, userId);
-      for (let i = 0; i < paths.length; i += 100) {
-        const { error } = await admin.storage.from(bucket).remove(paths.slice(i, i + 100));
-        if (error) return NextResponse.json({ error: `Could not remove their files: ${error.message}. Nothing else was deleted.` }, { status: 500 });
+      for (let i = 0; i < paths.length && !filesError; i += 100) {
+        const { error: rmError } = await admin.storage.from(bucket).remove(paths.slice(i, i + 100));
+        if (rmError) filesError = rmError.message;
+        else filesRemoved += Math.min(100, paths.length - i);
       }
-      filesRemoved += paths.length;
     }
-
-    // Deleting the login removes their profile, applications, documents and notifications with it.
-    const { error } = await admin.auth.admin.deleteUser(userId);
-    if (error) return NextResponse.json({ error: `Their files were removed, but the account wasn't: ${error.message}` }, { status: 500 });
     await audit(admin, caller, "delete_student_account", userId, {
       email: u?.user?.email ?? null,
       name: [prof?.first_name, prof?.last_name].filter(Boolean).join(" ") || null,
       files_removed: filesRemoved,
+      ...(filesError ? { files_error: filesError } : {}),
       request_id: requestId,
     });
-    return NextResponse.json({ ok: true });
+    // The account is gone either way, so a file left behind is a warning, not a failure.
+    return NextResponse.json(filesError
+      ? { ok: true, warning: `Some of their files could not be removed (${filesError}). Clear the ${userId} folders in Supabase Storage.` }
+      : { ok: true });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });

@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { Tables } from "@/integrations/supabase/types";
 import { pesoFixed as formatPHP } from "@/lib/format";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { academicYearOf, ayStart } from "@/lib/settings";
 
 export type OverviewApp = Tables<"applications"> & { scholarships: { name: string } | null; profiles?: Tables<"profiles"> | null };
 
@@ -37,6 +38,8 @@ type Props = {
   /** One row per office, for staff who see every office; empty hides the table. */
   officeBreakdown?: OfficeRow[];
   onViewOffice?: (office: string) => void;
+  /** The academic year in the settings; budgets are per academic year. */
+  currentYear?: string;
 };
 
 export type OfficeRow = {
@@ -46,6 +49,7 @@ export type OfficeRow = {
 const initials = (first?: string | null, last?: string | null) => `${(first || "?")[0] || ""}${(last || "")[0] || ""}`.toUpperCase();
 const DAY = 86400000;
 const PERIODS: Record<string, string> = { all: "All time", "30d": "Last 30 days", "6m": "Last 6 months", year: "This year" };
+const prevYearOf = (ay: string) => `${ayStart(ay) - 1}-${ayStart(ay)}`;
 const STATUS_COLOR: Record<string, string> = {
   Approved: "hsl(var(--success))", Disapproved: "hsl(var(--destructive))", Pending: "hsl(var(--warning))", Waitlisted: "hsl(var(--muted-foreground))",
 };
@@ -169,9 +173,19 @@ function Trend({ current, previous }: { current: number; previous: number | null
 export default function OverviewPanel({
   applications, scholarships, profiles, notApplied = [], payments, auditLogs,
   firstName, refreshing, lastUpdated, loadError, onRefresh, onNavigate, onViewApp,
-  deletionRequests = 0, officeBreakdown = [], onViewOffice,
+  deletionRequests = 0, officeBreakdown = [], onViewOffice, currentYear = academicYearOf(new Date()),
 }: Props) {
   const [period, setPeriod] = useState("all");
+  const [year, setYear] = useState("all");
+
+  // School year of each record: the application's (and its payments'), or for a student, the year they registered.
+  const appYear = (a: OverviewApp) => a.academic_year || academicYearOf(new Date(a.created_at));
+  const years = useMemo(() => {
+    const set = new Set<string>([currentYear]);
+    applications.forEach((a) => set.add(appYear(a)));
+    payments.forEach((p) => { if (p.academic_year) set.add(p.academic_year); });
+    return [...set].filter((y) => !Number.isNaN(ayStart(y))).sort().reverse();
+  }, [applications, payments, currentYear]);
 
   const data = useMemo(() => {
     const now = Date.now();
@@ -182,35 +196,47 @@ export default function OverviewPanel({
     const inPrev = (iso: string) => !!prevSince && !!since && new Date(iso) >= prevSince && new Date(iso) < since;
     const payDate = (p: Tables<"payments">) => p.disbursed_at || p.scheduled_date || p.created_at;
     const cnt = (list: OverviewApp[], st: string) => list.filter((a) => a.status === st).length;
+    // With a school year picked and no period, trends compare with the school year before it.
+    const prevYear = year !== "all" ? prevYearOf(year) : null;
+    const hasPrev = !!prevSince || !!prevYear;
+    const yearOk = (ay: string) => year === "all" || ay === year;
+    const curOk = (iso: string, ay: string) => inCur(iso) && yearOk(ay);
+    const prevOk = (iso: string, ay: string) => (prevSince ? inPrev(iso) && yearOk(ay) : ay === prevYear);
+    const appById = new Map(applications.map((a) => [a.id, a]));
+    const payYear = (p: Tables<"payments">) => {
+      const a = p.application_id ? appById.get(p.application_id) : undefined;
+      return p.academic_year || (a ? appYear(a) : academicYearOf(new Date(payDate(p))));
+    };
+    const regYear = (p: Tables<"profiles">) => academicYearOf(new Date(p.created_at));
 
-    const curApps = applications.filter((a) => inCur(a.created_at));
-    const prevApps = prevSince ? applications.filter((a) => inPrev(a.created_at)) : null;
+    const curApps = applications.filter((a) => curOk(a.created_at, appYear(a)));
+    const prevApps = hasPrev ? applications.filter((a) => prevOk(a.created_at, appYear(a))) : null;
     const total = curApps.length;
     const approved = cnt(curApps, "Approved");
     const disapproved = cnt(curApps, "Disapproved");
     const pending = cnt(curApps, "Pending");
     const waitlisted = cnt(curApps, "Waitlisted");
-    const notYetApplied = notApplied.filter((p) => inCur(p.created_at)).length;
-    const notYetAppliedPrev = prevSince ? notApplied.filter((p) => inPrev(p.created_at)).length : null;
+    const notYetApplied = notApplied.filter((p) => curOk(p.created_at, regYear(p))).length;
+    const notYetAppliedPrev = hasPrev ? notApplied.filter((p) => prevOk(p.created_at, regYear(p))).length : null;
     // Applicants are people, not applications: one student with two applications counts once.
     const people = (list: OverviewApp[]) => new Set(list.map((a) => a.user_id)).size;
     const applicants = people(curApps) + notYetApplied;
     const applicantsPrev = prevApps && notYetAppliedPrev !== null ? people(prevApps) + notYetAppliedPrev : null;
 
     const disbursed = payments.filter((p) => p.status === "Disbursed");
-    const disbCur = disbursed.filter((p) => inCur(payDate(p))).reduce((t, p) => t + Number(p.amount || 0), 0);
-    const paidScholars = new Set(disbursed.filter((p) => inCur(payDate(p))).map((p) => p.user_id)).size;
-    const disbPrev = prevSince ? disbursed.filter((p) => inPrev(payDate(p))).reduce((t, p) => t + Number(p.amount || 0), 0) : null;
+    const disbCur = disbursed.filter((p) => curOk(payDate(p), payYear(p))).reduce((t, p) => t + Number(p.amount || 0), 0);
+    const paidScholars = new Set(disbursed.filter((p) => curOk(payDate(p), payYear(p))).map((p) => p.user_id)).size;
+    const disbPrev = hasPrev ? disbursed.filter((p) => prevOk(payDate(p), payYear(p))).reduce((t, p) => t + Number(p.amount || 0), 0) : null;
 
-    const newStudents = profiles.filter((p) => inCur(p.created_at)).length;
-    const newStudentsPrev = prevSince ? profiles.filter((p) => inPrev(p.created_at)).length : null;
+    const newStudents = profiles.filter((p) => curOk(p.created_at, regYear(p))).length;
+    const newStudentsPrev = hasPrev ? profiles.filter((p) => prevOk(p.created_at, regYear(p))).length : null;
 
-    // Chart: last N months, zero-filled.
+    // Chart: last N months, zero-filled; with a school year picked, its 12 months from June.
     const nowD = new Date();
-    const months = period === "year" ? nowD.getMonth() + 1 : period === "all" ? 12 : 6;
+    const months = year !== "all" ? 12 : period === "year" ? nowD.getMonth() + 1 : period === "all" ? 12 : 6;
     const perMonth = Array.from({ length: months }, (_, i) => {
-      const d = new Date(nowD.getFullYear(), nowD.getMonth() - (months - 1 - i), 1);
-      const count = applications.filter((a) => { const c = new Date(a.created_at); return c.getFullYear() === d.getFullYear() && c.getMonth() === d.getMonth(); }).length;
+      const d = year !== "all" ? new Date(ayStart(year), 5 + i, 1) : new Date(nowD.getFullYear(), nowD.getMonth() - (months - 1 - i), 1);
+      const count = applications.filter((a) => { const c = new Date(a.created_at); return yearOk(appYear(a)) && c.getFullYear() === d.getFullYear() && c.getMonth() === d.getMonth(); }).length;
       return { month: d.toLocaleString("default", { month: "short", year: "2-digit" }), count };
     });
 
@@ -236,11 +262,15 @@ export default function OverviewPanel({
     const pastDeadline = active.filter((s) => { const d = deadlineOf(s); return d !== null && d < now; });
     const fullPrograms = active.filter((s) => s.slots > 0 && approvedBy(s.id) >= s.slots);
 
-    // Money
+    // Money. A program's budget is per school year: it counts for each year it had applications, and for
+    // the current year while it's active.
     const sumAmt = (l: Tables<"payments">[]) => l.reduce((t, p) => t + Number(p.amount || 0), 0);
-    const queuedList = payments.filter((p) => p.status === "Pending" || p.status === "Processing");
-    const budget = active.reduce((t, s) => t + Number(s.total_budget || 0), 0);
-    const disbursedAll = sumAmt(disbursed);
+    const queuedList = payments.filter((p) => (p.status === "Pending" || p.status === "Processing") && yearOk(payYear(p)));
+    const budgetFor = (ay: string) => scholarships
+      .filter((s) => (ay === currentYear && s.is_active) || applications.some((a) => a.scholarship_id === s.id && appYear(a) === ay))
+      .reduce((t, s) => t + Number(s.total_budget || 0), 0);
+    const budget = (year === "all" ? years : [year]).reduce((t, ay) => t + budgetFor(ay), 0);
+    const disbursedAll = sumAmt(disbursed.filter((p) => yearOk(payYear(p))));
     const queued = sumAmt(queuedList);
     const remaining = budget - disbursedAll - queued;
 
@@ -259,7 +289,8 @@ export default function OverviewPanel({
       disapprovalRate: total ? Math.round((disapproved / total) * 100) : 0,
       activeStudents: profiles.filter((p) => p.is_active).length,
     };
-  }, [applications, scholarships, profiles, notApplied, payments, period]);
+  }, [applications, scholarships, profiles, notApplied, payments, period, year, years, currentYear]);
+  const scope = [year !== "all" && `S.Y. ${year}`, period !== "all" && PERIODS[period]].filter(Boolean).join(" · ") || "All time";
 
   const pendingApps = useMemo(() => applications.filter((a) => a.status === "Pending").slice(0, 5), [applications]);
   const recent = useMemo(() => auditLogs.slice(0, 8), [auditLogs]);
@@ -272,7 +303,7 @@ export default function OverviewPanel({
     { label: "Approved", value: data.approved, sub: `${data.approvalRate}% approval rate`, icon: CheckCircle, color: "text-success", trend: <Trend current={data.approved} previous={data.prevApproved} />, go: () => onNavigate("applications", { status: "approved" }) },
     { label: "Disapproved", value: data.disapproved, sub: `${data.disapprovalRate}% disapproval rate`, icon: XCircle, color: "text-destructive", trend: <Trend current={data.disapproved} previous={data.prevDisapproved} />, go: () => onNavigate("applications", { status: "disapproved" }) },
     { label: "Students", value: profiles.length, sub: `${data.activeStudents} active · ${data.newStudents} new`, icon: Users, color: "text-primary", trend: <Trend current={data.newStudents} previous={data.newStudentsPrev} />, go: () => onNavigate("students") },
-    { label: "Disbursed", value: formatPHP(data.disbCur), sub: `${data.paidScholars} scholar${data.paidScholars === 1 ? "" : "s"} paid · ${PERIODS[period]}`, icon: Banknote, color: "text-success", trend: <Trend current={data.disbCur} previous={data.disbPrev} />, go: () => onNavigate("disbursement"), small: true },
+    { label: "Disbursed", value: formatPHP(data.disbCur), sub: `${data.paidScholars} scholar${data.paidScholars === 1 ? "" : "s"} paid · ${scope}`, icon: Banknote, color: "text-success", trend: <Trend current={data.disbCur} previous={data.disbPrev} />, go: () => onNavigate("disbursement"), small: true },
   ];
 
   const attention = [
@@ -330,10 +361,19 @@ export default function OverviewPanel({
           <Button size="sm" variant="outline" onClick={() => onNavigate("disbursement")} className="cursor-pointer"><Banknote className="mr-1 h-4 w-4" />Disburse pending</Button>
           <Button size="sm" variant="outline" onClick={() => onNavigate("reports")} className="cursor-pointer"><FileDown className="mr-1 h-4 w-4" />Export report</Button>
         </div>
-        <Select value={period} onValueChange={setPeriod}>
-          <SelectTrigger className="w-44" aria-label="Period"><SelectValue /></SelectTrigger>
-          <SelectContent>{Object.entries(PERIODS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
-        </Select>
+        <div className="flex flex-wrap gap-2">
+          <Select value={year} onValueChange={setYear}>
+            <SelectTrigger className="w-44" aria-label="School year"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All school years</SelectItem>
+              {years.map((y) => <SelectItem key={y} value={y}>S.Y. {y}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={period} onValueChange={setPeriod}>
+            <SelectTrigger className="w-44" aria-label="Period"><SelectValue /></SelectTrigger>
+            <SelectContent>{Object.entries(PERIODS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Stat cards, in applicant pipeline order */}
@@ -361,7 +401,8 @@ export default function OverviewPanel({
         ))}
       </div>
       </section>
-      {period !== "all" && <p className="-mt-3 text-xs text-muted-foreground">Trend arrows compare with the previous equal-length period.</p>}
+      {period !== "all" ? <p className="-mt-3 text-xs text-muted-foreground">Trend arrows compare with the previous equal-length period.</p>
+        : year !== "all" && <p className="-mt-3 text-xs text-muted-foreground">Trend arrows compare with S.Y. {prevYearOf(year)}.</p>}
 
       {/* Needs attention + Funds */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -390,7 +431,7 @@ export default function OverviewPanel({
             <button type="button" onClick={() => onNavigate("funds")} className="text-xs font-medium text-primary hover:underline cursor-pointer">Details</button>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div><p className="text-xs text-muted-foreground">Budget (active programs)</p><p className="text-lg font-bold font-display">{formatPHP(data.budget)}</p></div>
+            <div><p className="text-xs text-muted-foreground">{year === "all" ? "Budget (all school years)" : `Budget (S.Y. ${year})`}</p><p className="text-lg font-bold font-display">{formatPHP(data.budget)}</p></div>
             <Progress value={data.budget ? Math.min(100, ((data.disbursedAll + data.queued) / data.budget) * 100) : 0} className="h-2" />
             <div className="grid grid-cols-3 gap-2 text-xs">
               <div><p className="text-muted-foreground">Disbursed</p><p className="font-semibold text-success">{formatPHP(data.disbursedAll)}</p></div>
@@ -436,7 +477,7 @@ export default function OverviewPanel({
       {/* Trends + status */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <ChartCard className="lg:col-span-2" title="Applications per Month"
-          subtitle={`${data.monthTotal} in the last ${data.months} months · peak ${data.monthPeak.month} (${data.monthPeak.count}) · avg ${data.monthAvg.toFixed(1)}/mo`}
+          subtitle={`${data.monthTotal} ${year !== "all" ? `in S.Y. ${year}` : `in the last ${data.months} months`} · peak ${data.monthPeak.month} (${data.monthPeak.count}) · avg ${data.monthAvg.toFixed(1)}/mo`}
           table={{ head: ["Month", "Applications"], rows: data.perMonth.map((m) => [m.month, m.count]) }} empty={data.monthTotal === 0}>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={data.perMonth} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
@@ -450,7 +491,7 @@ export default function OverviewPanel({
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Application Status" subtitle={`${data.total} application${data.total === 1 ? "" : "s"} · ${PERIODS[period].toLowerCase()}`}
+        <ChartCard title="Application Status" subtitle={`${data.total} application${data.total === 1 ? "" : "s"} · ${scope}`}
           table={{ head: ["Status", "Count", "Share"], rows: data.statusPie.map((d) => [d.name, d.value, `${data.total ? Math.round((d.value / data.total) * 100) : 0}%`]) }} empty={data.statusPie.length === 0}>
           <div className="pt-2">
             <p className="mb-3 text-3xl font-bold font-display tabular-nums">{data.approvalRate}%<span className="ml-2 text-sm font-normal text-muted-foreground">approved</span></p>
@@ -516,7 +557,7 @@ export default function OverviewPanel({
 
       {/* Distribution + students */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <ChartCard className="lg:col-span-2" title="Applications by Scholarship" subtitle={`Top programs · ${PERIODS[period].toLowerCase()}`}
+        <ChartCard className="lg:col-span-2" title="Applications by Scholarship" subtitle={`Top programs · ${scope}`}
           table={{ head: ["Scholarship", "Applications"], rows: data.distribution.map((d) => [d.name, d.value]) }} empty={data.distribution.length === 0}>
           <RankedBars rows={data.distribution} unit="applications" />
         </ChartCard>

@@ -79,7 +79,8 @@ ${copy(s, "Student copy", `Keep this copy. To confirm you received this payment,
   const frame = document.createElement("iframe");
   frame.id = "receipt-slip-print";
   frame.setAttribute("aria-hidden", "true");
-  frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+  // A page-sized frame kept off screen: Safari and Firefox print a blank page from a 0×0 frame.
+  frame.style.cssText = "position:fixed;left:-10000px;top:0;width:210mm;height:297mm;border:0;opacity:0;pointer-events:none";
   frame.onload = () => {
     const win = frame.contentWindow;
     if (!win) return;
@@ -88,7 +89,11 @@ ${copy(s, "Student copy", `Keep this copy. To confirm you received this payment,
     document.title = `Receipt ${s.receiptNo}`;
     win.addEventListener("afterprint", () => { document.title = title; setTimeout(() => frame.remove(), 0); }, { once: true });
     win.focus();
-    win.print();
+    // Safari's print() on a frame can print the whole admin page instead; execCommand prints just the frame.
+    // Elsewhere execCommand("print") returns false, so print() runs.
+    let printed = false;
+    try { printed = win.document.execCommand("print", false); } catch { /* not supported */ }
+    if (!printed) win.print();
   };
   frame.srcdoc = html;
   document.body.appendChild(frame);

@@ -102,6 +102,8 @@ export function ScholarshipFormFields({
   const [months, setMonths] = useState(String(asMonths(cur?.release_months)));
   // Followed only to show what each release (or a semester program's year) comes to.
   const [award, setAward] = useState(String(cur?.amount ?? 0));
+  // New programs aren't paid per semester; one that already is keeps the choice so editing doesn't change it.
+  const schedules = RELEASE_SCHEDULES.filter((r) => r.value !== "semester" || cur?.release_schedule === "semester");
   const shownBarangays = BARANGAYS.filter((b) => b.toLowerCase().includes(barangaySearch.trim().toLowerCase()));
 
   return (
@@ -153,8 +155,8 @@ export function ScholarshipFormFields({
         <div className="space-y-1.5">
           <Label id="sch-schedule-label">Release schedule</Label>
           <input type="hidden" name="release_schedule" value={schedule} />
-          <div role="radiogroup" aria-labelledby="sch-schedule-label" className="grid gap-3 sm:grid-cols-2">
-            {RELEASE_SCHEDULES.map((r) => {
+          <div role="radiogroup" aria-labelledby="sch-schedule-label" className={cn("grid gap-3", schedules.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
+            {schedules.map((r) => {
               const on = schedule === r.value;
               return (
                 <button key={r.value} type="button" role="radio" aria-checked={on} onClick={() => setSchedule(r.value)}
