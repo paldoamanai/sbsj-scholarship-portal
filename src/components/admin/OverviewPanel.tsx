@@ -254,8 +254,10 @@ export default function OverviewPanel({
 
     // Scholarships: slot usage + deadlines (all time, not period-bound).
     const active = scholarships.filter((s) => s.is_active);
-    const approvedBy = (id: string) => applications.filter((a) => a.scholarship_id === id && a.status === "Approved").length;
-    const applicantsBy = (id: string) => applications.filter((a) => a.scholarship_id === id).length;
+    // Slots are per academic year: count the current year's applications, as the Programs page does.
+    const thisYear = applications.filter((a) => appYear(a) === currentYear);
+    const approvedBy = (id: string) => thisYear.filter((a) => a.scholarship_id === id && a.status === "Approved").length;
+    const applicantsBy = (id: string) => thisYear.filter((a) => a.scholarship_id === id).length;
     const deadlineOf = (s: Tables<"scholarships">) => (s.deadline ? new Date(`${s.deadline}T23:59:59`).getTime() : null);
     const closingSoon = active.filter((s) => { const d = deadlineOf(s); return d !== null && d >= now && d - now <= 14 * DAY; })
       .sort((x, y) => (deadlineOf(x)! - deadlineOf(y)!));
@@ -285,6 +287,8 @@ export default function OverviewPanel({
       monthTotal: perMonth.reduce((t, m) => t + m.count, 0), monthAvg: perMonth.reduce((t, m) => t + m.count, 0) / perMonth.length, monthPeak: perMonth.reduce((b, m) => (m.count > b.count ? m : b), perMonth[0]),
       active, approvedBy, applicantsBy, closingSoon, pastDeadline, fullPrograms,
       budget, disbursedAll, queued, remaining, queuedCount: queuedList.length, awaiting,
+      // The bell and Needs Attention are work to do now, whatever year or period is shown.
+      pendingAll: cnt(applications, "Pending"),
       approvalRate: total ? Math.round((approved / total) * 100) : 0,
       disapprovalRate: total ? Math.round((disapproved / total) * 100) : 0,
       activeStudents: profiles.filter((p) => p.is_active).length,
@@ -309,7 +313,7 @@ export default function OverviewPanel({
   const attention = [
     { show: data.awaiting.length > 0, icon: Wallet, tone: "text-warning", text: `${data.awaiting.length} approved application${data.awaiting.length === 1 ? "" : "s"} with no payment`, cta: "Disburse", go: () => onNavigate("disbursement") },
     { show: data.queuedCount > 0, icon: Banknote, tone: "text-primary", text: `${data.queuedCount} payment${data.queuedCount === 1 ? "" : "s"} pending or processing (${formatPHP(data.queued)})`, cta: "Open", go: () => onNavigate("disbursement") },
-    { show: data.pending > 0, icon: Clock, tone: "text-warning", text: `${data.pending} application${data.pending === 1 ? "" : "s"} waiting for review`, cta: "Review", go: () => onNavigate("applications", { status: "pending" }) },
+    { show: data.pendingAll > 0, icon: Clock, tone: "text-warning", text: `${data.pendingAll} application${data.pendingAll === 1 ? "" : "s"} waiting for review`, cta: "Review", go: () => onNavigate("applications", { status: "pending" }) },
     ...data.closingSoon.map((s) => ({ show: true, icon: CalendarClock, tone: "text-warning", text: `${s.name} closes ${new Date(`${s.deadline}T00:00:00`).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}`, cta: "View", go: () => onNavigate("scholarships") })),
     ...data.pastDeadline.map((s) => ({ show: true, icon: AlertTriangle, tone: "text-destructive", text: `${s.name} is active but past its deadline`, cta: "Fix", go: () => onNavigate("scholarships") })),
     ...data.fullPrograms.map((s) => ({ show: true, icon: GraduationCap, tone: "text-warning", text: `${s.name} has filled all ${s.slots} slots`, cta: "View", go: () => onNavigate("scholarships") })),
@@ -341,12 +345,12 @@ export default function OverviewPanel({
               className="h-10 w-10 rounded-full bg-white/15 hover:bg-white/25 transition-colors flex items-center justify-center cursor-pointer disabled:opacity-60">
               {refreshing ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}
             </button>
-            <button type="button" onClick={() => onNavigate("applications", { status: "pending" })} aria-label={`${data.pending} pending applications need review`}
+            <button type="button" onClick={() => onNavigate("applications", { status: "pending" })} aria-label={`${data.pendingAll} pending applications need review`}
               className="relative h-10 w-10 rounded-full bg-white/15 hover:bg-white/25 transition-colors flex items-center justify-center cursor-pointer">
               <Bell className="h-5 w-5" />
-              {data.pending > 0 && (
+              {data.pendingAll > 0 && (
                 <span className="absolute -top-1 -right-1 h-4 min-w-4 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">
-                  {data.pending > 99 ? "99+" : data.pending}
+                  {data.pendingAll > 99 ? "99+" : data.pendingAll}
                 </span>
               )}
             </button>
