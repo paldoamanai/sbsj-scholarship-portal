@@ -15,6 +15,7 @@ export type Database = {
           home_visit_note: string | null
           home_visit_done_at: string | null
           home_visit_by: string | null
+          requirements_due_at: string | null
           id: string
           user_id: string
           scholarship_id: string | null
@@ -46,6 +47,7 @@ export type Database = {
           home_visit_note?: string | null
           home_visit_done_at?: string | null
           home_visit_by?: string | null
+          requirements_due_at?: string | null
           id?: string
           user_id: string
           scholarship_id?: string | null
@@ -77,6 +79,7 @@ export type Database = {
           home_visit_note?: string | null
           home_visit_done_at?: string | null
           home_visit_by?: string | null
+          requirements_due_at?: string | null
           id?: string
           user_id?: string
           scholarship_id?: string | null

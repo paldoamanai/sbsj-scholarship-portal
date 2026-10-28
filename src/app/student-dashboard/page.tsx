@@ -1145,6 +1145,12 @@ export default function StudentDashboardPage() {
           ))}
         </ul>
         {passing < checks.length && <p className="text-[11px] text-muted-foreground mt-2">The office can approve this application once every requirement is met.</p>}
+        {/* Barangay Affairs gives two weeks from applying (migration 082). */}
+        {passing < checks.length && app.status === "Pending" && app.requirements_due_at && (
+          <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-800">
+            Complete these by {new Date(app.requirements_due_at).toLocaleDateString("en-PH", { dateStyle: "long" })}, including bringing the originals to the office. Otherwise your application is disapproved automatically.
+          </p>
+        )}
       </div>
     );
   };

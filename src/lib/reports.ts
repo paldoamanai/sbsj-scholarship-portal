@@ -1,7 +1,7 @@
 import type { Tables, Json } from "@/integrations/supabase/types";
 import { staffLabel } from "@/lib/permissions";
 import { pesoFixed } from "@/lib/format";
-import { termLabel, yearlyAward } from "@/lib/release-schedule";
+import { RELEASE_SCHEDULES, asSchedule, openTerms, termLabel, yearlyAward } from "@/lib/release-schedule";
 import { approvalDocuments } from "@/lib/office-requirements";
 
 // ── Shapes ──
@@ -34,19 +34,19 @@ export type ReportData = {
 export type ReportFilters = {
   period: string; from: string; to: string;
   program: string; payStatus: string;
-  academicYear: string; semester: string;
+  academicYear: string;
   student: string;
   /** Audit trail only: an action, an entity type, and a user id ("system" for entries with no user). */
   auditAction: string; auditEntity: string; auditUser: string;
 };
 export const ALL_FILTERS: ReportFilters = {
-  period: "all", from: "", to: "", program: "all", payStatus: "all", academicYear: "all", semester: "all", student: "",
+  period: "all", from: "", to: "", program: "all", payStatus: "all", academicYear: "all", student: "",
   auditAction: "all", auditEntity: "all", auditUser: "all",
 };
 
-export type ReportKey = "scholars" | "budget" | "funds" | "disbursements" | "statistics" | "grades" | "operations" | "history" | "audit";
+export type ReportKey = "scholars" | "budget" | "funds" | "disbursements" | "balances" | "statistics" | "grades" | "operations" | "history" | "audit";
 export type ReportFilterKey = "period" | "program" | "term" | "payStatus" | "student" | "audit";
-export const FILTER_LABEL: Record<ReportFilterKey, string> = { period: "Period", program: "Program", term: "Academic year & semester", payStatus: "Payment status", student: "Student", audit: "Action, record type & user" };
+export const FILTER_LABEL: Record<ReportFilterKey, string> = { period: "Period", program: "Program", term: "Academic year", payStatus: "Payment status", student: "Student", audit: "Action, record type & user" };
 
 /** Which filters each report honours. Everything else is ignored (and not printed on the report). */
 export const REPORT_FILTERS: Record<ReportKey, ReportFilterKey[]> = {
@@ -54,6 +54,7 @@ export const REPORT_FILTERS: Record<ReportKey, ReportFilterKey[]> = {
   budget: ["period", "program", "term"],
   funds: ["period", "program", "term"],
   disbursements: ["period", "program", "term", "payStatus"],
+  balances: ["program", "term"],
   statistics: ["period", "program", "term"],
   grades: ["period", "program"],
   operations: ["period"],
@@ -61,7 +62,7 @@ export const REPORT_FILTERS: Record<ReportKey, ReportFilterKey[]> = {
   audit: ["period", "audit"],
 };
 /** Wide reports print landscape. */
-export const LANDSCAPE: ReportKey[] = ["scholars", "budget", "disbursements", "grades", "operations", "history", "audit"];
+export const LANDSCAPE: ReportKey[] = ["scholars", "budget", "disbursements", "balances", "grades", "operations", "history", "audit"];
 
 // ── Small helpers ──
 export const formatPHP = pesoFixed;
@@ -94,7 +95,7 @@ const ageOn = (dob: string | null | undefined, at: string | Date = new Date()) =
   if (Number.isNaN(b.getTime())) return null;
   return d.getFullYear() - b.getFullYear() - (d.getMonth() < b.getMonth() || (d.getMonth() === b.getMonth() && d.getDate() < b.getDate()) ? 1 : 0);
 };
-const termText = (a?: Pick<Tables<"applications">, "academic_year" | "semester"> | null) => (a ? [a.academic_year, a.semester].filter(Boolean).join(" · ") : "") || "—";
+const termText = (a?: Pick<Tables<"applications">, "academic_year"> | null) => a?.academic_year || "—";
 // The period a payment is for, e.g. "1st Semester 2026-2027" or "A.Y. 2026-2027" (migration 056).
 const payPeriod = (p: Pick<Tables<"payments">, "term" | "academic_year">) => termLabel(p.term, p.academic_year) || "—";
 // Sorts periods newest academic year first; within a year, the 2nd semester above the 1st (callers sort descending).
@@ -221,8 +222,8 @@ export function scope(data: ReportData, f: ReportFilters) {
     const t = new Date(d);
     return (!since || t >= since) && (!until || t <= until);
   };
-  const termSet = f.academicYear !== "all" || f.semester !== "all";
-  const termOk = (a?: ReportApp | null) => !!a && (f.academicYear === "all" || a.academic_year === f.academicYear) && (f.semester === "all" || a.semester === f.semester);
+  const termSet = f.academicYear !== "all";
+  const termOk = (a?: ReportApp | null) => !!a && (f.academicYear === "all" || a.academic_year === f.academicYear);
   const progOk = (id: string | null | undefined) => f.program === "all" || id === f.program;
   const appOk = (a: ReportApp) => progOk(a.scholarship_id) && (!termSet || termOk(a));
   const appById = new Map(data.applications.map((a) => [a.id, a]));
@@ -309,7 +310,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
   const filters = REPORT_FILTERS[key].flatMap((k): string[] => {
     if (k === "period") return [`Period: ${periodLabel(f)}`];
     if (k === "program") return [`Program: ${f.program === "all" ? "All programs" : programName(f.program)}`];
-    if (k === "term") return [`Term: ${f.academicYear === "all" ? "All academic years" : `AY ${f.academicYear}`}, ${f.semester === "all" ? "all semesters" : f.semester}`];
+    if (k === "term") return [`Academic year: ${f.academicYear === "all" ? "All" : `AY ${f.academicYear}`}`];
     if (k === "payStatus") return [`Payments: ${f.payStatus === "all" ? "All except cancelled" : f.payStatus}`];
     return [];
   });
@@ -336,7 +337,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
       sections: [
         {
           name: "Scholars",
-          head: ["#", "Name", "School", "Course", "Year Level", "Grade at Application", "Current Grade", "Scholarship", "AY / Semester", "Type", "Approved On", "Award", "Disbursed", "Balance", "Payout Status"],
+          head: ["#", "Name", "School", "Course", "Year Level", "Grade at Application", "Current Grade", "Scholarship", "Academic Year", "Type", "Approved On", "Award", "Disbursed", "Balance", "Payout Status"],
           rows: apps.map((a, i) => {
             const award = s.appAward(a), paid = paidFor(a.id);
             const g = a.profiles?.average_grade;
@@ -490,6 +491,75 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
     };
   }
 
+  if (key === "balances") {
+    // Every approved scholar with money still to be released for the year: what's paid, what's queued
+    // and the periods nobody has scheduled yet.
+    const apps = data.applications
+      .filter((a) => a.status === "Approved" && s.appOk(a))
+      .sort((x, y) => listName(x.profiles).localeCompare(listName(y.profiles)) || (x.scholarships?.name ?? "").localeCompare(y.scholarships?.name ?? ""));
+    const rows = apps.map((a) => {
+      const sch = data.scholarships.find((sc) => sc.id === a.scholarship_id);
+      const live = data.payments.filter((p) => p.application_id === a.id && p.status !== "Cancelled");
+      const queued = live.filter((p) => p.status === "Pending" || p.status === "Processing");
+      const award = s.appAward(a), paid = sum(live.filter((p) => p.status === "Disbursed")), scheduled = sum(queued);
+      const perTerm = Number(a.amount_approved ?? sch?.amount ?? 0);
+      const left = openTerms(sch?.release_schedule, perTerm, live, sch?.release_months);
+      const next = queued.map((p) => p.scheduled_date).filter((d): d is string => !!d).sort()[0] ?? null;
+      return { a, sch, queued, award, paid, scheduled, balance: award - paid, unscheduled: Math.max(0, award - paid - scheduled), perTerm, left, next };
+    }).filter((r) => r.balance > 0);
+    const release = (v: string | null | undefined) => RELEASE_SCHEDULES.find((x) => x.value === asSchedule(v))?.label ?? "—";
+    const upcoming = rows.flatMap((r) => r.queued.map((p) => ({ r, p })))
+      .sort((x, y) => (x.p.scheduled_date ?? "9999").localeCompare(y.p.scheduled_date ?? "9999") || listName(x.r.a.profiles).localeCompare(listName(y.r.a.profiles)));
+    // Periods still to schedule, each at the per-period award, the last one taking whatever is left.
+    const toSchedule = rows.flatMap((r) => {
+      let rest = r.unscheduled;
+      return r.left.map((t, i) => {
+        const amount = i === r.left.length - 1 ? rest : Math.min(r.perTerm, rest);
+        rest -= amount;
+        return { r, t, amount };
+      }).filter((x) => x.amount > 0);
+    });
+    const byProgram = new Map<string, typeof rows>();
+    rows.forEach((r) => { const k = r.a.scholarships?.name || "—"; byProgram.set(k, [...(byProgram.get(k) ?? []), r]); });
+    const total = (l: typeof rows, k: "award" | "paid" | "scheduled" | "balance" | "unscheduled") => l.reduce((t, r) => t + r[k], 0);
+    return {
+      title: "Schedule of Remaining Balance Disbursement", filters, count: rows.length, countLabel: "scholars with a balance",
+      notes: [
+        "Balances are to date, regardless of the period. Remaining Balance is the year's award less what has been disbursed; Not Yet Scheduled also leaves out payments already queued.",
+        "Periods to schedule are expected at the per-period award; the last period takes whatever is left of the year's award.",
+      ],
+      sections: [
+        {
+          name: "Remaining Balance by Scholar",
+          head: ["#", "Name", "Program", "Academic Year", "Release", "Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled", "Next Payout", "Periods Left"],
+          rows: rows.map((r, i) => [i + 1, listName(r.a.profiles), r.a.scholarships?.name || "—", termText(r.a), release(r.sch?.release_schedule),
+            r.award, r.paid, r.scheduled, r.balance, r.unscheduled, fmtDate(r.next), r.left.length ? r.left.join(", ") : "—"]),
+          money: ["Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled"],
+          totals: ["Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled"],
+        },
+        {
+          name: "Upcoming Payouts (Scheduled)",
+          head: ["Scheduled Date", "Student", "Program", "Period", "Method", "Status", "Reference", "Amount"],
+          rows: upcoming.map(({ r, p }) => [fmtDate(p.scheduled_date), listName(r.a.profiles), r.a.scholarships?.name || "—", payPeriod(p), p.method || "—", p.status, p.reference || "—", Number(p.amount)]),
+          money: ["Amount"], totals: ["Amount"],
+        },
+        {
+          name: "Periods Not Yet Scheduled",
+          head: ["Student", "Program", "Academic Year", "Period", "Expected Amount"],
+          rows: toSchedule.map(({ r, t, amount }) => [listName(r.a.profiles), r.a.scholarships?.name || "—", termText(r.a), termLabel(t, r.a.academic_year) || t, amount]),
+          money: ["Expected Amount"], totals: ["Expected Amount"],
+        },
+        {
+          name: "Totals by Program",
+          head: ["Program", "Scholars", "Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled"],
+          rows: [...byProgram.entries()].sort(([x], [y]) => x.localeCompare(y)).map(([k, l]) => [k, l.length, total(l, "award"), total(l, "paid"), total(l, "scheduled"), total(l, "balance"), total(l, "unscheduled")]),
+          money: ["Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled"],
+          totals: ["Scholars", "Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled"],
+        },
+      ],
+    };
+  }
+
   if (key === "grades") {
     const scholars = data.applications.filter((a) => a.status === "Approved" && s.progOk(a.scholarship_id));
     const scholarIds = new Set(scholars.map((a) => a.user_id));
@@ -608,8 +678,8 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
           ],
         },
         {
-          name: "Applications", head: ["Submitted", "Program", "AY / Semester", "Type", "School", "Grade", "Status", "Decided", "Award"],
-          rows: apps.map((a) => [fmtDate(a.created_at), a.scholarships?.name || "—", [a.academic_year, a.semester].filter(Boolean).join(" · ") || "—", kind(a), appSchool(a) || "—", appGrade(a) ?? "—", a.status, fmtDate(a.decided_at), a.status === "Approved" ? s.appAward(a) : "—"]),
+          name: "Applications", head: ["Submitted", "Program", "Academic Year", "Type", "School", "Grade", "Status", "Decided", "Award"],
+          rows: apps.map((a) => [fmtDate(a.created_at), a.scholarships?.name || "—", termText(a), kind(a), appSchool(a) || "—", appGrade(a) ?? "—", a.status, fmtDate(a.decided_at), a.status === "Approved" ? s.appAward(a) : "—"]),
           money: ["Award"],
         },
         {
@@ -704,7 +774,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
       },
       { ...groupSection("By Scholarship Program", (a) => a.scholarships?.name), rows: data.scholarships.filter((sc) => s.progOk(sc.id)).map((sc) => groupRow(sc.name, apps.filter((a) => a.scholarship_id === sc.id))) },
       groupSection("By Month Submitted", (a) => monthLabel(a.created_at.slice(0, 7)), months.map(monthLabel)),
-      groupSection("By Academic Year & Semester", (a) => termText(a), [...new Set(apps.map(termText))].sort().reverse()),
+      groupSection("By Academic Year", (a) => termText(a), [...new Set(apps.map(termText))].sort().reverse()),
       groupSection("By Applicant Type", kind, ["New", "Renewal"]),
       groupSection("By Sex", (a) => a.profiles?.sex),
       groupSection("By Age", (a) => ageBracket(ageAt(a)), [...AGE_BRACKETS.map(([l]) => l), "Not specified"]),

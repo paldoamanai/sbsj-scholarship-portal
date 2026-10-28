@@ -344,6 +344,8 @@ function AdminDashboard() {
   const [disbMethod, setDisbMethod] = useState<"Cheque" | "Cash">("Cash");
   const [disbRef, setDisbRef] = useState("");
   const [disbReceipt, setDisbReceipt] = useState<File | null>(null);
+  // A stored receipt being viewed: its signed link and whether it's an image or a PDF (shown in the page).
+  const [fileView, setFileView] = useState<{ title: string; url: string; kind: "image" | "pdf" | "other" } | null>(null);
   // Portal-issued receipt numbers (staff-only): printed on the acknowledgment slip, typed back by the student.
   const [receiptNos, setReceiptNos] = useState<Record<string, string>>({});
   const [disbLoading, setDisbLoading] = useState(false);
@@ -647,7 +649,6 @@ function AdminDashboard() {
   // How an application's award is released, and which of its terms have no payment yet.
   const scheduleOf = (a: { scholarship_id: string | null }) => asSchedule(scholarships.find((x) => x.id === a.scholarship_id)?.release_schedule);
   const monthsOf = (a: { scholarship_id: string | null }) => asMonths(scholarships.find((x) => x.id === a.scholarship_id)?.release_months);
-  const termsOf = (a: { scholarship_id: string | null }) => termsFor(scheduleOf(a), monthsOf(a));
   const awardOf = (a: { scholarship_id: string | null; amount_approved: number | null }) =>
     Number(a.amount_approved ?? scholarships.find((x) => x.id === a.scholarship_id)?.amount ?? 0);
   const paymentsOf = (appId: string) => payments.filter((p) => p.application_id === appId);
@@ -669,13 +670,14 @@ function AdminDashboard() {
     const min = a.is_renewal && s.renewal_enabled ? s.renewal_min_grade : Math.max(Number(program?.min_grade ?? 0), s.min_grade_requirement);
     return secondSemesterGradeWarning(profiles.find((x) => x.id === a.user_id), a.academic_year, min);
   };
-  // The first open term of an application, preferring the semester set in Settings.
+  // The term a new payment is for: the first open one (the next month for a monthly program), preferring
+  // the semester set in Settings. null when every term already has a payment.
   const defaultTermFor = (appId: string): PaymentTerm | null => {
     const a = applications.find((x) => x.id === appId);
     if (!a) return null;
     const open = openTermsOf(a);
     const sem = parseSettings(systemSettings).current_semester as PaymentTerm;
-    return open.includes(sem) ? sem : open[0] ?? termsOf(a)[0];
+    return open.includes(sem) ? sem : open[0] ?? null;
   };
   // Periods the bulk dialog offers: both semesters, then every month a monthly program pays.
   const bulkTerms: PaymentTerm[] = [...termsFor("semester"), ...termsFor("monthly", 12)];
@@ -889,17 +891,20 @@ function AdminDashboard() {
     return true;
   };
 
-  const openStoredFile = async (path: string | null, missingMsg: string) => {
+  // Shown in a dialog rather than a new tab: opening a blank tab and pointing it at the file once the link
+  // was signed got blocked or left an empty tab in some browsers.
+  const openStoredFile = async (path: string | null, missingMsg: string, title = "Receipt") => {
     if (!path) { toast.error(missingMsg); return; }
-    const win = window.open("", "_blank");
     const { data, error } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
-    if (error || !data?.signedUrl) { win?.close(); toast.error("Could not open receipt", { description: error?.message }); return; }
-    if (win) win.location.href = data.signedUrl; else window.location.href = data.signedUrl;
+    if (error || !data?.signedUrl) { toast.error("Could not open the file", { description: error?.message ?? "The file wasn't found in storage." }); return; }
+    const ext = path.split(".").pop()?.toLowerCase() ?? "";
+    const kind = ["jpg", "jpeg", "png", "gif", "webp"].includes(ext) ? "image" : ext === "pdf" ? "pdf" : "other";
+    setFileView({ title, url: data.signedUrl, kind });
   };
-  const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment");
+  const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment", `Disbursement receipt · ${payStudent(p)}`);
   // Compare reference numbers the way people type them: case, spaces and dashes don't matter.
   const refKey = (r: string) => r.toUpperCase().replace(/[\s\-_./#]/g, "");
-  const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The student hasn't submitted a receipt");
+  const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The student hasn't submitted a receipt", `Student's receipt · ${payStudent(p)}`);
   // Office + student copy of the acknowledgment slip, for the student to sign when the money is released.
   const printSlip = (p: Tables<"payments">, method = p.method, reference = p.reference) => {
     const receiptNo = receiptNos[p.id];
@@ -1783,6 +1788,7 @@ function AdminDashboard() {
               deletionRequests={can.super ? pendingDeletions.length : 0}
               officeBreakdown={officeView === "all" ? officeBreakdown : []}
               onViewOffice={setOfficeView}
+              currentYear={currentAY}
               onNavigate={(section, opts) => {
                 setActiveSection(section);
                 if (opts?.status !== undefined) { setStatusFilter(opts.status); setAppPage(1); }
@@ -2082,6 +2088,12 @@ function AdminDashboard() {
                             </li>
                           ))}
                         </ul>
+                        {/* Barangay Affairs: disapproved automatically once this passes with requirements still open (migration 082). */}
+                        {viewApp.status === "Pending" && viewApp.requirements_due_at && (
+                          <p className={`mt-1.5 text-xs ${new Date(viewApp.requirements_due_at).getTime() - Date.now() < 3 * 86400000 ? "text-destructive" : "text-muted-foreground"}`}>
+                            Requirements due {new Date(viewApp.requirements_due_at).toLocaleDateString("en-PH", { dateStyle: "medium" })}. If any are still open then, the application is disapproved automatically.
+                          </p>
+                        )}
                       </div>
                       {(() => {
                         const office = scholarships.find((sc) => sc.id === viewApp.scholarship_id)?.office;
@@ -2818,6 +2830,7 @@ function AdminDashboard() {
                 const cur = payDialog && payDialog !== "new" ? payDialog : null;
                 const payApp = applications.find((a) => a.id === (cur ? cur.application_id : payAppId));
                 const payWarning = payApp ? gradeWarningFor(payApp, payTerm) : null;
+                const noOpenTerm = !cur && !!payApp && openTermsOf(payApp).length === 0;
                 return (
                   <AppDialog open={payDialog !== null} onOpenChange={(o) => !o && setPayDialog(null)} size="md"
                     title={cur ? "Edit Payment" : "Schedule Payment"}
@@ -2825,7 +2838,7 @@ function AdminDashboard() {
                     onSubmit={savePayment} formKey={cur?.id ?? `new-${payAppId}`}
                     footer={<>
                       <Button type="button" variant="outline" onClick={() => setPayDialog(null)}>Cancel</Button>
-                      <Button type="submit" className="bg-gradient-primary" disabled={savingPay || (!cur && !payAppId)}>{cur ? "Save Changes" : "Schedule Payment"}</Button>
+                      <Button type="submit" className="bg-gradient-primary" disabled={savingPay || (!cur && (!payAppId || noOpenTerm))}>{cur ? "Save Changes" : "Schedule Payment"}</Button>
                     </>}>
                     {!cur && (
                       <DialogField label="Scholar">
@@ -2841,20 +2854,21 @@ function AdminDashboard() {
                         </Select>
                       </DialogField>
                     )}
-                    {payApp && (
-                      <DialogField label="Period">
-                        <div role="radiogroup" aria-label="Period" className={`grid gap-3 ${scheduleOf(payApp) === "monthly" ? "grid-cols-3 sm:grid-cols-4" : "grid-cols-2"}`}>
-                          {termsOf(payApp).map((t) => {
-                            const taken = t !== cur?.term && !openTermsOf(payApp).includes(t);
-                            return (
-                              <ChoiceButton key={t} selected={payTerm === t} disabled={taken || cur?.status === "Disbursed"} onClick={() => setPayTerm(t)}>
-                                {t === "Yearly" ? `Whole year${payApp.academic_year ? ` ${payApp.academic_year}` : ""}` : t}{taken && " · scheduled"}
-                              </ChoiceButton>
-                            );
-                          })}
-                        </div>
+                    {/* The period isn't picked: a new payment takes the next one without a payment (the next month
+                        for a monthly program), and an edited payment keeps its own. The receipt shows it. */}
+                    {payApp && (cur || noOpenTerm ? (
+                      cur ? (
+                        <DialogField label="Period">
+                          <p className="text-sm font-medium">{termLabel(cur.term, payApp.academic_year) || "—"}</p>
+                        </DialogField>
+                      ) : (
+                        <DialogNote tone="warning" icon={<AlertTriangle className="h-3.5 w-3.5" />}>Every {scheduleOf(payApp) === "monthly" ? "month" : "period"} of this scholar&apos;s award already has a payment.</DialogNote>
+                      )
+                    ) : (
+                      <DialogField label="Period" hint={`Set automatically: the next ${scheduleOf(payApp) === "monthly" ? "month" : "period"} without a payment.`}>
+                        <p className="text-sm font-medium">{termLabel(payTerm, payApp.academic_year) || "—"}</p>
                       </DialogField>
-                    )}
+                    ))}
                     {payWarning && (
                       <DialogNote tone="warning" icon={<AlertTriangle className="h-3.5 w-3.5" />}>{payWarning}. You can still schedule this payment if the office approves it.</DialogNote>
                     )}
@@ -3373,7 +3387,7 @@ function AdminDashboard() {
                               <span><span className="font-medium">{g.grade}</span> · {g.term} · {new Date(g.created_at).toLocaleDateString()}</span>
                               <span className="flex items-center gap-1.5">
                                 <Badge variant={g.status === "Verified" ? "default" : "secondary"} className={g.status === "Disapproved" ? "text-destructive" : undefined}>{g.status}</Badge>
-                                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openStoredFile(g.file_path, "No grade report on file")}>View report</Button>
+                                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openStoredFile(g.file_path, "No grade report on file", "Grade report")}>View report</Button>
                                 {g.status === "Pending" && can.review && (<>
                                   <Button size="sm" className="h-7 text-xs" disabled={payBusy} onClick={() => reviewGrade(g, "Verified")}>Verify</Button>
                                   <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={payBusy} onClick={() => { setGradeNote(""); setDisapproveGrade(g); }}>Disapprove</Button>
@@ -3451,6 +3465,22 @@ function AdminDashboard() {
         value={receiptNote} onChange={setReceiptNote} busy={payBusy}
         confirmLabel="Disapprove receipt"
         onConfirm={async () => { if (disapproveReceipt && await reviewReceipt(disapproveReceipt, "Disapproved", receiptNote)) setDisapproveReceipt(null); }} />
+
+      {/* Stored file viewer (receipts, grade reports) */}
+      <AppDialog open={!!fileView} onOpenChange={(o) => !o && setFileView(null)} size="lg" title={fileView?.title ?? "Receipt"}
+        footer={fileView && <>
+          <Button variant="outline" asChild>
+            <a href={fileView.url} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-1 h-4 w-4" /> Open in new tab</a>
+          </Button>
+          <Button onClick={() => setFileView(null)}>Close</Button>
+        </>}>
+        {fileView?.kind === "image" && (
+          // eslint-disable-next-line @next/next/no-img-element -- a short-lived signed link, not an optimisable asset
+          <img src={fileView.url} alt={fileView.title} className="mx-auto max-h-[70vh] w-auto rounded-lg border object-contain" />
+        )}
+        {fileView?.kind === "pdf" && <iframe src={fileView.url} title={fileView.title} className="h-[70vh] w-full rounded-lg border" />}
+        {fileView?.kind === "other" && <p className="text-sm text-muted-foreground">This file can&apos;t be previewed here. Use <strong>Open in new tab</strong> to see or download it.</p>}
+      </AppDialog>
 
       <AppDialog open={!!issueDialog} onOpenChange={(o) => { if (!o) setIssueDialog(null); }} size="md"
         title="Payment problem reports"
