@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import {
-  CheckCircle, XCircle, Clock, Users, Banknote, Plus, Bell, ArrowRight, GraduationCap,
+  FileText, CheckCircle, XCircle, Clock, Users, Banknote, Plus, Bell, ArrowRight, GraduationCap,
   RefreshCw, Loader2, AlertTriangle, Wallet, CalendarClock, TrendingUp, TrendingDown, Minus,
   FileDown, ScrollText, Table2, BarChart3, UserX,
 } from "@/components/icons";
@@ -301,6 +301,7 @@ export default function OverviewPanel({
 
   const stats = [
     // Ordered like the applicant pipeline: registered → applied → decided → scholar → paid.
+    { label: "Total Applicants", value: data.applicants, sub: "registered scholars", icon: FileText, color: "text-primary", trend: <Trend current={data.applicants} previous={data.applicantsPrev} />, go: () => onNavigate("applications", { status: "all" }) },
     { label: "Not Yet Applied", value: data.notYetApplied, sub: "registered, no application", icon: UserX, color: "text-warning", trend: <Trend current={data.notYetApplied} previous={data.notYetAppliedPrev} />, go: () => onNavigate("applications", { status: "not_applied" }) },
     { label: "Pending", value: data.pending, sub: data.waitlisted ? `+ ${data.waitlisted} waitlisted` : "Needs review", icon: Clock, color: "text-warning", trend: <Trend current={data.pending} previous={data.prevPending} />, go: () => onNavigate("applications", { status: data.waitlisted ? "open" : "pending" }) },
     { label: "Approved", value: data.approved, sub: `${data.approvalRate}% approval rate`, icon: CheckCircle, color: "text-success", trend: <Trend current={data.approved} previous={data.prevApproved} />, go: () => onNavigate("applications", { status: "approved" }) },
@@ -385,7 +386,7 @@ export default function OverviewPanel({
         <h3 className="text-sm font-semibold">Applicant pipeline</h3>
         <span className="text-xs text-muted-foreground">registered → applied → decided → scholar → paid</span>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
         {stats.map((stat) => (
           <Card key={stat.label} className="hover-lift cursor-pointer" role="button" tabIndex={0} onClick={stat.go}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") stat.go(); }}>

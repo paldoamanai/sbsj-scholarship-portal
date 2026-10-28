@@ -1491,8 +1491,9 @@ function AdminDashboard() {
   const showApplicants = (status: string) => { setStatusFilter(status); setAppPage(1); setActiveSection("applications"); };
   // Shown on Applicant Management; the Dashboard's stat cards follow the same order.
   const pipelineStrip = (
-    <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2">
+    <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-2">
       {([
+        { label: "Total applicants", value: pipeline.total, sub: "registered scholars", go: () => showApplicants("all") },
         { label: "Not yet applied", value: pipeline.notApplied, sub: "registered, no application", go: () => showApplicants("not_applied"), warn: pipeline.notApplied > 0 },
         { label: "Pending", value: pipeline.pending, sub: pipeline.waitlisted ? `+ ${pipeline.waitlisted} waitlisted` : "awaiting review", go: () => showApplicants(pipeline.waitlisted ? "open" : "pending") },
         { label: "Approved", value: pipeline.approved, sub: "applications", go: () => showApplicants("approved") },
