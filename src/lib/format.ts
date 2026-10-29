@@ -4,6 +4,12 @@
 export const pesoFixed = (n: number) =>
   `₱${Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+/** ₱8.15M / ₱850K / ₱9,500: short enough for a stat card (pesoFixed gives the exact amount). */
+export const pesoCompact = (n: number) =>
+  Math.abs(n) >= 10_000
+    ? `₱${new Intl.NumberFormat("en-PH", { notation: "compact", maximumFractionDigits: 2 }).format(n)}`
+    : `₱${Math.round(n).toLocaleString("en-PH")}`;
+
 /** Like pesoFixed, but "—" when there is no amount. */
 export const peso = (n: number | null | undefined) => (n == null ? "—" : pesoFixed(n));
 

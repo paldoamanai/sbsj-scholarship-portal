@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Tables } from "@/integrations/supabase/types";
-import { pesoFixed as formatPHP } from "@/lib/format";
+import { pesoCompact, pesoFixed as formatPHP } from "@/lib/format";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { academicYearOf, ayStart } from "@/lib/settings";
 
@@ -307,7 +307,7 @@ export default function OverviewPanel({
     { label: "Approved", value: data.approved, sub: `${data.approvalRate}% approval rate`, icon: CheckCircle, color: "text-success", trend: <Trend current={data.approved} previous={data.prevApproved} />, go: () => onNavigate("applications", { status: "approved" }) },
     { label: "Disapproved", value: data.disapproved, sub: `${data.disapprovalRate}% disapproval rate`, icon: XCircle, color: "text-destructive", trend: <Trend current={data.disapproved} previous={data.prevDisapproved} />, go: () => onNavigate("applications", { status: "disapproved" }) },
     { label: "Scholars", value: profiles.length, sub: `${data.activeStudents} active · ${data.newStudents} new`, icon: Users, color: "text-primary", trend: <Trend current={data.newStudents} previous={data.newStudentsPrev} />, go: () => onNavigate("students") },
-    { label: "Disbursed", value: formatPHP(data.disbCur), sub: `${data.paidScholars} scholar${data.paidScholars === 1 ? "" : "s"} paid · ${scope}`, icon: Banknote, color: "text-success", trend: <Trend current={data.disbCur} previous={data.disbPrev} />, go: () => onNavigate("disbursement"), small: true },
+    { label: "Disbursed", value: pesoCompact(data.disbCur), title: formatPHP(data.disbCur), sub: `${data.paidScholars} scholar${data.paidScholars === 1 ? "" : "s"} paid · ${scope}`, icon: Banknote, color: "text-success", trend: <Trend current={data.disbCur} previous={data.disbPrev} />, go: () => onNavigate("disbursement") },
   ];
 
   const attention = [
@@ -388,14 +388,14 @@ export default function OverviewPanel({
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
         {stats.map((stat) => (
-          <Card key={stat.label} className="hover-lift cursor-pointer" role="button" tabIndex={0} onClick={stat.go}
+          <Card key={stat.label} className="hover-lift cursor-pointer min-w-0" role="button" tabIndex={0} onClick={stat.go} title={"title" in stat ? stat.title : undefined}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") stat.go(); }}>
             <CardContent className="py-4">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-medium text-muted-foreground truncate">{stat.label}</p>
                 <div className="h-8 w-8 rounded-lg bg-accent flex items-center justify-center shrink-0"><stat.icon className={`h-4 w-4 ${stat.color}`} /></div>
               </div>
-              <p className={`mt-2 ${stat.small ? "text-xl" : "text-3xl"} font-bold font-display tabular-nums leading-none`}>{stat.value}</p>
+              <p className="mt-2 text-3xl font-bold font-display tabular-nums leading-none truncate">{stat.value}</p>
               <div className="mt-2 flex items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground truncate">{stat.sub}</p>
                 {stat.trend}
