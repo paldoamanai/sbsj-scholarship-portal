@@ -342,6 +342,9 @@ function AdminDashboard() {
   const [disbRef, setDisbRef] = useState("");
   const [payPicked, setPayPicked] = useState<Set<string>>(new Set());
   const [batchReceive, setBatchReceive] = useState<Tables<"payments">[] | null>(null);
+  // Payments picked to move to one new scheduled date, and that date.
+  const [batchSchedule, setBatchSchedule] = useState<Tables<"payments">[] | null>(null);
+  const [batchDate, setBatchDate] = useState("");
   const [payView, setPayView] = useState<"list" | "schedule">("list");
   // A stored receipt being viewed: its signed link and whether it's an image or a PDF (shown in the page).
   const [fileView, setFileView] = useState<{ title: string; url: string; kind: "image" | "pdf" | "other" } | null>(null);
@@ -2708,6 +2711,7 @@ function AdminDashboard() {
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-muted-foreground">{picked.length} selected · {formatPHP(picked.reduce((t, p) => t + Number(p.amount || 0), 0))}</span>
                     <Button size="sm" variant="ghost" onClick={() => setPayPicked(new Set())}>Clear</Button>
+                    <Button size="sm" variant="outline" onClick={() => { setBatchDate(picked[0]?.scheduled_date ?? defaultScheduledDate); setBatchSchedule(picked); }}><CalendarClock className="mr-1 h-4 w-4" /> Schedule {picked.length}</Button>
                     <Button size="sm" className="bg-gradient-primary" onClick={() => setBatchReceive(picked)}><CheckCircle className="mr-1 h-4 w-4" /> Mark {picked.length} received</Button>
                   </div>
                 )}
@@ -2732,7 +2736,12 @@ function AdminDashboard() {
                               </CardTitle>
                               <p className="text-xs text-muted-foreground mt-0.5">{list.length} scholar{list.length === 1 ? "" : "s"} · {formatPHP(list.reduce((t, p) => t + Number(p.amount || 0), 0))}</p>
                             </div>
-                            {can.finance && <Button size="sm" variant="outline" onClick={() => setBatchReceive(list)}>Mark all received</Button>}
+                            {can.finance && (
+                              <div className="flex shrink-0 gap-2">
+                                <Button size="sm" variant="ghost" onClick={() => { setBatchDate(date || defaultScheduledDate); setBatchSchedule(list); }}>Move date</Button>
+                                <Button size="sm" variant="outline" onClick={() => setBatchReceive(list)}>Mark all received</Button>
+                              </div>
+                            )}
                           </CardHeader>
                           <CardContent className="pt-0">
                             <ul className="divide-y rounded-md border">
@@ -3265,6 +3274,42 @@ function AdminDashboard() {
           </DialogField>
         )}
         <DialogNote icon={<Lock className="h-3.5 w-3.5" />}>Once marked received, the payment is locked and the scholar is notified.</DialogNote>
+      </AppDialog>
+
+      {/* Schedule a batch: one new date for every picked payment */}
+      <AppDialog open={!!batchSchedule} onOpenChange={(o) => !o && setBatchSchedule(null)} size="md"
+        title={`Schedule ${batchSchedule?.length ?? 0} payment${batchSchedule?.length === 1 ? "" : "s"}`}
+        description="Every payment below is moved to this date. The scholars are notified."
+        footer={<>
+          <Button variant="outline" onClick={() => setBatchSchedule(null)}>Cancel</Button>
+          <Button className="bg-gradient-primary" disabled={savingPay || !batchDate || !batchSchedule?.length} onClick={async () => {
+            if (!batchSchedule) return;
+            setSavingPay(true);
+            const ids = batchSchedule.map((p) => p.id);
+            // Only payments not yet received or cancelled can move.
+            const { data: rows, error } = await supabase.from("payments").update({ scheduled_date: batchDate })
+              .in("id", ids).in("status", ["Pending", "Processing"]).select("id");
+            setSavingPay(false);
+            if (error) { toast.error("Payments not rescheduled", { description: error.message }); return; }
+            const moved = rows?.length ?? 0;
+            toast.success(`${moved} payment${moved === 1 ? "" : "s"} scheduled for ${new Date(`${batchDate}T00:00:00`).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" })}`,
+              moved < ids.length ? { description: `${ids.length - moved} were already received or cancelled and weren't changed.` } : undefined);
+            setBatchSchedule(null); setPayPicked(new Set()); loadData();
+          }}>
+            {savingPay && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Schedule
+          </Button>
+        </>}>
+        <DialogField label="Scheduled date" htmlFor="batch-date">
+          <Input id="batch-date" type="date" value={batchDate} onChange={(e) => setBatchDate(e.target.value)} />
+        </DialogField>
+        <ul className="max-h-64 divide-y overflow-auto rounded-md border text-sm">
+          {batchSchedule?.map((p) => (
+            <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-1.5">
+              <span className="min-w-0 truncate">{payStudent(p)} <span className="text-xs text-muted-foreground">· {payProgram(p)} · now {p.scheduled_date || "no date"}</span></span>
+              <span className="shrink-0 tabular-nums font-medium">{formatPHP(Number(p.amount))}</span>
+            </li>
+          ))}
+        </ul>
       </AppDialog>
 
       {/* Mark received: a batch */}
