@@ -15,8 +15,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { Tables } from "@/integrations/supabase/types";
 import {
-  PAYMENT_METHODS, SEMESTERS, SETTING_DEFAULTS, parseSettings, validateSetting,
-  type AppSettings, type PaymentMethod, type SettingKey,
+  SEMESTERS, SETTING_DEFAULTS, parseSettings, validateSetting,
+  type AppSettings, type SettingKey,
 } from "@/lib/settings";
 
 interface Props {
@@ -93,11 +93,6 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
 
   const Err = ({ k }: { k: SettingKey }) => (errors[k] ? <p className="text-xs text-destructive mt-1">{errors[k]}</p> : null);
 
-  const toggleMethod = (m: PaymentMethod, on: boolean) => {
-    const next = on ? [...draft.payment_methods, m] : draft.payment_methods.filter((x) => x !== m);
-    const methods = PAYMENT_METHODS.filter((x) => next.includes(x));
-    setDraft((d) => ({ ...d, payment_methods: methods, default_payment_method: methods.includes(d.default_payment_method) ? d.default_payment_method : (methods[0] ?? d.default_payment_method) }));
-  };
 
   return (
     <div className="space-y-4 animate-fade-in max-w-2xl">
@@ -171,21 +166,6 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Payment Methods</CardTitle><CardDescription>Only enabled methods can be chosen for new payments or by scholars.</CardDescription></CardHeader>
-        <CardContent className="space-y-3">
-          {PAYMENT_METHODS.map((m) => (
-            <div key={m} className="flex items-center justify-between border-b last:border-0 pb-3 last:pb-0">
-              <span className="text-sm">{m}</span>
-              <Switch checked={draft.payment_methods.includes(m)} onCheckedChange={(v) => toggleMethod(m, v)} />
-            </div>
-          ))}
-          <Err k="payment_methods" />
-          {draft.payment_methods.length === 0 && <p className="text-xs text-destructive">Enable at least one payment method.</p>}
-          <SaveBar id="payments" keys={["payment_methods", "default_payment_method"]} />
-        </CardContent>
-      </Card>
-
-      <Card>
         <CardHeader><CardTitle className="text-base">Renewals</CardTitle><CardDescription>A scholar with an earlier approved application is treated as renewing. The yearly application limit still applies.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center justify-between">
@@ -232,13 +212,8 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
       <Card>
         <CardHeader><CardTitle className="text-base">Disbursement Defaults</CardTitle><CardDescription>Pre-filled when you create a new payment. You can still change them per payment.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">Payments are released in cash.</p>
           <div className="grid grid-cols-2 gap-3">
-            <div><Label>Default method</Label>
-              <Select value={draft.default_payment_method} onValueChange={(v) => set("default_payment_method", v as PaymentMethod)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{draft.payment_methods.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
             <div><Label>Schedule payments (days from today)</Label><Input type="number" min={0} max={365} step={1} value={draft.default_payment_lead_days} onChange={(e) => set("default_payment_lead_days", e.target.value as unknown as number)} /><Err k="default_payment_lead_days" /></div>
           </div>
           <div><Label>Where scholars collect payments</Label><Input maxLength={500} value={draft.payment_pickup_location} onChange={(e) => set("payment_pickup_location", e.target.value)} placeholder="e.g. Treasurer's Office, Municipal Hall" /><Err k="payment_pickup_location" /></div>

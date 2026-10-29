@@ -61,7 +61,7 @@ export function buildTimeline(app: App, payments: Payment[]): Step[] {
   } else if (open.length > 0) {
     const next = [...open].sort((a, b) => (a.scheduled_date ?? "9999").localeCompare(b.scheduled_date ?? "9999"))[0];
     steps.push({ key: "payment", title: "Payment scheduled", state: "current", date: next.scheduled_date,
-      detail: `${pesoFixed(next.amount)} via ${next.method || "Cash or Cheque"}` });
+      detail: `${pesoFixed(next.amount)} via ${next.method || "Cash"}` });
     steps.push({ key: "disbursed", title: "Payment received", state: "upcoming" });
   } else {
     steps.push({ key: "payment", title: "Waiting for your payment to be scheduled", state: "current", detail: "The office will schedule it and you will be notified." });

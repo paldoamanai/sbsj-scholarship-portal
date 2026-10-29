@@ -2676,7 +2676,7 @@ function AdminDashboard() {
               <Card className="border-warning/30 bg-warning/5">
                 <CardContent className="py-3 flex items-start gap-2">
                   <Lock className="h-4 w-4 text-warning mt-0.5" />
-                  <p className="text-sm text-muted-foreground"><strong className="text-foreground">Schedule</strong> a payment for an approved scholar, then <strong className="text-foreground">mark it received</strong> once it&apos;s released, one at a time or in a batch. Received payments are <strong className="text-foreground">locked</strong>. Only the methods enabled in <strong className="text-foreground">Settings</strong> ({enabledMethods.join(" and ")}) are accepted; a cheque needs its number.</p>
+                  <p className="text-sm text-muted-foreground"><strong className="text-foreground">Schedule</strong> a payment for an approved scholar, then <strong className="text-foreground">mark it received</strong> once it&apos;s released, one at a time or in a batch. Received payments are <strong className="text-foreground">locked</strong>. Payments are released in <strong className="text-foreground">cash</strong>.</p>
                 </CardContent>
               </Card>
               {(() => {
@@ -2766,7 +2766,7 @@ function AdminDashboard() {
                           onCheckedChange={(v) => setPayPicked((prev) => { const n = new Set(prev); pageOpen.forEach((p) => (v ? n.add(p.id) : n.delete(p.id))); return n; })} />
                       </TableHead>
                     )}
-                    <TableHead>Scholar</TableHead><TableHead>Reference / Cheque No.</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Scholar prefers</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Scholar</TableHead><TableHead>Reference No.</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Scholar prefers</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {pagedPayments.length === 0 && <TableRow><TableCell colSpan={can.finance ? 9 : 8} className="text-center py-8 text-muted-foreground">No payments found</TableCell></TableRow>}
@@ -2891,6 +2891,8 @@ function AdminDashboard() {
                         <Input id="pay-date" name="scheduled_date" type="date" defaultValue={cur ? (cur.scheduled_date ?? "") : defaultScheduledDate} />
                       </DialogField>
                     </div>
+                    {/* Cash only now; the choice shows only if more methods are ever enabled. */}
+                    {enabledMethods.length > 1 && (
                     <DialogField label="Method" hint={cur?.preferred_method ? `The scholar chose ${cur.preferred_method}, so the method is fixed.` : undefined}>
                       <div role="radiogroup" aria-label="Method" className="grid grid-cols-2 gap-3">
                         {enabledMethods.map((m) => (
@@ -2900,6 +2902,7 @@ function AdminDashboard() {
                         ))}
                       </div>
                     </DialogField>
+                    )}
                     <DialogField label={payMethod === "Cheque" ? "Cheque number" : "Reference number"} htmlFor="pay-ref" hint={payMethod === "Cheque" ? "Optional now; required before the cheque is disbursed." : "Optional."}>
                       <Input id="pay-ref" name="reference" defaultValue={cur?.reference ?? ""} placeholder={payMethod === "Cheque" ? "e.g. CHK-2026-001" : "e.g. REF-001"} />
                     </DialogField>
@@ -3254,6 +3257,7 @@ function AdminDashboard() {
             {disbLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Mark received
           </Button>
         </>}>
+        {enabledMethods.length > 1 && (
         <DialogField label="Payment method" hint={disbLocked ? `The scholar chose ${disbPay?.preferred_method} for this payment, so the method is fixed.` : undefined}>
           <div role="radiogroup" aria-label="Payment method" className="grid grid-cols-2 gap-3">
             {enabledMethods.map((m) => (
@@ -3263,6 +3267,7 @@ function AdminDashboard() {
             ))}
           </div>
         </DialogField>
+        )}
         <DialogField label={disbMethod === "Cheque" ? "Cheque number" : "Reference number"} htmlFor="disb-ref" hint={disbMethod === "Cheque" ? "Required for cheques." : "Optional."}>
           <Input id="disb-ref" placeholder={disbMethod === "Cheque" ? "e.g. CHK-2026-001" : "e.g. REF-001"} value={disbRef} onChange={(e) => setDisbRef(e.target.value)} />
         </DialogField>
@@ -3288,7 +3293,7 @@ function AdminDashboard() {
             </li>
           ))}
         </ul>
-        <DialogNote icon={<Lock className="h-3.5 w-3.5" />}>Each payment keeps the method and number it was scheduled with. Cheques without a number and payments still waiting for a verified MOA are skipped. Received payments are locked and the scholars are notified.</DialogNote>
+        <DialogNote icon={<Lock className="h-3.5 w-3.5" />}>Payments still waiting for a verified MOA are skipped. Received payments are locked and the scholars are notified.</DialogNote>
       </AppDialog>
 
       <AppDialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)} size="lg"

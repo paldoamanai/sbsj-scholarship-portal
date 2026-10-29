@@ -1,8 +1,9 @@
 import type { Json } from "@/integrations/supabase/types";
 import { isStaffRole } from "@/lib/permissions";
 
+// Payments are cash only. "Cheque" stays in the type for payments made by cheque before.
 export type PaymentMethod = "Cash" | "Cheque";
-export const PAYMENT_METHODS: PaymentMethod[] = ["Cash", "Cheque"];
+export const PAYMENT_METHODS: PaymentMethod[] = ["Cash"];
 export const SEMESTERS = ["1st Semester", "2nd Semester", "Summer"] as const;
 
 // The application cycle is the academic year (the academic_year setting): one application per program
@@ -55,7 +56,7 @@ export const SETTING_DEFAULTS: AppSettings = {
   academic_year: "2025-2026",
   current_semester: "1st Semester",
   min_grade_requirement: 85,
-  payment_methods: ["Cash", "Cheque"],
+  payment_methods: ["Cash"],
   email_notifications: true,
   applications_open: true,
   application_open_date: "",
@@ -98,7 +99,7 @@ export function parseSettings(rows: { key: string; value: Json }[] | null | unde
   (rows ?? []).forEach((r) => { raw[r.key] = r.value; });
   const d = SETTING_DEFAULTS;
   const methods = Array.isArray(raw.payment_methods)
-    ? (raw.payment_methods.filter((m): m is PaymentMethod => m === "Cash" || m === "Cheque"))
+    ? (raw.payment_methods.filter((m): m is PaymentMethod => PAYMENT_METHODS.includes(m as PaymentMethod)))
     : d.payment_methods;
   const docs = Array.isArray(raw.required_documents)
     ? raw.required_documents.filter((x): x is string => typeof x === "string" && x.trim() !== "")

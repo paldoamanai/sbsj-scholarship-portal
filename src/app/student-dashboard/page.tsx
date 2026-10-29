@@ -142,7 +142,8 @@ function MethodPreference({ payment, onChanged, compact = false }: { payment: Pa
   const supabase = createClient();
   const [saving, setSaving] = useState(false);
   const { settings } = useSystemSettings();
-  if (payment.status !== "Pending" && payment.status !== "Processing") return null;
+  // Nothing to choose while cash is the only method.
+  if ((payment.status !== "Pending" && payment.status !== "Processing") || settings.payment_methods.length < 2) return null;
 
   const choose = async (method: "Cash" | "Cheque") => {
     if (payment.preferred_method === method) return;
