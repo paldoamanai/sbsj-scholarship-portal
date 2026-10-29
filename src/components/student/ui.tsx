@@ -20,7 +20,7 @@ export function Panel({ children, className = "" }: { children: React.ReactNode;
 }
 
 
-export function StatusBadge({ status }: { status: string | null | undefined }) {
+export function StatusBadge({ status, label }: { status: string | null | undefined; label?: string }) {
   if (!status || status === "—") return <span className="text-sm text-muted-foreground">—</span>;
   const map: Record<string, { icon: IconComponent; cls: string }> = {
     Approved:   { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
@@ -34,14 +34,17 @@ export function StatusBadge({ status }: { status: string | null | undefined }) {
     Cancelled:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
   };
   const m = map[status];
-  if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{status}</span>;
+  if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{label ?? status}</span>;
   const Icon = m.icon;
   return (
     <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${m.cls}`}>
-      <Icon className="h-3 w-3" />{status}
+      <Icon className="h-3 w-3" />{label ?? status}
     </span>
   );
 }
+
+/** How a payment's status reads to scholars: the office schedules it, then marks it received. */
+export const PAYMENT_STATUS_LABEL: Record<string, string> = { Pending: "Scheduled", Processing: "Scheduled", Disbursed: "Received" };
 
 /** A headline number. Pass `onClick` to make the whole card a link to the relevant tab. */
 export function StatCard({ icon: Icon, label, value, sub, subTone = "neutral", accent = false, onClick }: {

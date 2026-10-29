@@ -21,11 +21,11 @@ const FAQ = [
   },
   {
     q: "How and when do I get paid?",
-    a: "Once you are approved, the office schedules your payouts. The Payouts tab shows each one, how to claim it, and lets you say whether you prefer cash or cheque.",
+    a: "Once you are approved, the office schedules your payouts. The Payouts tab shows each one, its date and how to claim it. Payouts are in cash.",
   },
   {
-    q: "I received my money. What do I enter?",
-    a: "On the Payouts tab, type the receipt number printed on the acknowledgment slip you signed. That confirms you received the payment.",
+    q: "I received my money. Do I need to do anything?",
+    a: "No. The office marks the payout as received when you claim it, and it shows as Received on your Payouts tab. If something is wrong, use Report a problem on that payout.",
   },
   {
     q: "Something is wrong with a payment",
