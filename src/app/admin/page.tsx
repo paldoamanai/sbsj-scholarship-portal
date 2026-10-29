@@ -260,6 +260,8 @@ function AdminDashboard() {
   const [reviewingDoc, setReviewingDoc] = useState(false);
   const [docsLoading, setDocsLoading] = useState(false);
   const [auditLogs, setAuditLogs] = useState<Tables<"audit_logs">[]>([]);
+  // Bumped whenever the audit log may have new entries, so the Audit Logs page fetches its page again.
+  const [auditVersion, setAuditVersion] = useState(0);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [systemSettings, setSystemSettings] = useState<Tables<"system_settings">[]>([]);
   const [adminProfile, setAdminProfile] = useState<Tables<"profiles"> | null>(null);
@@ -428,6 +430,7 @@ function AdminDashboard() {
     if (profilesRes.data) setProfiles(await withoutStaff(profilesRes.data, staffRolesRes.data));
     if (paymentsRes.data) setPayments(paymentsRes.data);
     if (logsRes.data) setAuditLogs(logsRes.data);
+    setAuditVersion((v) => v + 1);
     if (settingsRes.data) setSystemSettings(settingsRes.data);
     if (adminProfRes.data) setAdminProfile(adminProfRes.data);
     if (notifsRes.data) setNotifications(notifsRes.data);
@@ -444,9 +447,13 @@ function AdminDashboard() {
   // Re-fetch applications/payments in the background (no loading flicker) —
   // used when a live change comes in over realtime.
   const silentRefreshAdmin = async () => {
-    const [appsRes, paymentsRes, profilesRes, docsRes] = await Promise.all([
+    // The audit log too: most changes here write an entry (migration 080), on this device or another.
+    const [appsRes, paymentsRes, profilesRes, docsRes, logsRes] = await Promise.all([
       fetchAllApps(), fetchAllPayments(), fetchAllProfiles(), fetchAllDocs(),
+      supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(1000),
     ]);
+    if (logsRes.data) setAuditLogs(logsRes.data);
+    setAuditVersion((v) => v + 1);
     if (docsRes.data) setAllDocs(docsRes.data);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (paymentsRes.data) setPayments(paymentsRes.data);
@@ -482,6 +489,12 @@ function AdminDashboard() {
         }
       )
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles" }, () => silentRefreshAdmin())
+      // New audit entries from any device (migration 085 publishes the table; each account gets only what it may read).
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "audit_logs" }, (payload) => {
+        const entry = payload.new as Tables<"audit_logs">;
+        setAuditLogs((prev) => (prev.some((x) => x.id === entry.id) ? prev : [entry, ...prev].slice(0, 1000)));
+        setAuditVersion((v) => v + 1);
+      })
       // Uploads and reviews change the requirement checks (see migration 041 for the publication).
       .on("postgres_changes", { event: "*", schema: "public", table: "documents" }, () => {
         silentRefreshAdmin();
@@ -1016,7 +1029,7 @@ function AdminDashboard() {
   // Searched and paged in the database, so the whole history is reachable, not just the entries loaded above.
   const auditQuery = useAuditLogQuery(supabase,
     { search: auditSearch, action: auditAction, entity: auditEntity, user: auditUser, from: auditFrom, to: auditTo },
-    auditPage, AUDIT_PAGE_SIZE, activeSection === "audit-logs");
+    auditPage, AUDIT_PAGE_SIZE, activeSection === "audit-logs", auditVersion);
   const auditPages = Math.max(1, Math.ceil(auditQuery.count / AUDIT_PAGE_SIZE));
   const currentAuditPage = Math.min(auditPage, auditPages);
   const pagedLogs = auditQuery.rows;
@@ -1400,6 +1413,7 @@ function AdminDashboard() {
     ]);
     if (settingsRes.data) setSystemSettings(settingsRes.data);
     if (logsRes.data) setAuditLogs(logsRes.data);
+    setAuditVersion((v) => v + 1);
 
     if (failed) { toast.error("Settings not saved", { description: failed }); return false; }
     toast.success(action === "reset_settings" ? "Settings reset to defaults" : "Settings saved");

@@ -36,7 +36,9 @@ function applyFilters<Q extends {
  * One page of the audit log, filtered in the database, so the whole history can be browsed and
  * searched rather than only the entries the admin page loads up front.
  */
-export function useAuditLogQuery(supabase: SupabaseClient<Database>, filters: AuditFilters, page: number, pageSize: number, enabled: boolean) {
+export function useAuditLogQuery(supabase: SupabaseClient<Database>, filters: AuditFilters, page: number, pageSize: number, enabled: boolean,
+  /** Bump to fetch the page again, e.g. when an entry was written here or on another device. */
+  refreshKey = 0) {
   const [rows, setRows] = useState<Tables<"audit_logs">[]>([]);
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -62,7 +64,7 @@ export function useAuditLogQuery(supabase: SupabaseClient<Database>, filters: Au
       setLoading(false);
     }, search ? 300 : 0);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [supabase, search, action, entity, user, from, to, page, pageSize, enabled]);
+  }, [supabase, search, action, entity, user, from, to, page, pageSize, enabled, refreshKey]);
 
   /** Every matching entry (up to AUDIT_EXPORT_CAP), for exports. */
   const fetchAll = useCallback(async () => {
