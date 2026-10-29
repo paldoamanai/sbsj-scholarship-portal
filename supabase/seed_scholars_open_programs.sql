@@ -13,7 +13,7 @@
 -- Run in the Supabase SQL Editor. Safe to re-run (fixed ids; a re-run resets the seed rows). Triggers on
 -- the public tables are off for this transaction only: no emails or notifications go out and the
 -- deadline, slot, budget and "locked once received" checks don't reject these past records. Seed
--- accounts sign in with password Student@1234 at <first>.<last>.<n>@seed.sbsj.test.
+-- accounts sign in with password Student@1234 at <first>.<last>.<1000+n>@seed.sbsj.test.
 --
 -- If the earlier seed (seed_scholars_2023_2024.sql) is still in the database, delete it first
 -- (delete_seeded_scholars.sql), or both sets count toward 2023-2024 and 2024-2025.
@@ -88,7 +88,7 @@ SELECT
   ('5eed1000-0000-0000-0000-' || lpad(x.i::text, 12, '0'))::uuid AS user_id,
   ('5eed1001-0000-0000-0000-' || lpad(x.i::text, 12, '0'))::uuid AS app_id,
   x.yr || '-' || (x.yr + 1)                                       AS academic_year,
-  lower(regexp_replace(x.first_name || '.' || x.last_name, '[^A-Za-z.]', '', 'g')) || '.' || x.i
+  lower(regexp_replace(x.first_name || '.' || x.last_name, '[^A-Za-z.]', '', 'g')) || '.' || (1000 + x.i)
     || '@seed.sbsj.test'                                          AS email,
   make_date(x.yr - 18 - (x.i % 4), 1 + (x.i % 12), 1 + (x.i % 28)) AS dob,
   '0917' || lpad((6000000 + x.i)::text, 7, '0')                   AS phone,
