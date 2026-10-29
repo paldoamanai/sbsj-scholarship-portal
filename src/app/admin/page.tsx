@@ -839,7 +839,7 @@ function AdminDashboard() {
   };
 
   // ── Disbursement management ──
-  const PAY_PAGE_SIZE = 10;
+  const PAY_PAGE_SIZE = 50;
   const payStudent = (p: Tables<"payments">) => {
     const prof = profiles.find((x) => x.id === p.user_id);
     return prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() || prof.email || "Unknown" : "Unknown";
@@ -847,6 +847,7 @@ function AdminDashboard() {
   const payProgram = (p: Tables<"payments">) => applications.find((a) => a.id === p.application_id)?.scholarships?.name || "—";
   // Scheduled and not yet received. ("Processing" is from before; it's treated like scheduled.)
   const isOpenPayment = (p: Tables<"payments">) => p.status === "Pending" || p.status === "Processing";
+  // Latest first by the date that matters: when it was received, else when it's scheduled.
   const filteredPayments = payments.filter((p) => {
     if (!inYear(payAY(p))) return false;
     if (payFilter === "issues") { if (!openIssueFor(p.id)) return false; }
@@ -854,7 +855,18 @@ function AdminDashboard() {
     else if (payFilter !== "all" && p.status !== payFilter) return false;
     const q = paySearch.trim().toLowerCase();
     return !q || `${payStudent(p)} ${payProgram(p)} ${p.reference || ""}`.toLowerCase().includes(q);
-  });
+  }).sort((x, y) => (y.disbursed_at || y.scheduled_date || y.created_at).localeCompare(x.disbursed_at || x.scheduled_date || x.created_at));
+  // The picked school year at a glance: scholars received and still scheduled.
+  const payYearSummary = (() => {
+    const inView = payments.filter((p) => inYear(payAY(p)));
+    const sumOf = (l: Tables<"payments">[]) => l.reduce((t, p) => t + Number(p.amount || 0), 0);
+    const got = inView.filter((p) => p.status === "Disbursed");
+    const due = inView.filter(isOpenPayment);
+    return {
+      receivedScholars: new Set(got.map((p) => p.user_id)).size, received: sumOf(got), receivedCount: got.length,
+      scheduledScholars: new Set(due.map((p) => p.user_id)).size, scheduled: sumOf(due), scheduledCount: due.length,
+    };
+  })();
   const payPages = Math.max(1, Math.ceil(filteredPayments.length / PAY_PAGE_SIZE));
   const currentPayPage = Math.min(payPage, payPages);
   const pagedPayments = filteredPayments.slice((currentPayPage - 1) * PAY_PAGE_SIZE, currentPayPage * PAY_PAGE_SIZE);
@@ -2750,6 +2762,21 @@ function AdminDashboard() {
                     <Button size="sm" className="bg-gradient-primary" onClick={() => setBatchReceive(picked)}><CheckCircle className="mr-1 h-4 w-4" /> Mark {picked.length} received</Button>
                   </div>
                 )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button type="button" onClick={() => { setPayView("list"); setPayFilter("Disbursed"); setPayPage(1); }}
+                  className="rounded-xl border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/60 cursor-pointer">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Received{yearView !== "all" ? ` · S.Y. ${yearView}` : ""}</p>
+                  <p className="text-2xl font-bold tabular-nums text-success">{payYearSummary.receivedScholars} <span className="text-sm font-medium text-muted-foreground">scholar{payYearSummary.receivedScholars === 1 ? "" : "s"}</span></p>
+                  <p className="text-xs text-muted-foreground">{formatPHP(payYearSummary.received)} · {payYearSummary.receivedCount} payment{payYearSummary.receivedCount === 1 ? "" : "s"}</p>
+                </button>
+                <button type="button" onClick={() => { setPayView("list"); setPayFilter("open"); setPayPage(1); }}
+                  className="rounded-xl border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/60 cursor-pointer">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Scheduled{yearView !== "all" ? ` · S.Y. ${yearView}` : ""}</p>
+                  <p className="text-2xl font-bold tabular-nums text-warning">{payYearSummary.scheduledScholars} <span className="text-sm font-medium text-muted-foreground">scholar{payYearSummary.scheduledScholars === 1 ? "" : "s"}</span></p>
+                  <p className="text-xs text-muted-foreground">{formatPHP(payYearSummary.scheduled)} · {payYearSummary.scheduledCount} payment{payYearSummary.scheduledCount === 1 ? "" : "s"}</p>
+                </button>
               </div>
 
               {payView === "schedule" ? (
