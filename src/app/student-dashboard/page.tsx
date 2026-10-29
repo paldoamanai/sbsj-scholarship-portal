@@ -33,7 +33,7 @@ import NotificationPreferences from "@/components/notifications/NotificationPref
 import type { Tables } from "@/integrations/supabase/types";
 import { profileFromUserMetadata } from "@/lib/registration-profile";
 import { useSystemSettings } from "@/hooks/use-system-settings";
-import { applicationsBlockedReason, ayStart } from "@/lib/settings";
+import { academicYearOf, applicationsBlockedReason, ayStart } from "@/lib/settings";
 import { APPLICATION_DOCS, DOC_MIME, LETTER_OF_INTENT, MOA, PHOTO_MIME, documentPath, shrinkPhoto, uploadLetterPhoto, uploadUserDocument } from "@/lib/documents";
 import { uploadPendingDocuments } from "@/lib/pending-documents";
 import { HOUSE_PHOTO, approvalDocuments, asksLetter, documentNote, followUpDocuments, needsHomeVisit, needsHousePin, needsMoa, photosOnly, programDocuments } from "@/lib/office-requirements";
@@ -73,6 +73,21 @@ const ISSUE_KINDS: Record<string, string> = {
   other: "Something else",
 };
 
+// A school year picker for a history list: "all" or one of the years given, newest first.
+function YearPicker({ years, value, onChange }: { years: string[]; value: string; onChange: (v: string) => void }) {
+  if (years.length < 2) return null;
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="h-8 w-36 text-xs rounded-lg" aria-label="School year"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">All school years</SelectItem>
+        {years.map((y) => <SelectItem key={y} value={y}>S.Y. {y}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+}
+const yearsOf = (list: string[]) => [...new Set(list)].filter((y) => !Number.isNaN(ayStart(y))).sort().reverse();
+
 // One place for everything about money: what you're owed, what's coming, how to claim it, receipts and problems.
 function DisbursementSection({ payments, issues, disbursementStatus, approvedTotal, onChanged }: {
   payments: Payment[];
@@ -84,6 +99,11 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
   const supabase = createClient();
   const { settings } = useSystemSettings();
   const [issueFor, setIssueFor] = useState<Payment | null>(null);
+  // Payout history by school year: the payment's own, else when it was created.
+  const [payYear, setPayYear] = useState("all");
+  const payAY = (p: Payment) => p.academic_year || academicYearOf(new Date(p.created_at));
+  const payYears = yearsOf(payments.map(payAY));
+  const shownPays = payments.filter((p) => payYear === "all" || payAY(p) === payYear);
   const [issueKind, setIssueKind] = useState("not_received");
   const [issueText, setIssueText] = useState("");
   const [sending, setSending] = useState(false);
@@ -111,7 +131,7 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
   const downloadCsv = () => {
     const rows = [
       ["Period", "Amount", "Method", "Status", "Scheduled", "Received"],
-      ...payments.map((p) => [
+      ...shownPays.map((p) => [
         termLabel(p.term, p.academic_year), p.amount.toFixed(2), p.method ?? "", PAYMENT_STATUS_LABEL[p.status] ?? p.status, p.scheduled_date ?? "",
         p.disbursed_at ? p.disbursed_at.slice(0, 10) : "",
       ]),
@@ -165,18 +185,21 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
       <Panel>
         <div className="px-6 py-4 border-b border-muted flex items-center justify-between gap-2">
           <SectionTitle>Payout History</SectionTitle>
-          <Button size="sm" variant="outline" className="text-xs border-border text-muted-foreground hover:bg-muted rounded-lg" disabled={payments.length === 0} onClick={downloadCsv}>
-            <Download className="mr-1 h-3 w-3" /> Download CSV
-          </Button>
+          <div className="flex items-center gap-2">
+            <YearPicker years={payYears} value={payYear} onChange={setPayYear} />
+            <Button size="sm" variant="outline" className="text-xs border-border text-muted-foreground hover:bg-muted rounded-lg" disabled={shownPays.length === 0} onClick={downloadCsv}>
+              <Download className="mr-1 h-3 w-3" /> Download CSV
+            </Button>
+          </div>
         </div>
         <div className="p-4 space-y-3">
-          {payments.length === 0 && (
+          {shownPays.length === 0 && (
             <div className="text-center py-10">
               <Receipt className="h-8 w-8 text-muted-foreground/70 mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">No payments yet.</p>
+              <p className="text-sm text-muted-foreground">{payments.length === 0 ? "No payments yet." : `No payments for S.Y. ${payYear}.`}</p>
             </div>
           )}
-          {payments.map((p) => {
+          {shownPays.map((p) => {
             const isDisbursedPay = p.status === "Disbursed";
             const cancelled = p.status === "Cancelled";
             const list = issuesFor(p.id);
@@ -551,6 +574,8 @@ export default function StudentDashboardPage() {
   // The academic year setting, matching the server and database checks (one application per program
   // per academic year).
   const academicYear = settings.academic_year;
+  // Application history: every school year, or one.
+  const [appHistoryYear, setAppHistoryYear] = useState("all");
   // This academic year's applications. A withdrawn one no longer counts: that program can be applied to again.
   const yearApps     = applications.filter((app) => app.status !== "Withdrawn" && app.academic_year === academicYear);
   const yearAppIds   = new Set(yearApps.map((a) => a.id));
@@ -1262,10 +1287,14 @@ export default function StudentDashboardPage() {
         </Panel>
       )}
 
-      {/* Every application, all years */}
+      {/* Every application, all years (or one school year) */}
       <Panel>
-        <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Application history</SectionTitle></div>
-        <ApplicationHistory applications={applications} onView={viewApplication} onContact={() => setActive("help")} />
+        <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted flex items-center justify-between gap-2">
+          <SectionTitle>Application history</SectionTitle>
+          <YearPicker years={yearsOf(applications.map((a) => a.academic_year || academicYearOf(new Date(a.created_at))))} value={appHistoryYear} onChange={setAppHistoryYear} />
+        </div>
+        <ApplicationHistory onView={viewApplication} onContact={() => setActive("help")}
+          applications={appHistoryYear === "all" ? applications : applications.filter((a) => (a.academic_year || academicYearOf(new Date(a.created_at))) === appHistoryYear)} />
       </Panel>
 
       {/* View */}

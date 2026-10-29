@@ -45,7 +45,7 @@ import {
   getRange, logsToSection, personName, renderExcel, renderPDF,
   type DocSummary, type ReportData, type ReportDef, type StaffMember,
 } from "@/lib/reports";
-import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
+import { parseSettings, isAdminRole, academicYearOf, ayStart, type AppSettings } from "@/lib/settings";
 import { asMonths, asSchedule, isMonthTerm, openTerms, secondSemesterGradeWarning, termLabel, termsFor, yearlyAward, type PaymentTerm } from "@/lib/release-schedule";
 import { OFFICE_FULL_NAME, OFFICE_LABEL, STAFF_OFFICES, isOffice, officeLogo, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 import { LETTER_OF_INTENT, MOA } from "@/lib/documents";
@@ -169,6 +169,8 @@ function AdminDashboard() {
   const [viewLog, setViewLog] = useState<Tables<"audit_logs"> | null>(null);
   const [paySearch, setPaySearch] = useState("");
   const [payFilter, setPayFilter] = useState("all");
+  // School year shown on Applicants, Scholars, Disbursement and Fund Management ("all" or e.g. "2025-2026").
+  const [yearView, setYearView] = useState("all");
   const [payPage, setPayPage] = useState(1);
   const [payDialog, setPayDialog] = useState<"new" | Tables<"payments"> | null>(null);
   const [payAppId, setPayAppId] = useState("");
@@ -637,6 +639,26 @@ function AdminDashboard() {
   const isClosed = (sch: Tables<"scholarships">) => !!sch.deadline && sch.deadline < localDate();
   // Slots and budgets are per academic year: they count that year's approvals (the current one by default).
   const currentAY = parseSettings(systemSettings).academic_year;
+  // The school year of each record: an application's own, a payment's (or its application's), and for a
+  // student without an application the year they registered.
+  const appAY = (a: { academic_year: string | null; created_at: string }) => a.academic_year || academicYearOf(new Date(a.created_at));
+  const payAY = (p: Tables<"payments">) => {
+    const a = p.application_id ? applications.find((x) => x.id === p.application_id) : undefined;
+    return p.academic_year || (a ? appAY(a) : academicYearOf(new Date(p.disbursed_at || p.scheduled_date || p.created_at)));
+  };
+  const regAY = (p: Tables<"profiles">) => academicYearOf(new Date(p.created_at));
+  const inYear = (ay: string) => yearView === "all" || ay === yearView;
+  const yearOptions = [...new Set([currentAY, ...applications.map(appAY), ...payments.map((p) => p.academic_year).filter((y): y is string => !!y)])]
+    .filter((y) => !Number.isNaN(ayStart(y))).sort().reverse();
+  const yearSelect = (
+    <Select value={yearView} onValueChange={(v) => { setYearView(v); setAppPage(1); setStudentPage(1); setPayPage(1); setPayPicked(new Set()); }}>
+      <SelectTrigger className="w-40" aria-label="School year"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">All school years</SelectItem>
+        {yearOptions.map((y) => <SelectItem key={y} value={y}>S.Y. {y}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
   const approvedCount = (schId: string, ay = currentAY) => applications.filter((a) => a.scholarship_id === schId && a.status === "Approved" && a.academic_year === ay).length;
   // Money committed to a program: approved awards for the year (the program amount where none was set, once per semester or month).
   const committedFor = (sch: Tables<"scholarships">, ay = currentAY) =>
@@ -826,6 +848,7 @@ function AdminDashboard() {
   // Scheduled and not yet received. ("Processing" is from before; it's treated like scheduled.)
   const isOpenPayment = (p: Tables<"payments">) => p.status === "Pending" || p.status === "Processing";
   const filteredPayments = payments.filter((p) => {
+    if (!inYear(payAY(p))) return false;
     if (payFilter === "issues") { if (!openIssueFor(p.id)) return false; }
     else if (payFilter === "open") { if (!isOpenPayment(p)) return false; }
     else if (payFilter !== "all" && p.status !== payFilter) return false;
@@ -1041,6 +1064,7 @@ function AdminDashboard() {
       if (studentFilter === "active" && !p.is_active) return false;
       if (studentFilter === "inactive" && p.is_active) return false;
       if (studentProgram !== "all" && !approvedApps(p.id).some((a) => a.scholarship_id === studentProgram)) return false;
+      if (yearView !== "all" && !approvedApps(p.id).some((a) => appAY(a) === yearView)) return false;
       if (studentDisb !== "all") {
         const pay = currentPayment(p.id);
         if (studentDisb === "none" ? !!pay : pay?.status !== studentDisb) return false;
@@ -1053,7 +1077,7 @@ function AdminDashboard() {
       ? (y.average_grade ?? -1) - (x.average_grade ?? -1)
       : `${x.last_name} ${x.first_name}`.localeCompare(`${y.last_name} ${y.first_name}`));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scholars, studentSearch, studentFilter, studentSort, studentProgram, studentDisb, payments]);
+  }, [scholars, studentSearch, studentFilter, studentSort, studentProgram, studentDisb, payments, yearView]);
   const studentPages = Math.max(1, Math.ceil(filteredStudents.length / STUDENT_PAGE_SIZE));
   const pagedStudents = filteredStudents.slice((studentPage - 1) * STUDENT_PAGE_SIZE, studentPage * STUDENT_PAGE_SIZE);
 
@@ -1453,20 +1477,24 @@ function AdminDashboard() {
     return { done: ok.length, total: required.length, missing: required.filter((t) => !ok.includes(t)) };
   };
   // Applicant pipeline: registered → applied (pending) → approved / disapproved → scholar → paid.
+  // Follows the school year picked on the page.
   const pipeline = useMemo(() => {
-    const by = (st: string) => applications.filter((a) => a.status === st).length;
-    const paidScholars = new Set(payments.filter((p) => p.status === "Disbursed").map((p) => p.user_id));
+    const apps = applications.filter((a) => inYear(appAY(a)));
+    const waiting = notApplied.filter((p) => inYear(regAY(p)));
+    const by = (st: string) => apps.filter((a) => a.status === st).length;
+    const paidScholars = new Set(payments.filter((p) => p.status === "Disbursed" && inYear(payAY(p))).map((p) => p.user_id));
     return {
-      total: notApplied.length + new Set(applications.map((a) => a.user_id)).size,
-      notApplied: notApplied.length,
+      total: waiting.length + new Set(apps.map((a) => a.user_id)).size,
+      notApplied: waiting.length,
       pending: by("Pending"),
       waitlisted: by("Waitlisted"),
       approved: by("Approved"),
       disapproved: by("Disapproved"),
-      scholars: scholars.length,
+      scholars: new Set(apps.filter((a) => a.status === "Approved").map((a) => a.user_id)).size,
       disbursed: paidScholars.size,
     };
-  }, [applications, payments, notApplied, scholars]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applications, payments, notApplied, yearView]);
 
   const showApplicants = (status: string) => { setStatusFilter(status); setAppPage(1); setActiveSection("applications"); };
   // Shown on Applicant Management; the Dashboard's stat cards follow the same order.
@@ -1501,10 +1529,12 @@ function AdminDashboard() {
     // Students who haven't applied have no program, so a program filter hides them.
     ...((statusFilter === "all" || statusFilter === "not_applied") && appProgram === "all"
       ? notApplied
+          .filter((p) => inYear(regAY(p)))
           .filter((p) => !q || personText(p).includes(q))
           .map((p): ApplicantRow => ({ kind: "none", profile: p, at: p.created_at }))
       : []),
     ...applications
+      .filter((a) => inYear(appAY(a)))
       .filter((a) => statusMatches(a.status))
       .filter((a) => appProgram === "all" || a.scholarship_id === appProgram)
       .filter((a) => !q || personText(a.profiles).includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q) || a.id.startsWith(q))
@@ -1631,7 +1661,7 @@ function AdminDashboard() {
     const { since, until } = getRange(fundPeriod, fromDate, toDate);
     const inRange = payments.filter((p) => {
       const d = new Date(payDate(p));
-      return (!since || d >= since) && (!until || d <= until);
+      return (!since || d >= since) && (!until || d <= until) && inYear(payAY(p));
     });
 
     const sum = (list: Tables<"payments">[]) => list.reduce((t, p) => t + Number(p.amount || 0), 0);
@@ -1672,7 +1702,8 @@ function AdminDashboard() {
 
 
     return { pipeline, byProgram, byMethod, recent, disbursedTotal };
-  }, [payments, applications, scholarships, fundPeriod, fromDate, toDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payments, applications, scholarships, fundPeriod, fromDate, toDate, yearView]);
   // Approved applications with a term that has no payment yet (a per-semester award has two).
   const awaitingPayment = applications.filter((a) => a.status === "Approved" && openTermsOf(a).length > 0);
 
@@ -1787,6 +1818,7 @@ function AdminDashboard() {
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <h2 className="text-xl font-display font-bold">Applicant Management</h2>
                 <div className="flex gap-2 flex-wrap">
+                  {yearSelect}
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input placeholder="Search name, email, ID, school, program..." value={appSearch} onChange={(e) => { setAppSearch(e.target.value); setAppPage(1); }} className="pl-9 w-72" />
@@ -2422,6 +2454,7 @@ function AdminDashboard() {
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <h2 className="text-xl font-display font-bold">Scholar Management</h2>
                 <div className="flex gap-2 flex-wrap">
+                  {yearSelect}
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input placeholder="Name, email, school, course, ID..." value={studentSearch} onChange={(e) => { setStudentSearch(e.target.value); setStudentPage(1); }} className="pl-9 w-64" />
@@ -2547,6 +2580,7 @@ function AdminDashboard() {
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <h2 className="text-xl font-display font-bold">Fund Management</h2>
                 <div className="flex gap-2 flex-wrap">
+                  {yearSelect}
                   <Select value={fundPeriod} onValueChange={setFundPeriod}>
                     <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -2649,6 +2683,7 @@ function AdminDashboard() {
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <h2 className="text-xl font-display font-bold">Disbursement Management</h2>
                 <div className="flex gap-2 flex-wrap">
+                  {yearSelect}
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input placeholder="Scholar, program, reference..." value={paySearch} onChange={(e) => { setPaySearch(e.target.value); setPayPage(1); }} className="pl-9 w-60" />
@@ -2689,7 +2724,7 @@ function AdminDashboard() {
                 // The schedule: payments not yet received, by scheduled date (soonest first; no date last).
                 const today = localDate();
                 const byDate = new Map<string, Tables<"payments">[]>();
-                payments.filter(isOpenPayment).forEach((p) => { const k = p.scheduled_date ?? ""; byDate.set(k, [...(byDate.get(k) ?? []), p]); });
+                payments.filter((p) => isOpenPayment(p) && inYear(payAY(p))).forEach((p) => { const k = p.scheduled_date ?? ""; byDate.set(k, [...(byDate.get(k) ?? []), p]); });
                 const days = [...byDate.entries()].sort(([a], [b]) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)));
                 const markOne = (p: Tables<"payments">) => {
                   setDisbPaymentId(p.id);
@@ -2703,7 +2738,7 @@ function AdminDashboard() {
                   {([["list", "Payments"], ["schedule", "Schedule"]] as const).map(([k, label]) => (
                     <button key={k} type="button" role="tab" aria-selected={payView === k} onClick={() => setPayView(k)}
                       className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer ${payView === k ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-                      {label}{k === "schedule" && byDate.size > 0 && <span className="ml-1.5 text-xs text-muted-foreground">{payments.filter(isOpenPayment).length}</span>}
+                      {label}{k === "schedule" && byDate.size > 0 && <span className="ml-1.5 text-xs text-muted-foreground">{[...byDate.values()].reduce((t, l) => t + l.length, 0)}</span>}
                     </button>
                   ))}
                 </div>

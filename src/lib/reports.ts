@@ -58,8 +58,8 @@ export const REPORT_FILTERS: Record<ReportKey, ReportFilterKey[]> = {
   disbursements: ["period", "program", "term", "payStatus"],
   balances: ["program", "term"],
   statistics: ["period", "program", "term"],
-  operations: ["period"],
-  history: ["student"],
+  operations: ["period", "term"],
+  history: ["student", "term"],
   audit: ["period", "audit"],
 };
 /** Wide reports print landscape. */
@@ -568,12 +568,16 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
 
   if (key === "operations") {
     const t = turnaround(data, f);
-    const open = data.applications.filter((a) => a.status === "Pending" || a.status === "Waitlisted");
+    // The academic year filter: applications by their year, payments and payment problems by their application's.
+    const yApp = (a?: ReportApp | null) => f.academicYear === "all" || s.termOk(a);
+    const yPay = (p?: Tables<"payments"> | null) => f.academicYear === "all" || (!!p && s.termOk(s.payApp(p)));
+    const payById = new Map(data.payments.map((p) => [p.id, p]));
+    const open = data.applications.filter((a) => (a.status === "Pending" || a.status === "Waitlisted") && yApp(a));
     const oldest = open.length ? Math.max(...open.map((a) => daysBetween(a.created_at, new Date().toISOString()))) : null;
-    const issues = data.payIssues.filter((i) => s.within(i.created_at));
+    const issues = data.payIssues.filter((i) => s.within(i.created_at) && yPay(payById.get(i.payment_id)));
     const issueKinds = [...new Set(issues.map((i) => i.kind))].sort();
     const resolveDays = (i: Tables<"payment_issues">) => (i.resolved_at ? daysBetween(i.created_at, i.resolved_at) : null);
-    const paid = data.payments.filter((p) => p.status === "Disbursed" && s.within(s.payDate(p)));
+    const paid = data.payments.filter((p) => p.status === "Disbursed" && s.within(s.payDate(p)) && yPay(p));
     const receiptState = (p: Tables<"payments">) => (p.student_receipt_at ? `Receipt ${p.receipt_review_status.toLowerCase()}` : "No receipt submitted");
     const receiptRows = [...new Set(paid.map(receiptState))].sort().map((st) => [st, paid.filter((p) => receiptState(p) === st).length]);
     const docRows = open.filter((a) => s.within(a.created_at)).map((a) => {
@@ -631,12 +635,15 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
   if (key === "history") {
     const p = s.profById.get(f.student);
     if (!p) return { title: "Scholar History", filters: ["Scholar: none selected"], count: 0, countLabel: "students", sections: [] };
-    const apps = data.applications.filter((a) => a.user_id === p.id);
-    const pays = data.payments.filter((x) => x.user_id === p.id).sort((x, y) => y.created_at.localeCompare(x.created_at));
+    // With an academic year picked: that year's applications, and the payments and problems under them.
+    const yearOk = (a?: ReportApp | null) => f.academicYear === "all" || s.termOk(a);
+    const apps = data.applications.filter((a) => a.user_id === p.id && yearOk(a));
+    const pays = data.payments.filter((x) => x.user_id === p.id && (f.academicYear === "all" || yearOk(s.payApp(x)))).sort((x, y) => y.created_at.localeCompare(x.created_at));
     const grades = data.gradeUpdates.filter((g) => g.user_id === p.id);
-    const issues = data.payIssues.filter((i) => i.user_id === p.id);
+    const payIds = new Set(pays.map((x) => x.id));
+    const issues = data.payIssues.filter((i) => i.user_id === p.id && payIds.has(i.payment_id));
     return {
-      title: `Scholar History — ${personName(p)}`, filters: [`Scholar: ${personName(p)}`], count: 1, countLabel: "student",
+      title: `Scholar History — ${personName(p)}`, filters: [`Scholar: ${personName(p)}`, ...filters], count: 1, countLabel: "student",
       sections: [
         {
           name: "Profile", head: ["Field", "Value"],
