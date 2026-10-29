@@ -2664,13 +2664,13 @@ function AdminDashboard() {
                     </SelectContent>
                   </Select>
                   {can.finance && <>
-                  <Button variant="outline" onClick={() => {
+                  <Button className="bg-gradient-primary shadow-primary" onClick={() => {
                     // Start on the current semester, or the first month someone still needs when only monthly programs have scholars waiting.
                     const sem = parseSettings(systemSettings).current_semester;
                     const semTerm: PaymentTerm = sem === "2nd Semester" ? "2nd Semester" : "1st Semester";
                     const term = bulkCandidates(semTerm).length > 0 ? semTerm : bulkTerms.find((t) => isMonthTerm(t) && bulkCandidates(t).length > 0) ?? semTerm;
                     setBulkTerm(term); setBulkDate(defaultScheduledDate); setBulkPicked(new Set(bulkCandidates(term).filter((c) => !c.warning).map((c) => c.app.id))); setBulkOpen(true);
-                  }}>Schedule payments in bulk</Button>
+                  }}><CalendarClock className="mr-1 h-4 w-4" /> Schedule Payments in Bulk</Button>
                   <Button className="bg-gradient-primary shadow-primary" onClick={() => openNewPayment()}><Plus className="mr-1 h-4 w-4" /> Schedule Payment</Button>
                   </>}
                 </div>
