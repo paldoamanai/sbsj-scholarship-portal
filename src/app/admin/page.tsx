@@ -2518,7 +2518,7 @@ function AdminDashboard() {
                         <TableCell><Badge variant={p.is_active ? "default" : "secondary"}>{p.is_active ? "Active" : "Inactive"}</Badge></TableCell>
                         <TableCell className="text-right space-x-1">
                           <Button size="icon" variant="ghost" title="View" onClick={() => setViewStudent(p)}><Eye className="h-4 w-4" /></Button>
-                          {can.finance && <Button size="icon" variant="ghost" title="Edit reference number / disbursement status" onClick={() => openEditDisb(p)}><Pencil className="h-4 w-4" /></Button>}
+                          {can.finance && <Button size="icon" variant="ghost" title="Edit payment status" onClick={() => openEditDisb(p)}><Pencil className="h-4 w-4" /></Button>}
                           {can.manage && <Button size="icon" variant="ghost" title={p.is_active ? "Deactivate" : "Activate"} onClick={() => toggleStudentActive(p)}>
                             <Power className={`h-4 w-4 ${p.is_active ? "text-destructive" : "text-success"}`} />
                           </Button>}

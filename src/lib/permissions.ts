@@ -9,10 +9,10 @@ export const ROLE_LABEL: Record<string, string> = {
 };
 
 export const ROLE_DESCRIPTION: Record<StaffRole, string> = {
-  super_admin: "Oversight: sees every office, runs programs, staff, settings, scholar accounts and deletion requests. Applicant decisions and payments are left to the other roles.",
-  admin: "Runs the office: programs, applicants, scholars, payments and announcements.",
+  super_admin: "Oversight: sees every office, runs programs, staff, settings, scholar accounts and deletion requests, and schedules payments and marks them received. Applicant decisions are left to the other roles.",
+  admin: "Runs the office: programs, applicants, scholars, payments (scheduling and marking received) and announcements.",
   reviewer: "Applicants only: documents, grades, approving or disapproving, notes and messages.",
-  finance_admin: "Money only: creating and disbursing payments, receipts and payment problems.",
+  finance_admin: "Money only: scheduling payments, marking them received (one at a time or in a batch) and payment problems.",
 };
 
 export const isStaffRole = (role: string | null | undefined): role is StaffRole =>
@@ -23,7 +23,7 @@ export type Permissions = {
   manage: boolean;
   /** Applicants: status changes, documents, grades, messages. Not the Mayor Office (oversight only). */
   review: boolean;
-  /** Payments, receipts and payment problems. Not the Mayor Office (oversight only). */
+  /** Payments (schedule, mark received, in batches) and payment problems. Every admin, the Mayor Office too. */
   finance: boolean;
   /** Staff, settings, deleting programs, account deletion requests. */
   super: boolean;
@@ -32,12 +32,13 @@ export type Permissions = {
 /** `canManageSettings` comes from can_manage_settings(): true for a super admin, or any admin while none exists. */
 export function permissionsFor(role: string | null | undefined, canManageSettings: boolean): Permissions {
   const admin = role === "super_admin" || role === "admin";
-  // The Mayor Office oversees: it sees everything but leaves applicant decisions and payments to the
-  // Admin, Reviewer and Finance accounts. Only its screens change; the database would still allow them.
+  // The Mayor Office oversees: it sees everything but leaves applicant decisions to the Admin and Reviewer
+  // accounts (only its screens change; the database would still allow them). Payments it handles like
+  // every admin.
   return {
     manage: admin,
     review: role === "admin" || role === "reviewer",
-    finance: role === "admin" || role === "finance_admin",
+    finance: admin || role === "finance_admin",
     super: canManageSettings,
   };
 }
