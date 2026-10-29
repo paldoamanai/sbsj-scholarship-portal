@@ -8,7 +8,7 @@ const sections = [
   {
     title: "Using the portal",
     body: [
-      "The portal is for students applying to, or receiving, scholarships through this portal, and for the staff who administer them.",
+      "The portal is for scholars applying to, or receiving, scholarships through this portal, and for the staff who administer them.",
       "You must give accurate information and upload genuine documents. Each person may keep one account.",
       "Keep your password private. You are responsible for activity under your account.",
     ],

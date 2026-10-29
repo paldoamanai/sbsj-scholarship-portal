@@ -27,7 +27,7 @@ function faqs(s: AppSettings, period: string): { q: string; a: string }[] {
   return [
     {
       q: "Who can apply?",
-      a: `Students of San Jose, Occidental Mindoro who meet a general average of at least ${s.min_grade_requirement}. Each program may add its own conditions, such as year level or residency, which are listed on its card above.`,
+      a: `Scholars of San Jose, Occidental Mindoro who meet a general average of at least ${s.min_grade_requirement}. Each program may add its own conditions, such as year level or residency, which are listed on its card above.`,
     },
     {
       q: "What documents do I need?",
@@ -148,7 +148,7 @@ export function landingCopy(s: AppSettings, block: ApplicationsBlock | null) {
     features: {
       label: "Our Platform",
       heading: ["Everything You Need,", "In One Place"],
-      desc: "Built to make scholarship management seamless for students and administrators alike.",
+      desc: "Built to make scholarship management seamless for scholars and administrators alike.",
       items: [
         { title: "Easy Application", desc: "Apply in minutes with guided step-by-step forms — no confusion, no paperwork hassle." },
         { title: "Real-Time Tracking", desc: "Monitor every stage of your application and payment status from your personal dashboard." },

@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { GraduationCap, Target, Heart, Users } from "@/components/icons";
 
 const values = [
-  { icon: GraduationCap, title: "Education First", description: "We believe every deserving student in San Jose, Occidental Mindoro should have access to quality education regardless of financial status." },
+  { icon: GraduationCap, title: "Education First", description: "We believe every deserving scholar in San Jose, Occidental Mindoro should have access to quality education regardless of financial status." },
   { icon: Target, title: "Transparency", description: "All scholarship processes are conducted with full transparency, ensuring fair evaluation of every applicant." },
   { icon: Heart, title: "Community Impact", description: "Our scholars become future leaders who give back to their communities and contribute to provincial development." },
   { icon: Users, title: "Inclusivity", description: "We welcome applicants from all municipalities and barangays across San Jose, Occidental Mindoro." },
@@ -21,7 +21,7 @@ export default function AboutPage() {
             Serving the Youth of San Jose
           </h1>
           <p className="text-muted-foreground leading-relaxed max-w-xl mx-auto">
-            The San Jose Scholarship Management System is a digital platform designed to streamline the scholarship application, evaluation, and management process for the students of San Jose, Occidental Mindoro.
+            The San Jose Scholarship Management System is a digital platform designed to streamline the scholarship application, evaluation, and management process for the scholars of San Jose, Occidental Mindoro.
           </p>
         </div>
       </section>
@@ -33,7 +33,7 @@ export default function AboutPage() {
             <span className="inline-block px-3 py-1 text-xs font-semibold text-orange-700 bg-orange-100 rounded-full tracking-widest uppercase">Mission</span>
             <h2 className="text-2xl font-display font-bold">Our Mission</h2>
             <p className="text-muted-foreground leading-relaxed">
-              To provide an efficient, transparent, and accessible scholarship management system that empowers deserving students from San Jose, Occidental Mindoro to pursue their educational dreams. We aim to bridge the gap between opportunity and talent through technology-driven solutions.
+              To provide an efficient, transparent, and accessible scholarship management system that empowers deserving scholars from San Jose, Occidental Mindoro to pursue their educational dreams. We aim to bridge the gap between opportunity and talent through technology-driven solutions.
             </p>
           </CardContent>
         </Card>

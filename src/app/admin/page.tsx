@@ -18,8 +18,8 @@ import {
   Plus, Pencil, Trash2, CheckCircle, XCircle, Clock, Eye,
   Menu, X, Search, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock,
-  FileDown, Receipt, Loader2, User, Upload, ArrowRight,
-   ChevronRight, ChevronLeft, ExternalLink, Printer, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2, MapPin,
+  FileDown, Receipt, Loader2, User, ArrowRight,
+   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2, MapPin, CalendarClock,
 } from "@/components/icons";
 import { createClient } from "@/lib/supabase/client";
 import { scholarshipSchema } from "@/validations/scholarship";
@@ -45,10 +45,9 @@ import {
   getRange, logsToSection, personName, renderExcel, renderPDF,
   type DocSummary, type ReportData, type ReportDef, type StaffMember,
 } from "@/lib/reports";
-import { parseSettings, isAdminRole, type AppSettings } from "@/lib/settings";
+import { parseSettings, isAdminRole, academicYearOf, ayStart, type AppSettings } from "@/lib/settings";
 import { asMonths, asSchedule, isMonthTerm, openTerms, secondSemesterGradeWarning, termLabel, termsFor, yearlyAward, type PaymentTerm } from "@/lib/release-schedule";
 import { OFFICE_FULL_NAME, OFFICE_LABEL, STAFF_OFFICES, isOffice, officeLogo, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
-import { printReceiptSlip } from "@/lib/receipt-slip";
 import { LETTER_OF_INTENT, MOA } from "@/lib/documents";
 import { approvalDocuments, needsHomeVisit, needsHousePin, needsMoa } from "@/lib/office-requirements";
 import { directionsLink, distanceKm, earthLink, fmtDistance, googleMapsLink, streetViewLink } from "@/lib/geo";
@@ -74,7 +73,7 @@ const sidebarItems = [
   { icon: GraduationCap, label: "Scholarships", key: "scholarships", group: "Process" },
   { icon: FileText, label: "Applicants", key: "applications", group: "Process" },
   { icon: MapPin, label: "Home Visits", key: "visits", group: "Process" },
-  { icon: Users, label: "Students", key: "students", group: "Process" },
+  { icon: Users, label: "Scholars", key: "students", group: "Process" },
   { icon: Banknote, label: "Disbursement", key: "disbursement", group: "Process" },
   { icon: Wallet, label: "Funds", key: "funds", group: "Monitoring" },
   { icon: BarChart3, label: "Reports", key: "reports", group: "Monitoring" },
@@ -93,7 +92,7 @@ const hiddenSections: Record<string, string[]> = {
 
 
 // ── Status badge (pastel pill + icon, mirrors student-dashboard's pattern) ──────
-function StatusBadge({ status }: { status: string | null | undefined }) {
+function StatusBadge({ status, label }: { status: string | null | undefined; label?: string }) {
   if (!status || status === "—") return <span className="text-sm text-muted-foreground">—</span>;
   const map: Record<string, { icon: typeof CheckCircle; cls: string }> = {
     Approved:   { icon: CheckCircle,  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
@@ -106,11 +105,11 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
     Withdrawn:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
   };
   const m = map[status];
-  if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{status}</span>;
+  if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{label ?? status}</span>;
   const Icon = m.icon;
   return (
     <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${m.cls}`}>
-      <Icon className="h-3 w-3" />{status}
+      <Icon className="h-3 w-3" />{label ?? status}
     </span>
   );
 }
@@ -170,6 +169,8 @@ function AdminDashboard() {
   const [viewLog, setViewLog] = useState<Tables<"audit_logs"> | null>(null);
   const [paySearch, setPaySearch] = useState("");
   const [payFilter, setPayFilter] = useState("all");
+  // School year shown on Applicants, Scholars, Disbursement and Fund Management ("all" or e.g. "2025-2026").
+  const [yearView, setYearView] = useState("all");
   const [payPage, setPayPage] = useState(1);
   const [payDialog, setPayDialog] = useState<"new" | Tables<"payments"> | null>(null);
   const [payAppId, setPayAppId] = useState("");
@@ -187,8 +188,6 @@ function AdminDashboard() {
   const [payIssues, setPayIssues] = useState<Tables<"payment_issues">[]>([]);
   const [issueDialog, setIssueDialog] = useState<Tables<"payments"> | null>(null);
   const [issueResponse, setIssueResponse] = useState("");
-  const [disapproveReceipt, setDisapproveReceipt] = useState<Tables<"payments"> | null>(null);
-  const [receiptNote, setReceiptNote] = useState("");
   const [payBusy, setPayBusy] = useState(false);
   const [gradeReviews, setGradeReviews] = useState<Tables<"grade_updates">[]>([]);
   const [dataReqs, setDataReqs] = useState<Tables<"data_requests">[]>([]);
@@ -338,16 +337,19 @@ function AdminDashboard() {
   };
   useUnreadTitle(unreadTotal);
 
-  // Disburse dialog state
+  // Mark-received dialog (one payment), the payments picked for a batch, and the list or schedule view.
   const [disbDialog, setDisbDialog] = useState(false);
   const [disbPaymentId, setDisbPaymentId] = useState<string>("");
   const [disbMethod, setDisbMethod] = useState<"Cheque" | "Cash">("Cash");
   const [disbRef, setDisbRef] = useState("");
-  const [disbReceipt, setDisbReceipt] = useState<File | null>(null);
+  const [payPicked, setPayPicked] = useState<Set<string>>(new Set());
+  const [batchReceive, setBatchReceive] = useState<Tables<"payments">[] | null>(null);
+  // Payments picked to move to one new scheduled date, and that date.
+  const [batchSchedule, setBatchSchedule] = useState<Tables<"payments">[] | null>(null);
+  const [batchDate, setBatchDate] = useState("");
+  const [payView, setPayView] = useState<"list" | "schedule">("list");
   // A stored receipt being viewed: its signed link and whether it's an image or a PDF (shown in the page).
   const [fileView, setFileView] = useState<{ title: string; url: string; kind: "image" | "pdf" | "other" } | null>(null);
-  // Portal-issued receipt numbers (staff-only): printed on the acknowledgment slip, typed back by the student.
-  const [receiptNos, setReceiptNos] = useState<Record<string, string>>({});
   const [disbLoading, setDisbLoading] = useState(false);
 
   useEffect(() => { loadData(); }, []);
@@ -380,7 +382,6 @@ function AdminDashboard() {
   const fetchAllPayments = () => fetchAll((f, t) => supabase.from("payments").select("*").order("created_at", { ascending: false }).order("id").range(f, t));
   const fetchAllProfiles = () => fetchAll((f, t) => supabase.from("profiles").select("*").order("id").range(f, t));
   const fetchAllDocs = () => fetchAll((f, t) => supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at").order("id").range(f, t));
-  const fetchAllReceiptNos = () => fetchAll((f, t) => supabase.from("payment_receipt_numbers").select("payment_id, receipt_no").order("payment_id").range(f, t));
 
   const loadData = async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
@@ -395,7 +396,7 @@ function AdminDashboard() {
 
     // Everything is fetched in one parallel batch: each query is a full round trip to Supabase,
     // so running them one after another made the dashboard several seconds slower to open.
-    const [roleRes, canManageRes, staffRolesRes, appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes, receiptNosRes] = await Promise.all([
+    const [roleRes, canManageRes, staffRolesRes, appsRes, scholsRes, profilesRes, paymentsRes, logsRes, settingsRes, adminProfRes, notifsRes, unreadRes, docsRes, issuesRes, gradesRes, reqsRes] = await Promise.all([
       supabase.from("user_roles").select("*").eq("user_id", user.id).single(),
       supabase.rpc("can_manage_settings", { _user_id: user.id }),
       staffRoles(),
@@ -412,7 +413,6 @@ function AdminDashboard() {
       fetchAll((f, t) => supabase.from("payment_issues").select("*").order("created_at", { ascending: false }).order("id").range(f, t)),
       fetchAll((f, t) => supabase.from("grade_updates").select("*").order("created_at", { ascending: false }).order("id").range(f, t)),
       supabase.from("data_requests").select("*").order("created_at", { ascending: false }),
-      fetchAllReceiptNos(),
     ]);
 
     const role = (roleRes.data as { role?: string } | null)?.role;
@@ -436,7 +436,6 @@ function AdminDashboard() {
     if (issuesRes.data) setPayIssues(issuesRes.data);
     if (gradesRes.data) setGradeReviews(gradesRes.data);
     if (reqsRes.data) setDataReqs(reqsRes.data);
-    if (receiptNosRes.data) setReceiptNos(Object.fromEntries(receiptNosRes.data.map((r) => [r.payment_id, r.receipt_no])));
     setLastUpdated(new Date());
     setLoading(false);
     setRefreshing(false);
@@ -445,10 +444,9 @@ function AdminDashboard() {
   // Re-fetch applications/payments in the background (no loading flicker) —
   // used when a live change comes in over realtime.
   const silentRefreshAdmin = async () => {
-    const [appsRes, paymentsRes, profilesRes, docsRes, receiptNosRes] = await Promise.all([
-      fetchAllApps(), fetchAllPayments(), fetchAllProfiles(), fetchAllDocs(), fetchAllReceiptNos(),
+    const [appsRes, paymentsRes, profilesRes, docsRes] = await Promise.all([
+      fetchAllApps(), fetchAllPayments(), fetchAllProfiles(), fetchAllDocs(),
     ]);
-    if (receiptNosRes.data) setReceiptNos(Object.fromEntries(receiptNosRes.data.map((r) => [r.payment_id, r.receipt_no])));
     if (docsRes.data) setAllDocs(docsRes.data);
     if (appsRes.data) setApplications(joinProfiles(appsRes.data, profilesRes.data ?? []));
     if (paymentsRes.data) setPayments(paymentsRes.data);
@@ -478,8 +476,8 @@ function AdminDashboard() {
         { event: "INSERT", schema: "public", table: "profiles" },
         (payload) => {
           const p = payload.new as Tables<"profiles">;
-          const name = `${p.first_name || ""} ${p.last_name || ""}`.trim() || p.email || "A new student";
-          toast.info("New student registered", { description: name });
+          const name = `${p.first_name || ""} ${p.last_name || ""}`.trim() || p.email || "A new scholar";
+          toast.info("New scholar registered", { description: name });
           silentRefreshAdmin();
         }
       )
@@ -641,6 +639,26 @@ function AdminDashboard() {
   const isClosed = (sch: Tables<"scholarships">) => !!sch.deadline && sch.deadline < localDate();
   // Slots and budgets are per academic year: they count that year's approvals (the current one by default).
   const currentAY = parseSettings(systemSettings).academic_year;
+  // The school year of each record: an application's own, a payment's (or its application's), and for a
+  // student without an application the year they registered.
+  const appAY = (a: { academic_year: string | null; created_at: string }) => a.academic_year || academicYearOf(new Date(a.created_at));
+  const payAY = (p: Tables<"payments">) => {
+    const a = p.application_id ? applications.find((x) => x.id === p.application_id) : undefined;
+    return p.academic_year || (a ? appAY(a) : academicYearOf(new Date(p.disbursed_at || p.scheduled_date || p.created_at)));
+  };
+  const regAY = (p: Tables<"profiles">) => academicYearOf(new Date(p.created_at));
+  const inYear = (ay: string) => yearView === "all" || ay === yearView;
+  const yearOptions = [...new Set([currentAY, ...applications.map(appAY), ...payments.map((p) => p.academic_year).filter((y): y is string => !!y)])]
+    .filter((y) => !Number.isNaN(ayStart(y))).sort().reverse();
+  const yearSelect = (
+    <Select value={yearView} onValueChange={(v) => { setYearView(v); setAppPage(1); setStudentPage(1); setPayPage(1); setPayPicked(new Set()); }}>
+      <SelectTrigger className="w-40" aria-label="School year"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">All school years</SelectItem>
+        {yearOptions.map((y) => <SelectItem key={y} value={y}>S.Y. {y}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
   const approvedCount = (schId: string, ay = currentAY) => applications.filter((a) => a.scholarship_id === schId && a.status === "Approved" && a.academic_year === ay).length;
   // Money committed to a program: approved awards for the year (the program amount where none was set, once per semester or month).
   const committedFor = (sch: Tables<"scholarships">, ay = currentAY) =>
@@ -821,19 +839,34 @@ function AdminDashboard() {
   };
 
   // ── Disbursement management ──
-  const PAY_PAGE_SIZE = 10;
+  const PAY_PAGE_SIZE = 50;
   const payStudent = (p: Tables<"payments">) => {
     const prof = profiles.find((x) => x.id === p.user_id);
     return prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() || prof.email || "Unknown" : "Unknown";
   };
   const payProgram = (p: Tables<"payments">) => applications.find((a) => a.id === p.application_id)?.scholarships?.name || "—";
+  // Scheduled and not yet received. ("Processing" is from before; it's treated like scheduled.)
+  const isOpenPayment = (p: Tables<"payments">) => p.status === "Pending" || p.status === "Processing";
+  // Latest first by the date that matters: when it was received, else when it's scheduled.
   const filteredPayments = payments.filter((p) => {
+    if (!inYear(payAY(p))) return false;
     if (payFilter === "issues") { if (!openIssueFor(p.id)) return false; }
-    else if (payFilter === "receipts") { if (!(p.student_receipt_at && p.receipt_review_status === "Pending")) return false; }
+    else if (payFilter === "open") { if (!isOpenPayment(p)) return false; }
     else if (payFilter !== "all" && p.status !== payFilter) return false;
     const q = paySearch.trim().toLowerCase();
     return !q || `${payStudent(p)} ${payProgram(p)} ${p.reference || ""}`.toLowerCase().includes(q);
-  });
+  }).sort((x, y) => (y.disbursed_at || y.scheduled_date || y.created_at).localeCompare(x.disbursed_at || x.scheduled_date || x.created_at));
+  // The picked school year at a glance: scholars received and still scheduled.
+  const payYearSummary = (() => {
+    const inView = payments.filter((p) => inYear(payAY(p)));
+    const sumOf = (l: Tables<"payments">[]) => l.reduce((t, p) => t + Number(p.amount || 0), 0);
+    const got = inView.filter((p) => p.status === "Disbursed");
+    const due = inView.filter(isOpenPayment);
+    return {
+      receivedScholars: new Set(got.map((p) => p.user_id)).size, received: sumOf(got), receivedCount: got.length,
+      scheduledScholars: new Set(due.map((p) => p.user_id)).size, scheduled: sumOf(due), scheduledCount: due.length,
+    };
+  })();
   const payPages = Math.max(1, Math.ceil(filteredPayments.length / PAY_PAGE_SIZE));
   const currentPayPage = Math.min(payPage, payPages);
   const pagedPayments = filteredPayments.slice((currentPayPage - 1) * PAY_PAGE_SIZE, currentPayPage * PAY_PAGE_SIZE);
@@ -851,7 +884,6 @@ function AdminDashboard() {
     const fields = {
       amount,
       method: payMethod,
-      reference: String(fd.get("reference") || "").trim() || null,
       scheduled_date: String(fd.get("scheduled_date") || "") || null,
       notes: String(fd.get("notes") || "").trim() || null,
       ...(payTerm ? { term: payTerm } : {}),
@@ -902,15 +934,6 @@ function AdminDashboard() {
     setFileView({ title, url: data.signedUrl, kind });
   };
   const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment", `Disbursement receipt · ${payStudent(p)}`);
-  // Compare reference numbers the way people type them: case, spaces and dashes don't matter.
-  const refKey = (r: string) => r.toUpperCase().replace(/[\s\-_./#]/g, "");
-  const viewStudentReceipt = (p: Tables<"payments">) => openStoredFile(p.student_receipt_path, "The student hasn't submitted a receipt", `Student's receipt · ${payStudent(p)}`);
-  // Office + student copy of the acknowledgment slip, for the student to sign when the money is released.
-  const printSlip = (p: Tables<"payments">, method = p.method, reference = p.reference) => {
-    const receiptNo = receiptNos[p.id];
-    if (!receiptNo) { toast.error("This payment has no receipt number"); return; }
-    printReceiptSlip({ receiptNo, studentName: payStudent(p), program: payProgram(p), period: termLabel(p.term, p.academic_year) || null, amount: p.amount, method, reference });
-  };
 
   // Verify or disapprove a grade a student submitted. Verifying replaces their average grade; the student is notified.
   const reviewGrade = async (g: Tables<"grade_updates">, status: "Verified" | "Disapproved", note?: string) => {
@@ -918,7 +941,7 @@ function AdminDashboard() {
     const { error } = await supabase.rpc("review_grade_update", { _id: g.id, _status: status, _note: note ?? null });
     setPayBusy(false);
     if (error) { toast.error(error.message); return false; }
-    toast.success(status === "Verified" ? "Grade verified" : "Grade disapproved — the student was asked to resubmit");
+    toast.success(status === "Verified" ? "Grade verified" : "Grade disapproved — the scholar was asked to resubmit");
     if (status === "Verified") {
       setViewStudent((v) => (v && v.id === g.user_id ? { ...v, average_grade: g.grade, grade_verified_at: new Date().toISOString(), grade_term: g.term } : v));
     }
@@ -937,23 +960,12 @@ function AdminDashboard() {
     loadData();
   };
 
-  // Accept or disapprove the receipt a student submitted. The student is notified by the database.
-  const reviewReceipt = async (p: Tables<"payments">, status: "Accepted" | "Disapproved", note?: string) => {
-    setPayBusy(true);
-    const { error } = await supabase.rpc("review_student_receipt", { _payment_id: p.id, _status: status, _note: note ?? null });
-    setPayBusy(false);
-    if (error) { toast.error(error.message); return false; }
-    toast.success(status === "Accepted" ? "Receipt accepted" : "Receipt disapproved — the student was asked to resubmit");
-    loadData();
-    return true;
-  };
-
   const resolveIssue = async (issue: Tables<"payment_issues">) => {
     setPayBusy(true);
     const { error } = await supabase.rpc("resolve_payment_issue", { _issue_id: issue.id, _response: issueResponse });
     setPayBusy(false);
     if (error) { toast.error(error.message); return; }
-    toast.success("Response sent to the student");
+    toast.success("Response sent to the scholar");
     setIssueResponse("");
     loadData();
   };
@@ -962,36 +974,38 @@ function AdminDashboard() {
   const disbPay = payments.find((pm) => pm.id === disbPaymentId);
   const disbLocked = !!disbPay?.preferred_method; // student chose the method; it is final
 
-  const confirmDisbursement = async () => {
-    if (!disbReceipt) return;
-    const payment = payments.find((pm) => pm.id === disbPaymentId);
-    if (!payment) return;
-    const moa = moaBlocker(payment.application_id);
-    if (moa) { toast.error("Can't release this payment yet", { description: moa }); return; }
-    const maxMb = parseSettings(systemSettings).max_upload_mb;
-    if (disbReceipt.size > maxMb * 1024 * 1024) { toast.error(`Receipt is too large (max ${maxMb} MB)`); return; }
+  // Marks payments received (released to the scholar): one from the dialog, with the method and number set
+  // there, or a batch, each with the method and number it was scheduled with. Payments that can't be
+  // released yet (MOA not verified, cheque without a number) are skipped and listed.
+  const markReceived = async (list: Tables<"payments">[], single?: { method: "Cash" | "Cheque"; reference: string | null }) => {
+    if (disbLoading) return false;
     setDisbLoading(true);
+    let done = 0;
+    const skipped: string[] = [];
     try {
-      const safeName = disbReceipt.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const path = `receipts/${payment.id}/${Date.now()}-${safeName}`;
-      const { error: uploadError } = await supabase.storage.from("documents").upload(path, disbReceipt);
-      if (uploadError) { toast.error("Receipt upload failed", { description: uploadError.message }); return; }
-      const update = { status: "Disbursed", method: disbMethod, reference: disbRef.trim() || null, receipt_path: path, disbursed_at: new Date().toISOString() };
-      const { data: rows, error } = await supabase.from("payments").update(update).eq("id", payment.id).neq("status", "Disbursed").select("id");
-      if (error || !rows?.length) {
-        await supabase.storage.from("documents").remove([path]);
-        toast.error(error?.message ?? "This payment was already disbursed or changed elsewhere. The list has been refreshed.");
-        if (!error) loadData(true);
-        return;
+      for (const p of list) {
+        const method = single?.method ?? p.method;
+        const reference = (single ? single.reference : p.reference)?.trim() || null;
+        const moa = moaBlocker(p.application_id);
+        if (moa) { skipped.push(`${payStudent(p)}: ${moa}`); continue; }
+        if (method === "Cheque" && !reference) { skipped.push(`${payStudent(p)}: add the cheque number first (Edit)`); continue; }
+        const { data: rows, error } = await supabase.from("payments")
+          .update({ status: "Disbursed", method, reference, disbursed_at: new Date().toISOString() })
+          .eq("id", p.id).in("status", ["Pending", "Processing"]).select("id");
+        if (error) skipped.push(`${payStudent(p)}: ${error.message}`);
+        else if (!rows?.length) skipped.push(`${payStudent(p)}: already received or changed elsewhere`);
+        else done++;
       }
-      toast.success("Payment marked as disbursed");
-      setDisbDialog(false);
-      loadData();
-    } catch {
-      toast.error("Failed to process disbursement");
     } finally {
       setDisbLoading(false);
     }
+    if (done) toast.success(`${done} payment${done === 1 ? "" : "s"} marked received`);
+    if (skipped.length) toast.error(`${skipped.length} payment${skipped.length === 1 ? "" : "s"} not marked received`, {
+      description: skipped.slice(0, 5).join("\n") + (skipped.length > 5 ? `\n…and ${skipped.length - 5} more` : ""),
+    });
+    setPayPicked(new Set());
+    loadData();
+    return skipped.length === 0;
   };
 
   // ── Audit log browsing ──
@@ -1062,6 +1076,7 @@ function AdminDashboard() {
       if (studentFilter === "active" && !p.is_active) return false;
       if (studentFilter === "inactive" && p.is_active) return false;
       if (studentProgram !== "all" && !approvedApps(p.id).some((a) => a.scholarship_id === studentProgram)) return false;
+      if (yearView !== "all" && !approvedApps(p.id).some((a) => appAY(a) === yearView)) return false;
       if (studentDisb !== "all") {
         const pay = currentPayment(p.id);
         if (studentDisb === "none" ? !!pay : pay?.status !== studentDisb) return false;
@@ -1074,7 +1089,7 @@ function AdminDashboard() {
       ? (y.average_grade ?? -1) - (x.average_grade ?? -1)
       : `${x.last_name} ${x.first_name}`.localeCompare(`${y.last_name} ${y.first_name}`));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scholars, studentSearch, studentFilter, studentSort, studentProgram, studentDisb, payments]);
+  }, [scholars, studentSearch, studentFilter, studentSort, studentProgram, studentDisb, payments, yearView]);
   const studentPages = Math.max(1, Math.ceil(filteredStudents.length / STUDENT_PAGE_SIZE));
   const pagedStudents = filteredStudents.slice((studentPage - 1) * STUDENT_PAGE_SIZE, studentPage * STUDENT_PAGE_SIZE);
 
@@ -1087,7 +1102,7 @@ function AdminDashboard() {
     }).catch(() => null);
     const body = await res?.json().catch(() => null);
     if (!res?.ok) { toast.error((body?.error as string) ?? "Request failed"); if (res) loadData(); return; }
-    toast.success(`${p.first_name || "Student"} ${next ? "activated" : "deactivated"}`);
+    toast.success(`${p.first_name || "Scholar"} ${next ? "activated" : "deactivated"}`);
     setViewStudent((cur) => (cur && cur.id === p.id ? { ...cur, is_active: next } : cur));
     loadData();
   };
@@ -1104,14 +1119,13 @@ function AdminDashboard() {
     const pm = payments.find((x) => x.id === editDisbPayId);
     if (!pm) return;
     const reference = editDisbRef.trim() || null;
-    // Marking disbursed needs a receipt upload, so hand off to the disbursement dialog.
+    // Marking received goes through the mark-received dialog.
     if (editDisbStatus === "Disbursed") {
       const moa = moaBlocker(pm.application_id);
       if (moa) { toast.error("Can't release this payment yet", { description: moa }); return; }
       setDisbPaymentId(pm.id);
       setDisbMethod((pm.preferred_method ?? pm.method) === "Cheque" ? "Cheque" : "Cash");
       setDisbRef(reference ?? "");
-      setDisbReceipt(null);
       setEditDisb(null);
       setDisbDialog(true);
       return;
@@ -1155,8 +1169,8 @@ function AdminDashboard() {
       };
     });
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Students");
-    XLSX.writeFile(wb, `students${fileOffice}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Scholars");
+    XLSX.writeFile(wb, `scholars${fileOffice}.xlsx`);
     toast.success("Excel downloaded");
   };
 
@@ -1168,7 +1182,7 @@ function AdminDashboard() {
     const { error } = await supabase.rpc("set_home_visit", { _application_id: a.id, _at: at, _note: visitNote.trim() || null });
     setVisitBusy(false);
     if (error) { toast.error("Couldn't save the home visit", { description: error.message }); return; }
-    toast.success(clear ? "Home visit cleared" : "Home visit scheduled — the student was notified");
+    toast.success(clear ? "Home visit cleared" : "Home visit scheduled — the scholar was notified");
     setViewApp({ ...a, home_visit_at: at, home_visit_note: at ? visitNote.trim() || null : null, home_visit_done_at: null });
     loadData(true);
   };
@@ -1225,7 +1239,7 @@ function AdminDashboard() {
     const moa = allDocs.filter((d) => d.application_id === app.id && d.document_type === MOA)
       .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0];
     if (moa?.status === "Verified") return null;
-    return `Verify the student's signed MOA agreement letter first (${moa ? moa.status.toLowerCase() : "not uploaded yet"}).`;
+    return `Verify the scholar's signed MOA agreement letter first (${moa ? moa.status.toLowerCase() : "not uploaded yet"}).`;
   };
 
   // Slots and budget left in the application's program for its academic year. The database enforces the same limits.
@@ -1276,7 +1290,7 @@ function AdminDashboard() {
     if (error) return error.message;
     if (!data?.length) {
       silentRefreshAdmin();
-      return "This application was changed elsewhere (another reviewer, or the student withdrew it). The list has been refreshed.";
+      return "This application was changed elsewhere (another reviewer, or the scholar withdrew it). The list has been refreshed.";
     }
     // The database notifies the student (migrations 031 and 041) and writes the audit entry (080).
     return null;
@@ -1320,7 +1334,7 @@ function AdminDashboard() {
       .eq("id", a.id).eq("status", "Approved").select("id");
     if (error) { toast.error("Couldn't update the award", { description: error.message }); return; }
     if (!data?.length) { toast.error("This application is no longer approved"); silentRefreshAdmin(); return; }
-    toast.success("Award updated — the student was notified");
+    toast.success("Award updated — the scholar was notified");
     loadData(true);
   };
 
@@ -1418,7 +1432,9 @@ function AdminDashboard() {
 
   const statusBadge = (status: string) => <StatusBadge status={status} />;
 
-  const disbStatusBadge = (status: string) => <StatusBadge status={status} />;
+  // Payments read as scheduled → received.
+  const PAY_STATUS_LABEL: Record<string, string> = { Pending: "Scheduled", Disbursed: "Received" };
+  const disbStatusBadge = (status: string) => <StatusBadge status={status} label={PAY_STATUS_LABEL[status]} />;
 
   // Notification deep links look like /admin?section=disbursement
   const goToLink = (link: string) => {
@@ -1473,32 +1489,36 @@ function AdminDashboard() {
     return { done: ok.length, total: required.length, missing: required.filter((t) => !ok.includes(t)) };
   };
   // Applicant pipeline: registered → applied (pending) → approved / disapproved → scholar → paid.
+  // Follows the school year picked on the page.
   const pipeline = useMemo(() => {
-    const by = (st: string) => applications.filter((a) => a.status === st).length;
-    const paidScholars = new Set(payments.filter((p) => p.status === "Disbursed").map((p) => p.user_id));
+    const apps = applications.filter((a) => inYear(appAY(a)));
+    const waiting = notApplied.filter((p) => inYear(regAY(p)));
+    const by = (st: string) => apps.filter((a) => a.status === st).length;
+    const paidScholars = new Set(payments.filter((p) => p.status === "Disbursed" && inYear(payAY(p))).map((p) => p.user_id));
     return {
-      total: notApplied.length + new Set(applications.map((a) => a.user_id)).size,
-      notApplied: notApplied.length,
+      total: waiting.length + new Set(apps.map((a) => a.user_id)).size,
+      notApplied: waiting.length,
       pending: by("Pending"),
       waitlisted: by("Waitlisted"),
       approved: by("Approved"),
       disapproved: by("Disapproved"),
-      scholars: scholars.length,
+      scholars: new Set(apps.filter((a) => a.status === "Approved").map((a) => a.user_id)).size,
       disbursed: paidScholars.size,
     };
-  }, [applications, payments, notApplied, scholars]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applications, payments, notApplied, yearView]);
 
   const showApplicants = (status: string) => { setStatusFilter(status); setAppPage(1); setActiveSection("applications"); };
   // Shown on Applicant Management; the Dashboard's stat cards follow the same order.
   const pipelineStrip = (
     <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-2">
       {([
-        { label: "Total applicants", value: pipeline.total, sub: "registered students", go: () => showApplicants("all") },
+        { label: "Total applicants", value: pipeline.total, sub: "registered scholars", go: () => showApplicants("all") },
         { label: "Not yet applied", value: pipeline.notApplied, sub: "registered, no application", go: () => showApplicants("not_applied"), warn: pipeline.notApplied > 0 },
         { label: "Pending", value: pipeline.pending, sub: pipeline.waitlisted ? `+ ${pipeline.waitlisted} waitlisted` : "awaiting review", go: () => showApplicants(pipeline.waitlisted ? "open" : "pending") },
         { label: "Approved", value: pipeline.approved, sub: "applications", go: () => showApplicants("approved") },
         { label: "Disapproved", value: pipeline.disapproved, sub: "applications", go: () => showApplicants("disapproved") },
-        { label: "Students", value: pipeline.scholars, sub: "approved scholars", go: () => setActiveSection("students") },
+        { label: "Scholars", value: pipeline.scholars, sub: "approved scholars", go: () => setActiveSection("students") },
         { label: "Disbursed", value: pipeline.disbursed, sub: "scholars paid", go: () => setActiveSection("disbursement") },
       ] as { label: string; value: number; sub: string; go: () => void; warn?: boolean }[]).map((t) => (
         <button key={t.label} type="button" onClick={t.go}
@@ -1521,10 +1541,12 @@ function AdminDashboard() {
     // Students who haven't applied have no program, so a program filter hides them.
     ...((statusFilter === "all" || statusFilter === "not_applied") && appProgram === "all"
       ? notApplied
+          .filter((p) => inYear(regAY(p)))
           .filter((p) => !q || personText(p).includes(q))
           .map((p): ApplicantRow => ({ kind: "none", profile: p, at: p.created_at }))
       : []),
     ...applications
+      .filter((a) => inYear(appAY(a)))
       .filter((a) => statusMatches(a.status))
       .filter((a) => appProgram === "all" || a.scholarship_id === appProgram)
       .filter((a) => !q || personText(a.profiles).includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q) || a.id.startsWith(q))
@@ -1604,7 +1626,7 @@ function AdminDashboard() {
     });
     setMessaging(false);
     if (error) { toast.error("Couldn't send the request", { description: error.message }); return; }
-    toast.success("Request sent — the student was notified");
+    toast.success("Request sent — the scholar was notified");
     setChangesFor(null);
   };
 
@@ -1651,7 +1673,7 @@ function AdminDashboard() {
     const { since, until } = getRange(fundPeriod, fromDate, toDate);
     const inRange = payments.filter((p) => {
       const d = new Date(payDate(p));
-      return (!since || d >= since) && (!until || d <= until);
+      return (!since || d >= since) && (!until || d <= until) && inYear(payAY(p));
     });
 
     const sum = (list: Tables<"payments">[]) => list.reduce((t, p) => t + Number(p.amount || 0), 0);
@@ -1692,7 +1714,8 @@ function AdminDashboard() {
 
 
     return { pipeline, byProgram, byMethod, recent, disbursedTotal };
-  }, [payments, applications, scholarships, fundPeriod, fromDate, toDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payments, applications, scholarships, fundPeriod, fromDate, toDate, yearView]);
   // Approved applications with a term that has no payment yet (a per-semester award has two).
   const awaitingPayment = applications.filter((a) => a.status === "Approved" && openTermsOf(a).length > 0);
 
@@ -1807,6 +1830,7 @@ function AdminDashboard() {
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <h2 className="text-xl font-display font-bold">Applicant Management</h2>
                 <div className="flex gap-2 flex-wrap">
+                  {yearSelect}
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input placeholder="Search name, email, ID, school, program..." value={appSearch} onChange={(e) => { setAppSearch(e.target.value); setAppPage(1); }} className="pl-9 w-72" />
@@ -2012,7 +2036,7 @@ function AdminDashboard() {
                           if (await decideApplication(va, "Waitlisted", remarks)) { toast.info("Waitlisted"); close(); loadData(true); }
                         }}><Hourglass className="mr-1 h-4 w-4" /> Waitlist</Button>
                       )}
-                      <Button variant="destructive" disabled={!remarks.trim()} title={remarks.trim() ? undefined : "Write the reason in the message first — it is shown to the student"} onClick={async () => {
+                      <Button variant="destructive" disabled={!remarks.trim()} title={remarks.trim() ? undefined : "Write the reason in the message first — it is shown to the scholar"} onClick={async () => {
                         if (await decideApplication(va, "Disapproved", remarks)) { toast.error("Disapproved"); close(); loadData(true); }
                       }}><XCircle className="mr-1 h-4 w-4" /> Disapprove</Button>
                       <Button disabled={!!blocker} title={blocker ?? undefined} onClick={async () => {
@@ -2108,7 +2132,7 @@ function AdminDashboard() {
                               <div className="flex flex-wrap items-center gap-2">
                                 <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
                                 {!mapAccess ? (
-                                  <span className="text-muted-foreground">{pin ? "The student has pinned their house. Only MSWDO staff can see where." : "The student hasn\u2019t pinned their house yet."}</span>
+                                  <span className="text-muted-foreground">{pin ? "The scholar has pinned their house. Only MSWDO staff can see where." : "The scholar hasn\u2019t pinned their house yet."}</span>
                                 ) : pin ? (
                                   <>
                                     <span>{pr?.home_landmark || "No landmark given"}</span>
@@ -2118,7 +2142,7 @@ function AdminDashboard() {
                                       </a>
                                     ))}
                                   </>
-                                ) : <span className="text-muted-foreground">The student hasn&apos;t pinned their house yet.</span>}
+                                ) : <span className="text-muted-foreground">The scholar hasn&apos;t pinned their house yet.</span>}
                               </div>
                               {mapAccess && pin && <HouseMap pin={pin} readOnly className="h-56" />}
                               {mapAccess && (() => {
@@ -2132,7 +2156,7 @@ function AdminDashboard() {
                                     {movedAfterVisit && (
                                       <p className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-800">
                                         <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                                        The student {latest.home_lat == null ? "removed" : "changed"} their house pin after the visit was done
+                                        The scholar {latest.home_lat == null ? "removed" : "changed"} their house pin after the visit was done
                                         {latest.home_lat != null && before?.home_lat != null && before.home_lng != null
                                           ? ` (moved ${fmtDistance(distanceKm({ lat: before.home_lat, lng: before.home_lng }, { lat: latest.home_lat, lng: latest.home_lng! }))})` : ""}.
                                       </p>
@@ -2169,7 +2193,7 @@ function AdminDashboard() {
                                     <div className="space-y-2">
                                       <div className="grid gap-2 sm:grid-cols-2">
                                         <Input type="datetime-local" value={visitAt} onChange={(e) => setVisitAt(e.target.value)} aria-label="Visit date and time" />
-                                        <Input value={visitNote} maxLength={500} onChange={(e) => setVisitNote(e.target.value)} placeholder="Note for the student (optional)" />
+                                        <Input value={visitNote} maxLength={500} onChange={(e) => setVisitNote(e.target.value)} placeholder="Note for the scholar (optional)" />
                                       </div>
                                       <div className="flex flex-wrap gap-2">
                                         <Button size="sm" variant="outline" disabled={visitBusy || !visitAt} onClick={() => saveHomeVisit(viewApp)}>
@@ -2198,7 +2222,7 @@ function AdminDashboard() {
                         {!docsLoading && olderDocs.length > 0 && (
                           <details className="mt-2 text-sm">
                             <summary className="cursor-pointer text-xs text-muted-foreground">
-                              {olderDocs.length} document{olderDocs.length === 1 ? "" : "s"} filed with the student&apos;s other applications or not yet filed (don&apos;t count for this one)
+                              {olderDocs.length} document{olderDocs.length === 1 ? "" : "s"} filed with the scholar&apos;s other applications or not yet filed (don&apos;t count for this one)
                             </summary>
                             {docList(olderDocs, false)}
                           </details>
@@ -2213,7 +2237,7 @@ function AdminDashboard() {
                             {can.manage && <Button variant="outline" disabled={hasDisbursed(viewApp.id)} onClick={() => saveAward(viewApp)}>Save award</Button>}
                           </div>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            {!can.manage ? "Only an admin can change an award after approval." : hasDisbursed(viewApp.id) ? "Locked: a payment for this award has been disbursed." : "The student is notified. Payments already scheduled keep their amount."}
+                            {!can.manage ? "Only an admin can change an award after approval." : hasDisbursed(viewApp.id) ? "Locked: a payment for this award has been disbursed." : "The scholar is notified. Payments already scheduled keep their amount."}
                           </p>
                         </div>
                       )}
@@ -2227,14 +2251,14 @@ function AdminDashboard() {
 
                       {!can.review ? (viewApp.notes && (
                         <div>
-                          <h3 className="mb-1.5 text-sm font-semibold">{viewApp.status === "Disapproved" ? "Reason (shown to the student)" : "Message to the student"}</h3>
+                          <h3 className="mb-1.5 text-sm font-semibold">{viewApp.status === "Disapproved" ? "Reason (shown to the scholar)" : "Message to the scholar"}</h3>
                           <p className="whitespace-pre-wrap rounded-md border bg-muted/40 px-3 py-2 text-sm">{viewApp.notes}</p>
                         </div>
                       )) : (
                       <div>
-                        <h3 className="mb-1.5 text-sm font-semibold">{viewApp.status === "Disapproved" ? "Reason (shown to the student)" : "Message to the student"}</h3>
+                        <h3 className="mb-1.5 text-sm font-semibold">{viewApp.status === "Disapproved" ? "Reason (shown to the scholar)" : "Message to the scholar"}</h3>
                         <Textarea value={remarks} onChange={(e) => setRemarks(e.target.value)}
-                          placeholder={open ? "Sent with your decision and shown on the student's application. Required to disapprove." : "Shown on the student's application."} />
+                          placeholder={open ? "Sent with your decision and shown on the scholar's application. Required to disapprove." : "Shown on the scholar's application."} />
                         {open && viewApp.notes && (
                           <p className="mt-1 text-xs text-muted-foreground">Last message sent: “{viewApp.notes}”. It isn&apos;t sent again unless you write it here.</p>
                         )}
@@ -2249,7 +2273,7 @@ function AdminDashboard() {
                             if (!data?.length) { toast.error("This application was changed elsewhere. The list has been refreshed."); silentRefreshAdmin(); return; }
                             setViewApp({ ...viewApp, notes });
                             // For a disapproved application the database notifies the student (see migration 040).
-                            toast.success(viewApp.status === "Disapproved" ? "Reason updated — the student was notified" : "Message saved");
+                            toast.success(viewApp.status === "Disapproved" ? "Reason updated — the scholar was notified" : "Message saved");
                             loadData(true);
                           }}>{viewApp.status === "Disapproved" ? "Save reason" : "Save message"}</Button>
                         )}
@@ -2257,7 +2281,7 @@ function AdminDashboard() {
                       )}
 
                       <div>
-                        <h3 className="mb-1.5 text-sm font-semibold">Internal notes (staff only — never shown to the student)</h3>
+                        <h3 className="mb-1.5 text-sm font-semibold">Internal notes (staff only — never shown to the scholar)</h3>
                         {appNotes.length > 0 && (
                           <ul className="mt-1 space-y-2">
                             {appNotes.map((n) => (
@@ -2284,7 +2308,7 @@ function AdminDashboard() {
                       )}
                       {open && viewApp.changes_requested && (
                         <DialogNote tone="warning" icon={<Hourglass className="h-3.5 w-3.5" />}>
-                          <span className="font-semibold">Waiting on the student{viewApp.changes_requested_at ? ` since ${new Date(viewApp.changes_requested_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}` : ""}: </span>
+                          <span className="font-semibold">Waiting on the scholar{viewApp.changes_requested_at ? ` since ${new Date(viewApp.changes_requested_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}` : ""}: </span>
                           <span className="whitespace-pre-wrap">{viewApp.changes_requested}</span>
                         </DialogNote>
                       )}
@@ -2330,7 +2354,7 @@ function AdminDashboard() {
                 return (
                   <AppDialog open={schDialog !== null} onOpenChange={(o) => !o && setSchDialog(null)} size="xl"
                     title={cur ? "Edit Scholarship" : "Add New Scholarship"}
-                    description="Students see the program card once it's accepting applications."
+                    description="Scholars see the program card once it's accepting applications."
                     onSubmit={saveScholarship} formKey={cur?.id ?? "new"}
                     footer={<>
                       <Button type="button" variant="outline" onClick={() => setSchDialog(null)}>Cancel</Button>
@@ -2344,6 +2368,7 @@ function AdminDashboard() {
                       active={schActive} setActive={setSchActive}
                       committedNote={cur && cur.total_budget > 0 ? `${formatPHP(committedFor(cur))} of ${formatPHP(cur.total_budget)} committed in ${currentAY}.` : null}
                       office={myOffice ?? (officesReady ? "choose" : undefined)}
+                      programs={scholarships}
                     />
                   </AppDialog>
                 );
@@ -2439,8 +2464,9 @@ function AdminDashboard() {
           {activeSection === "students" && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex items-center justify-between flex-wrap gap-3">
-                <h2 className="text-xl font-display font-bold">Student Management</h2>
+                <h2 className="text-xl font-display font-bold">Scholar Management</h2>
                 <div className="flex gap-2 flex-wrap">
+                  {yearSelect}
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input placeholder="Name, email, school, course, ID..." value={studentSearch} onChange={(e) => { setStudentSearch(e.target.value); setStudentPage(1); }} className="pl-9 w-64" />
@@ -2485,14 +2511,14 @@ function AdminDashboard() {
                 <Card className="border-destructive/30">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base">Account deletion requests ({pendingDeletions.length})</CardTitle>
-                    <CardDescription>Open each student to delete their account, or decline with a reason.</CardDescription>
+                    <CardDescription>Open each scholar to delete their account, or decline with a reason.</CardDescription>
                   </CardHeader>
                   <Table>
                     <TableBody>
                       {pendingDeletions.map(({ req, profile }) => (
                         <TableRow key={req.id}>
                           <TableCell>
-                            <p className="font-medium">{profile ? personName(profile) : "Unknown student"}</p>
+                            <p className="font-medium">{profile ? personName(profile) : "Unknown scholar"}</p>
                             <p className="text-xs text-muted-foreground">{profile?.email ?? req.user_id}</p>
                           </TableCell>
                           <TableCell className="text-xs text-muted-foreground max-w-[320px]">{req.reason ? <span className="line-clamp-2" title={req.reason}>{req.reason}</span> : "No reason given"}</TableCell>
@@ -2537,7 +2563,7 @@ function AdminDashboard() {
                         <TableCell><Badge variant={p.is_active ? "default" : "secondary"}>{p.is_active ? "Active" : "Inactive"}</Badge></TableCell>
                         <TableCell className="text-right space-x-1">
                           <Button size="icon" variant="ghost" title="View" onClick={() => setViewStudent(p)}><Eye className="h-4 w-4" /></Button>
-                          {can.finance && <Button size="icon" variant="ghost" title="Edit reference number / disbursement status" onClick={() => openEditDisb(p)}><Pencil className="h-4 w-4" /></Button>}
+                          {can.finance && <Button size="icon" variant="ghost" title="Edit payment status" onClick={() => openEditDisb(p)}><Pencil className="h-4 w-4" /></Button>}
                           {can.manage && <Button size="icon" variant="ghost" title={p.is_active ? "Deactivate" : "Activate"} onClick={() => toggleStudentActive(p)}>
                             <Power className={`h-4 w-4 ${p.is_active ? "text-destructive" : "text-success"}`} />
                           </Button>}
@@ -2549,7 +2575,7 @@ function AdminDashboard() {
               </Card>
               <div className="flex items-center justify-between text-sm text-muted-foreground">
                 <span>
-                  {filteredStudents.length === 0 ? "0 students" : `Showing ${(studentPage - 1) * STUDENT_PAGE_SIZE + 1}–${Math.min(studentPage * STUDENT_PAGE_SIZE, filteredStudents.length)} of ${filteredStudents.length}`}
+                  {filteredStudents.length === 0 ? "0 scholars" : `Showing ${(studentPage - 1) * STUDENT_PAGE_SIZE + 1}–${Math.min(studentPage * STUDENT_PAGE_SIZE, filteredStudents.length)} of ${filteredStudents.length}`}
                 </span>
                 <div className="flex items-center gap-2">
                   <Button size="sm" variant="outline" disabled={studentPage <= 1} onClick={() => setStudentPage((n) => n - 1)}><ChevronLeft className="h-4 w-4" /></Button>
@@ -2566,6 +2592,7 @@ function AdminDashboard() {
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <h2 className="text-xl font-display font-bold">Fund Management</h2>
                 <div className="flex gap-2 flex-wrap">
+                  {yearSelect}
                   <Select value={fundPeriod} onValueChange={setFundPeriod}>
                     <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -2668,30 +2695,29 @@ function AdminDashboard() {
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <h2 className="text-xl font-display font-bold">Disbursement Management</h2>
                 <div className="flex gap-2 flex-wrap">
+                  {yearSelect}
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Student, program, reference..." value={paySearch} onChange={(e) => { setPaySearch(e.target.value); setPayPage(1); }} className="pl-9 w-60" />
+                    <Input placeholder="Scholar, program, reference..." value={paySearch} onChange={(e) => { setPaySearch(e.target.value); setPayPage(1); }} className="pl-9 w-60" />
                   </div>
                   <Select value={payFilter} onValueChange={(v) => { setPayFilter(v); setPayPage(1); }}>
                     <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All status</SelectItem>
-                      <SelectItem value="Pending">Pending</SelectItem>
-                      <SelectItem value="Processing">Processing</SelectItem>
-                      <SelectItem value="Disbursed">Disbursed</SelectItem>
+                      <SelectItem value="open">Scheduled</SelectItem>
+                      <SelectItem value="Disbursed">Received</SelectItem>
                       <SelectItem value="Cancelled">Cancelled</SelectItem>
-                      <SelectItem value="receipts">Receipts to review</SelectItem>
                       <SelectItem value="issues">Open problems</SelectItem>
                     </SelectContent>
                   </Select>
                   {can.finance && <>
-                  <Button variant="outline" onClick={() => {
+                  <Button className="bg-gradient-primary shadow-primary" onClick={() => {
                     // Start on the current semester, or the first month someone still needs when only monthly programs have scholars waiting.
                     const sem = parseSettings(systemSettings).current_semester;
                     const semTerm: PaymentTerm = sem === "2nd Semester" ? "2nd Semester" : "1st Semester";
                     const term = bulkCandidates(semTerm).length > 0 ? semTerm : bulkTerms.find((t) => isMonthTerm(t) && bulkCandidates(t).length > 0) ?? semTerm;
                     setBulkTerm(term); setBulkDate(defaultScheduledDate); setBulkPicked(new Set(bulkCandidates(term).filter((c) => !c.warning).map((c) => c.app.id))); setBulkOpen(true);
-                  }}>Schedule payments in bulk</Button>
+                  }}><CalendarClock className="mr-1 h-4 w-4" /> Schedule Payments in Bulk</Button>
                   <Button className="bg-gradient-primary shadow-primary" onClick={() => openNewPayment()}><Plus className="mr-1 h-4 w-4" /> Schedule Payment</Button>
                   </>}
                 </div>
@@ -2699,22 +2725,131 @@ function AdminDashboard() {
               <Card className="border-warning/30 bg-warning/5">
                 <CardContent className="py-3 flex items-start gap-2">
                   <Lock className="h-4 w-4 text-warning mt-0.5" />
-                  <p className="text-sm text-muted-foreground">Payments can only be created for <strong className="text-foreground">approved</strong> applications. Disbursed payments are <strong className="text-foreground">locked</strong>. Only the methods enabled in <strong className="text-foreground">Settings</strong> ({enabledMethods.join(" and ")}) are accepted, and a receipt upload is required before marking as disbursed.</p>
+                  <p className="text-sm text-muted-foreground"><strong className="text-foreground">Schedule</strong> a payment for an approved scholar, then <strong className="text-foreground">mark it received</strong> once it&apos;s released, one at a time or in a batch. Received payments are <strong className="text-foreground">locked</strong>. Payments are released in <strong className="text-foreground">cash</strong>.</p>
                 </CardContent>
               </Card>
+              {(() => {
+                const pageOpen = pagedPayments.filter(isOpenPayment);
+                const picked = payments.filter((p) => payPicked.has(p.id) && isOpenPayment(p));
+                const allPicked = pageOpen.length > 0 && pageOpen.every((p) => payPicked.has(p.id));
+                const toggle = (id: string, on: boolean) => setPayPicked((prev) => { const n = new Set(prev); if (on) n.add(id); else n.delete(id); return n; });
+                // The schedule: payments not yet received, by scheduled date (soonest first; no date last).
+                const today = localDate();
+                const byDate = new Map<string, Tables<"payments">[]>();
+                payments.filter((p) => isOpenPayment(p) && inYear(payAY(p))).forEach((p) => { const k = p.scheduled_date ?? ""; byDate.set(k, [...(byDate.get(k) ?? []), p]); });
+                const days = [...byDate.entries()].sort(([a], [b]) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)));
+                const markOne = (p: Tables<"payments">) => {
+                  setDisbPaymentId(p.id);
+                  setDisbMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash");
+                  setDisbRef(p.reference || "");
+                  setDisbDialog(true);
+                };
+                return (<>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div role="tablist" aria-label="Disbursement view" className="inline-flex rounded-lg border bg-muted/40 p-0.5">
+                  {([["list", "Payments"], ["schedule", "Schedule"]] as const).map(([k, label]) => (
+                    <button key={k} type="button" role="tab" aria-selected={payView === k} onClick={() => setPayView(k)}
+                      className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer ${payView === k ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                      {label}{k === "schedule" && byDate.size > 0 && <span className="ml-1.5 text-xs text-muted-foreground">{[...byDate.values()].reduce((t, l) => t + l.length, 0)}</span>}
+                    </button>
+                  ))}
+                </div>
+                {payView === "list" && can.finance && picked.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">{picked.length} selected · {formatPHP(picked.reduce((t, p) => t + Number(p.amount || 0), 0))}</span>
+                    <Button size="sm" variant="ghost" onClick={() => setPayPicked(new Set())}>Clear</Button>
+                    <Button size="sm" variant="outline" onClick={() => { setBatchDate(picked[0]?.scheduled_date ?? defaultScheduledDate); setBatchSchedule(picked); }}><CalendarClock className="mr-1 h-4 w-4" /> Schedule {picked.length}</Button>
+                    <Button size="sm" className="bg-gradient-primary" onClick={() => setBatchReceive(picked)}><CheckCircle className="mr-1 h-4 w-4" /> Mark {picked.length} received</Button>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button type="button" onClick={() => { setPayView("list"); setPayFilter("Disbursed"); setPayPage(1); }}
+                  className="rounded-xl border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/60 cursor-pointer">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Received{yearView !== "all" ? ` · S.Y. ${yearView}` : ""}</p>
+                  <p className="text-2xl font-bold tabular-nums text-success">{payYearSummary.receivedScholars} <span className="text-sm font-medium text-muted-foreground">scholar{payYearSummary.receivedScholars === 1 ? "" : "s"}</span></p>
+                  <p className="text-xs text-muted-foreground">{formatPHP(payYearSummary.received)} · {payYearSummary.receivedCount} payment{payYearSummary.receivedCount === 1 ? "" : "s"}</p>
+                </button>
+                <button type="button" onClick={() => { setPayView("list"); setPayFilter("open"); setPayPage(1); }}
+                  className="rounded-xl border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/60 cursor-pointer">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Scheduled{yearView !== "all" ? ` · S.Y. ${yearView}` : ""}</p>
+                  <p className="text-2xl font-bold tabular-nums text-warning">{payYearSummary.scheduledScholars} <span className="text-sm font-medium text-muted-foreground">scholar{payYearSummary.scheduledScholars === 1 ? "" : "s"}</span></p>
+                  <p className="text-xs text-muted-foreground">{formatPHP(payYearSummary.scheduled)} · {payYearSummary.scheduledCount} payment{payYearSummary.scheduledCount === 1 ? "" : "s"}</p>
+                </button>
+              </div>
+
+              {payView === "schedule" ? (
+                days.length === 0 ? (
+                  <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">No payments scheduled. Use Schedule Payment or Schedule payments in bulk.</CardContent></Card>
+                ) : (
+                  <div className="space-y-3">
+                    {days.map(([date, list]) => {
+                      const overdue = !!date && date < today;
+                      return (
+                        <Card key={date || "none"}>
+                          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 py-3">
+                            <div className="min-w-0">
+                              <CardTitle className="text-base flex items-center gap-2">
+                                <CalendarClock className="h-4 w-4 text-primary" />
+                                {date ? new Date(`${date}T00:00:00`).toLocaleDateString("en-PH", { weekday: "short", month: "long", day: "numeric", year: "numeric" }) : "No date set"}
+                                {date === today && <Badge>Today</Badge>}
+                                {overdue && <Badge variant="destructive">Overdue</Badge>}
+                              </CardTitle>
+                              <p className="text-xs text-muted-foreground mt-0.5">{list.length} scholar{list.length === 1 ? "" : "s"} · {formatPHP(list.reduce((t, p) => t + Number(p.amount || 0), 0))}</p>
+                            </div>
+                            {can.finance && (
+                              <div className="flex shrink-0 gap-2">
+                                <Button size="sm" variant="ghost" onClick={() => { setBatchDate(date || defaultScheduledDate); setBatchSchedule(list); }}>Move date</Button>
+                                <Button size="sm" variant="outline" onClick={() => setBatchReceive(list)}>Mark all received</Button>
+                              </div>
+                            )}
+                          </CardHeader>
+                          <CardContent className="pt-0">
+                            <ul className="divide-y rounded-md border">
+                              {list.map((p) => (
+                                <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                                  <span className="min-w-0">
+                                    <span className="font-medium">{payStudent(p)}</span>
+                                    <span className="block text-xs text-muted-foreground truncate">{payProgram(p)}{termLabel(p.term, p.academic_year) && ` · ${termLabel(p.term, p.academic_year)}`} · {p.method}</span>
+                                  </span>
+                                  <span className="flex shrink-0 items-center gap-2">
+                                    <span className="tabular-nums font-medium">{formatPHP(Number(p.amount))}</span>
+                                    {can.finance && <Button size="sm" variant="ghost" onClick={() => markOne(p)}>Received</Button>}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )
+              ) : (<>
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                    <TableHead>Student</TableHead><TableHead>Reference / Cheque No.</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Student prefers</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead>Student receipt</TableHead><TableHead className="text-right">Actions</TableHead>
+                    {can.finance && (
+                      <TableHead className="w-10">
+                        <Checkbox aria-label="Select all scheduled payments on this page" checked={allPicked} disabled={pageOpen.length === 0}
+                          onCheckedChange={(v) => setPayPicked((prev) => { const n = new Set(prev); pageOpen.forEach((p) => (v ? n.add(p.id) : n.delete(p.id))); return n; })} />
+                      </TableHead>
+                    )}
+                    <TableHead>Scholar</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {pagedPayments.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No payments found</TableCell></TableRow>}
+                    {pagedPayments.length === 0 && <TableRow><TableCell colSpan={can.finance ? 7 : 6} className="text-center py-8 text-muted-foreground">No payments found</TableCell></TableRow>}
                     {pagedPayments.map((p) => {
-                      const open = p.status === "Pending" || p.status === "Processing";
+                      const open = isOpenPayment(p);
                       return (
                         <TableRow key={p.id} className={p.status === "Cancelled" ? "opacity-60" : undefined}>
+                          {can.finance && (
+                            <TableCell>
+                              {open && <Checkbox aria-label={`Select ${payStudent(p)}`} checked={payPicked.has(p.id)} onCheckedChange={(v) => toggle(p.id, !!v)} />}
+                            </TableCell>
+                          )}
                           <TableCell><p className="font-medium">{payStudent(p)}</p><p className="text-xs text-muted-foreground">{payProgram(p)}{termLabel(p.term, p.academic_year) && ` · ${termLabel(p.term, p.academic_year)}`}</p></TableCell>
-                          <TableCell className="font-mono text-xs">{p.reference || "—"}</TableCell>
                           <TableCell className="font-medium">{formatPHP(p.amount)}</TableCell>
                           <TableCell>
                             <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
@@ -2725,89 +2860,23 @@ function AdminDashboard() {
                               {p.method || "—"}
                             </span>
                           </TableCell>
-                          <TableCell>
-                            {p.preferred_method ? (
-                              <Badge variant={p.preferred_method === p.method ? "default" : "secondary"} title="Chosen by the student — the payment method is fixed">
-                                {p.preferred_method}
-                              </Badge>
-                            ) : <span className="text-muted-foreground">—</span>}
-                          </TableCell>
                           <TableCell>{p.scheduled_date || "—"}</TableCell>
-                          <TableCell>{disbStatusBadge(p.status)}</TableCell>
                           <TableCell>
-                            {p.status !== "Disbursed" ? <span className="text-muted-foreground">—</span>
-                              : p.student_receipt_at ? (
-                                <div className="space-y-1">
-                                  {p.student_receipt_ref ? (
-                                    <div className="space-y-0.5">
-                                      <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
-                                        <CheckCircle className="h-3.5 w-3.5" /> Ref. <span className="font-mono">{p.student_receipt_ref}</span> · {new Date(p.student_receipt_at).toLocaleDateString()}
-                                      </span>
-                                      {receiptNos[p.id] ? (
-                                        refKey(receiptNos[p.id]) === refKey(p.student_receipt_ref)
-                                          ? <p className="text-[11px] text-success">Matches the receipt number{p.receipt_review_status === "Accepted" && !p.receipt_reviewed_by ? " · accepted automatically" : ""}</p>
-                                          : <p className="text-[11px] text-destructive">Doesn&apos;t match receipt no. <span className="font-mono">{receiptNos[p.id]}</span></p>
-                                      ) : p.reference && (
-                                        refKey(p.reference) === refKey(p.student_receipt_ref)
-                                          ? <p className="text-[11px] text-success">Matches the payment reference</p>
-                                          : <p className="text-[11px] text-muted-foreground">Payment reference: <span className="font-mono">{p.reference}</span></p>
-                                      )}
-                                    </div>
-                                  ) : p.student_receipt_path ? (
-                                    <button type="button" onClick={() => viewStudentReceipt(p)} className="inline-flex items-center gap-1 text-xs font-medium text-success hover:underline cursor-pointer">
-                                      <CheckCircle className="h-3.5 w-3.5" /> Received · {new Date(p.student_receipt_at).toLocaleDateString()}
-                                    </button>
-                                  ) : (
-                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-success" title="Student confirmed receiving the cash without a receipt number (before reference numbers were required)">
-                                      <CheckCircle className="h-3.5 w-3.5" /> Confirmed (no file) · {new Date(p.student_receipt_at).toLocaleDateString()}
-                                    </span>
-                                  )}
-                                  <div className="flex items-center gap-1.5">
-                                    <Badge variant={p.receipt_review_status === "Accepted" ? "default" : "secondary"} className={p.receipt_review_status === "Disapproved" ? "text-destructive" : undefined}>
-                                      {p.receipt_review_status === "Pending" ? "To review" : p.receipt_review_status}
-                                    </Badge>
-                                    {p.receipt_review_status !== "Accepted" && can.finance && (
-                                      <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={payBusy} onClick={() => reviewReceipt(p, "Accepted")}>Accept</Button>
-                                    )}
-                                    {p.receipt_review_status !== "Disapproved" && can.finance && (
-                                      <Button size="sm" variant="outline" className="h-6 px-2 text-xs text-destructive" disabled={payBusy} onClick={() => { setReceiptNote(""); setDisapproveReceipt(p); }}>Disapprove</Button>
-                                    )}
-                                  </div>
-                                  {p.receipt_review_status === "Disapproved" && p.receipt_review_note && <p className="text-xs text-destructive">{p.receipt_review_note}</p>}
-                                </div>
-                              ) : (
-                                <div className="space-y-0.5">
-                                  <Badge variant="secondary">Awaiting</Badge>
-                                  {receiptNos[p.id] && <p className="text-[11px] text-muted-foreground">Receipt no. <span className="font-mono">{receiptNos[p.id]}</span></p>}
-                                </div>
-                              )}
+                            {disbStatusBadge(p.status)}
+                            {p.status === "Disbursed" && p.disbursed_at && <p className="mt-0.5 text-[11px] text-muted-foreground">Received {new Date(p.disbursed_at).toLocaleDateString()}</p>}
                           </TableCell>
                           <TableCell className="text-right space-x-1 whitespace-nowrap">
                             {payIssues.some((i) => i.payment_id === p.id) && (
-                              <Button size="icon" variant="ghost" title={openIssueFor(p.id) ? "Open problem reported by the student" : "Problem reports"} onClick={() => { setIssueResponse(""); setIssueDialog(p); }}>
+                              <Button size="icon" variant="ghost" title={openIssueFor(p.id) ? "Open problem reported by the scholar" : "Problem reports"} onClick={() => { setIssueResponse(""); setIssueDialog(p); }}>
                                 <AlertTriangle className={`h-4 w-4 ${openIssueFor(p.id) ? "text-warning" : "text-muted-foreground"}`} />
                               </Button>
                             )}
-                            {p.status !== "Cancelled" && receiptNos[p.id] && can.finance && (
-                              <Button size="icon" variant="ghost" title={`Print acknowledgment slip (${receiptNos[p.id]})`} onClick={() => printSlip(p)}><Printer className="h-4 w-4" /></Button>
-                            )}
-                            {p.status === "Disbursed" && (
+                            {p.status === "Disbursed" && p.receipt_path && (
                               <Button size="icon" variant="ghost" title="View receipt" onClick={() => viewReceipt(p)}><Receipt className="h-4 w-4" /></Button>
                             )}
                             {open && can.finance && (<>
-                              <Button size="icon" variant="ghost" title="Edit" onClick={() => { setPayMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash"); setPayTerm((p.term as PaymentTerm | null) ?? null); setPayDialog(p); }}><Pencil className="h-4 w-4" /></Button>
-                              {p.status === "Pending" && (
-                                <Button size="sm" variant="outline" disabled={savingPay} onClick={() => setPaymentStatus(p, "Processing")}>Process</Button>
-                              )}
-                              <Button size="sm" onClick={() => {
-                                setDisbPaymentId(p.id);
-                                setDisbMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash");
-                                setDisbRef(p.reference || "");
-                                setDisbReceipt(null);
-                                setDisbDialog(true);
-                              }}>
-                                Mark Disbursed
-                              </Button>
+                              <Button size="icon" variant="ghost" title="Edit schedule" onClick={() => { setPayMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash"); setPayTerm((p.term as PaymentTerm | null) ?? null); setPayDialog(p); }}><Pencil className="h-4 w-4" /></Button>
+                              <Button size="sm" onClick={() => markOne(p)}>Mark received</Button>
                               <Button size="icon" variant="ghost" title="Cancel payment" onClick={() => { setCancelReason(""); setCancelPay(p); }}><XCircle className="h-4 w-4 text-destructive" /></Button>
                             </>)}
                           </TableCell>
@@ -2825,6 +2894,9 @@ function AdminDashboard() {
                   <Button size="sm" variant="outline" disabled={currentPayPage >= payPages} onClick={() => setPayPage(currentPayPage + 1)}><ChevronRight className="h-4 w-4" /></Button>
                 </div>
               </div>
+              </>)}
+                </>);
+              })()}
 
               {/* Create / edit payment dialog */}
               {(() => {
@@ -2835,7 +2907,7 @@ function AdminDashboard() {
                 return (
                   <AppDialog open={payDialog !== null} onOpenChange={(o) => !o && setPayDialog(null)} size="md"
                     title={cur ? "Edit Payment" : "Schedule Payment"}
-                    description={cur ? `${payStudent(cur)} · ${payProgram(cur)}` : "For an approved scholar. The student is notified."}
+                    description={cur ? `${payStudent(cur)} · ${payProgram(cur)}` : "For an approved scholar. The scholar is notified."}
                     onSubmit={savePayment} formKey={cur?.id ?? `new-${payAppId}`}
                     footer={<>
                       <Button type="button" variant="outline" onClick={() => setPayDialog(null)}>Cancel</Button>
@@ -2881,7 +2953,9 @@ function AdminDashboard() {
                         <Input id="pay-date" name="scheduled_date" type="date" defaultValue={cur ? (cur.scheduled_date ?? "") : defaultScheduledDate} />
                       </DialogField>
                     </div>
-                    <DialogField label="Method" hint={cur?.preferred_method ? `The student chose ${cur.preferred_method}, so the method is fixed.` : undefined}>
+                    {/* Cash only now; the choice shows only if more methods are ever enabled. */}
+                    {enabledMethods.length > 1 && (
+                    <DialogField label="Method" hint={cur?.preferred_method ? `The scholar chose ${cur.preferred_method}, so the method is fixed.` : undefined}>
                       <div role="radiogroup" aria-label="Method" className="grid grid-cols-2 gap-3">
                         {enabledMethods.map((m) => (
                           <ChoiceButton key={m} selected={payMethod === m} disabled={!!cur?.preferred_method} onClick={() => setPayMethod(m)}>
@@ -2890,9 +2964,7 @@ function AdminDashboard() {
                         ))}
                       </div>
                     </DialogField>
-                    <DialogField label={payMethod === "Cheque" ? "Cheque number" : "Reference number"} htmlFor="pay-ref" hint={payMethod === "Cheque" ? "Optional now; required before the cheque is disbursed." : "Optional."}>
-                      <Input id="pay-ref" name="reference" defaultValue={cur?.reference ?? ""} placeholder={payMethod === "Cheque" ? "e.g. CHK-2026-001" : "e.g. REF-001"} />
-                    </DialogField>
+                    )}
                     <DialogField label="Notes" htmlFor="pay-notes" hint="Optional. Staff only.">
                       <Textarea id="pay-notes" name="notes" rows={2} defaultValue={cur?.notes ?? ""} />
                     </DialogField>
@@ -2974,8 +3046,8 @@ function AdminDashboard() {
               {/* Cancel confirmation */}
               <ReasonDialog open={!!cancelPay} onClose={() => setCancelPay(null)}
                 title="Cancel this payment?"
-                description={cancelPay ? `${formatPHP(cancelPay.amount)} for ${payStudent(cancelPay)} is cancelled and the student notified. This can't be undone, but you can schedule a new payment.` : undefined}
-                label="Reason" hint="Optional. Shown to the student." rows={2} maxLength={300} required={false}
+                description={cancelPay ? `${formatPHP(cancelPay.amount)} for ${payStudent(cancelPay)} is cancelled and the scholar notified. This can't be undone, but you can schedule a new payment.` : undefined}
+                label="Reason" hint="Optional. Shown to the scholar." rows={2} maxLength={300} required={false}
                 placeholder="e.g. Rescheduled to next month."
                 value={cancelReason} onChange={setCancelReason}
                 cancelLabel="Keep payment" confirmLabel="Cancel payment"
@@ -3207,24 +3279,26 @@ function AdminDashboard() {
                   <Detail label="Period">{termLabel(pm.term, pm.academic_year) || "—"}</Detail>
                 </DetailGrid>
               )}
-              <DialogField label={pm?.method === "Cheque" ? "Cheque number" : "Reference number"} htmlFor="edit-disb-ref">
-                <Input id="edit-disb-ref" value={editDisbRef} onChange={(e) => setEditDisbRef(e.target.value)} disabled={locked} placeholder={pm?.method === "Cheque" ? "e.g. CHK-2026-001" : "e.g. REF-001"} />
-              </DialogField>
+              {pm?.method === "Cheque" && (
+                <DialogField label="Cheque number" htmlFor="edit-disb-ref">
+                  <Input id="edit-disb-ref" value={editDisbRef} onChange={(e) => setEditDisbRef(e.target.value)} disabled={locked} placeholder="e.g. CHK-2026-001" />
+                </DialogField>
+              )}
               <DialogField label="Disbursement status"
-                hint={!locked && editDisbStatus === "Disbursed" ? "Next, you'll upload the signed receipt or voucher to confirm the disbursement." : undefined}>
+                hint={!locked && editDisbStatus === "Disbursed" ? "Next, you'll confirm the scholar received it." : undefined}>
                 <Select value={editDisbStatus} onValueChange={setEditDisbStatus} disabled={locked}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {pm?.status === "Pending" && <SelectItem value="Pending">Pending</SelectItem>}
-                    <SelectItem value="Processing">Processing</SelectItem>
-                    <SelectItem value="Disbursed">Disbursed</SelectItem>
+                    {pm?.status === "Pending" && <SelectItem value="Pending">Scheduled</SelectItem>}
+                    {pm?.status === "Processing" && <SelectItem value="Processing">Processing</SelectItem>}
+                    <SelectItem value="Disbursed">Received</SelectItem>
                     <SelectItem value="Cancelled">Cancelled</SelectItem>
                   </SelectContent>
                 </Select>
               </DialogField>
               {locked && <DialogNote icon={<Lock className="h-3.5 w-3.5" />}>{pm?.status} payments are locked and can&apos;t be edited.</DialogNote>}
               {!locked && editDisbStatus === "Cancelled" && (
-                <DialogField label="Cancellation reason" htmlFor="edit-disb-reason" hint="Optional. Shown to the student.">
+                <DialogField label="Cancellation reason" htmlFor="edit-disb-reason" hint="Optional. Shown to the scholar.">
                   <Textarea id="edit-disb-reason" rows={2} maxLength={300} value={editDisbReason} onChange={(e) => setEditDisbReason(e.target.value)} />
                 </DialogField>
               )}
@@ -3233,17 +3307,19 @@ function AdminDashboard() {
         );
       })()}
 
-      {/* Disburse dialog */}
+      {/* Mark received: one payment */}
       <AppDialog open={disbDialog} onOpenChange={setDisbDialog} size="md"
-        title="Confirm Disbursement"
+        title="Mark as received"
         description={disbPay ? `${payStudent(disbPay)} · ${formatPHP(Number(disbPay.amount))}${disbPay.term ? ` · ${termLabel(disbPay.term, disbPay.academic_year)}` : ""}` : undefined}
         footer={<>
           <Button variant="outline" onClick={() => setDisbDialog(false)}>Cancel</Button>
-          <Button className="bg-gradient-primary" disabled={disbLoading || !disbReceipt || (disbMethod === "Cheque" && !disbRef.trim())} onClick={confirmDisbursement}>
-            {disbLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Confirm Disbursement
+          <Button className="bg-gradient-primary" disabled={disbLoading || !disbPay || (disbMethod === "Cheque" && !disbRef.trim())}
+            onClick={async () => { if (disbPay && await markReceived([disbPay], { method: disbMethod, reference: disbRef })) setDisbDialog(false); }}>
+            {disbLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Mark received
           </Button>
         </>}>
-        <DialogField label="Payment method" hint={disbLocked ? `The student chose ${disbPay?.preferred_method} for this payment, so the method is fixed.` : undefined}>
+        {enabledMethods.length > 1 && (
+        <DialogField label="Payment method" hint={disbLocked ? `The scholar chose ${disbPay?.preferred_method} for this payment, so the method is fixed.` : undefined}>
           <div role="radiogroup" aria-label="Payment method" className="grid grid-cols-2 gap-3">
             {enabledMethods.map((m) => (
               <ChoiceButton key={m} selected={disbMethod === m} disabled={disbLocked} onClick={() => { setDisbMethod(m); setDisbRef(""); }}>
@@ -3252,37 +3328,76 @@ function AdminDashboard() {
             ))}
           </div>
         </DialogField>
-        <DialogField label={disbMethod === "Cheque" ? "Cheque number" : "Reference number"} htmlFor="disb-ref" hint={disbMethod === "Cheque" ? "Required for cheques." : "Optional."}>
-          <Input id="disb-ref" placeholder={disbMethod === "Cheque" ? "e.g. CHK-2026-001" : "e.g. REF-001"} value={disbRef} onChange={(e) => setDisbRef(e.target.value)} />
-        </DialogField>
-        {disbPay && receiptNos[disbPay.id] && (
-          <div className="space-y-2 rounded-lg border bg-muted/40 p-3">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-xs text-muted-foreground">Receipt No.</p>
-                <p className="font-mono text-sm font-semibold">{receiptNos[disbPay.id]}</p>
-              </div>
-              <Button type="button" size="sm" variant="outline" onClick={() => printSlip(disbPay, disbMethod, disbRef.trim() || null)}>
-                <Printer className="mr-1 h-3.5 w-3.5" /> Print slip
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">Print the acknowledgment slip, have the student sign both copies and give them the student copy. They enter this number in the portal to confirm they received the money.</p>
-          </div>
         )}
-        <DialogField label="Signed receipt or voucher" hint="Upload the signed acknowledgment slip (office copy) or the disbursement voucher. PDF, JPG or PNG.">
-          <label className={`flex cursor-pointer items-center gap-3 rounded-lg border border-dashed p-3 transition-colors hover:bg-muted/30 ${disbReceipt ? "border-primary/40 bg-primary/5" : ""}`}>
-            <Upload className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className={`min-w-0 truncate text-sm ${disbReceipt ? "font-medium text-foreground" : "text-muted-foreground"}`}>
-              {disbReceipt ? disbReceipt.name : "Choose a file"}
-            </span>
-            {disbReceipt && <span className="ml-auto shrink-0 text-xs text-primary">Change</span>}
-            <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={(e) => setDisbReceipt(e.target.files?.[0] ?? null)} />
-          </label>
+        {/* Only an older cheque payment still needs its number. */}
+        {disbMethod === "Cheque" && (
+          <DialogField label="Cheque number" htmlFor="disb-ref" hint="Required for cheques.">
+            <Input id="disb-ref" placeholder="e.g. CHK-2026-001" value={disbRef} onChange={(e) => setDisbRef(e.target.value)} />
+          </DialogField>
+        )}
+        <DialogNote icon={<Lock className="h-3.5 w-3.5" />}>Once marked received, the payment is locked and the scholar is notified.</DialogNote>
+      </AppDialog>
+
+      {/* Schedule a batch: one new date for every picked payment */}
+      <AppDialog open={!!batchSchedule} onOpenChange={(o) => !o && setBatchSchedule(null)} size="md"
+        title={`Schedule ${batchSchedule?.length ?? 0} payment${batchSchedule?.length === 1 ? "" : "s"}`}
+        description="Every payment below is moved to this date. The scholars are notified."
+        footer={<>
+          <Button variant="outline" onClick={() => setBatchSchedule(null)}>Cancel</Button>
+          <Button className="bg-gradient-primary" disabled={savingPay || !batchDate || !batchSchedule?.length} onClick={async () => {
+            if (!batchSchedule) return;
+            setSavingPay(true);
+            const ids = batchSchedule.map((p) => p.id);
+            // Only payments not yet received or cancelled can move.
+            const { data: rows, error } = await supabase.from("payments").update({ scheduled_date: batchDate })
+              .in("id", ids).in("status", ["Pending", "Processing"]).select("id");
+            setSavingPay(false);
+            if (error) { toast.error("Payments not rescheduled", { description: error.message }); return; }
+            const moved = rows?.length ?? 0;
+            toast.success(`${moved} payment${moved === 1 ? "" : "s"} scheduled for ${new Date(`${batchDate}T00:00:00`).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" })}`,
+              moved < ids.length ? { description: `${ids.length - moved} were already received or cancelled and weren't changed.` } : undefined);
+            setBatchSchedule(null); setPayPicked(new Set()); loadData();
+          }}>
+            {savingPay && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Schedule
+          </Button>
+        </>}>
+        <DialogField label="Scheduled date" htmlFor="batch-date">
+          <Input id="batch-date" type="date" value={batchDate} onChange={(e) => setBatchDate(e.target.value)} />
         </DialogField>
+        <ul className="max-h-64 divide-y overflow-auto rounded-md border text-sm">
+          {batchSchedule?.map((p) => (
+            <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-1.5">
+              <span className="min-w-0 truncate">{payStudent(p)} <span className="text-xs text-muted-foreground">· {payProgram(p)} · now {p.scheduled_date || "no date"}</span></span>
+              <span className="shrink-0 tabular-nums font-medium">{formatPHP(Number(p.amount))}</span>
+            </li>
+          ))}
+        </ul>
+      </AppDialog>
+
+      {/* Mark received: a batch */}
+      <AppDialog open={!!batchReceive} onOpenChange={(o) => !o && setBatchReceive(null)} size="md"
+        title={`Mark ${batchReceive?.length ?? 0} payment${batchReceive?.length === 1 ? "" : "s"} as received`}
+        description={batchReceive ? `${formatPHP(batchReceive.reduce((t, p) => t + Number(p.amount || 0), 0))} in all` : undefined}
+        footer={<>
+          <Button variant="outline" onClick={() => setBatchReceive(null)}>Cancel</Button>
+          <Button className="bg-gradient-primary" disabled={disbLoading || !batchReceive?.length}
+            onClick={async () => { if (batchReceive) { await markReceived(batchReceive); setBatchReceive(null); } }}>
+            {disbLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Mark received
+          </Button>
+        </>}>
+        <ul className="max-h-64 divide-y overflow-auto rounded-md border text-sm">
+          {batchReceive?.map((p) => (
+            <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-1.5">
+              <span className="min-w-0 truncate">{payStudent(p)} <span className="text-xs text-muted-foreground">· {payProgram(p)} · {p.method}</span></span>
+              <span className="shrink-0 tabular-nums font-medium">{formatPHP(Number(p.amount))}</span>
+            </li>
+          ))}
+        </ul>
+        <DialogNote icon={<Lock className="h-3.5 w-3.5" />}>Payments still waiting for a verified MOA are skipped. Received payments are locked and the scholars are notified.</DialogNote>
       </AppDialog>
 
       <AppDialog open={!!viewStudent} onOpenChange={(open) => !open && setViewStudent(null)} size="lg"
-        title="Student Details"
+        title="Scholar Details"
         description={viewStudent ? `${`${viewStudent.first_name || ""} ${viewStudent.last_name || ""}`.trim() || viewStudent.email}` : undefined}
         footer={viewStudent && <>
           {can.manage && (
@@ -3291,7 +3406,7 @@ function AdminDashboard() {
                 <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
               </Button>
               <StudentAccountActions
-                student={{ id: viewStudent.id, name: `${viewStudent.first_name || ""} ${viewStudent.last_name || ""}`.trim() || viewStudent.email || "this student", email: viewStudent.email }}
+                student={{ id: viewStudent.id, name: `${viewStudent.first_name || ""} ${viewStudent.last_name || ""}`.trim() || viewStudent.email || "this scholar", email: viewStudent.email }}
                 canDelete={can.super}
                 disbursedPayments={studentPayments(viewStudent.id).filter((pm) => pm.status === "Disbursed").length}
                 requestId={dataReqs.find((r) => r.user_id === viewStudent.id && r.status === "Pending")?.id}
@@ -3357,7 +3472,7 @@ function AdminDashboard() {
                                   <span className="text-xs text-muted-foreground"> · {pm.method || "—"} · Ref: <span className="font-mono">{pm.reference || "—"}</span></span>
                                 </span>
                                 <span className="flex items-center gap-1.5">
-                                  {pm.status === "Disbursed" && (
+                                  {pm.status === "Disbursed" && pm.receipt_path && (
                                     <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => viewReceipt(pm)}><Receipt className="mr-1 h-3.5 w-3.5" /> Receipt</Button>
                                   )}
                                   {disbStatusBadge(pm.status)}
@@ -3365,7 +3480,7 @@ function AdminDashboard() {
                               </div>
                               <p className="text-xs text-muted-foreground">
                                 {pm.status === "Disbursed" && pm.disbursed_at ? `Disbursed ${new Date(pm.disbursed_at).toLocaleDateString()}` : pm.scheduled_date ? `Scheduled ${pm.scheduled_date}` : `Created ${new Date(pm.created_at).toLocaleDateString()}`}
-                                {pm.status === "Disbursed" && ` · Student receipt: ${pm.student_receipt_at ? pm.receipt_review_status : "awaiting"}`}
+                                {pm.status === "Disbursed" && ` · Scholar receipt: ${pm.student_receipt_at ? pm.receipt_review_status : "awaiting"}`}
                                 {pm.status === "Cancelled" && pm.cancel_reason && ` · ${pm.cancel_reason}`}
                               </p>
                             </li>
@@ -3420,7 +3535,7 @@ function AdminDashboard() {
                                 </span>
                               )}
                             </div>
-                            {r.reason && <p className="mt-1 text-xs text-muted-foreground">Student&apos;s reason: {r.reason}</p>}
+                            {r.reason && <p className="mt-1 text-xs text-muted-foreground">Scholar&apos;s reason: {r.reason}</p>}
                             {r.response && <p className="mt-1 text-xs"><span className="font-medium">Response: </span>{r.response}</p>}
                           </li>
                         ))}
@@ -3441,8 +3556,8 @@ function AdminDashboard() {
       </AppDialog>
       <ReasonDialog open={!!disapproveGrade} onClose={() => setDisapproveGrade(null)}
         title="Disapprove grade submission"
-        description="The student is notified and asked to submit their grade again."
-        hint="Shown to the student."
+        description="The scholar is notified and asked to submit their grade again."
+        hint="Shown to the scholar."
         placeholder="e.g. The grade report is unreadable or doesn't show the average."
         value={gradeNote} onChange={setGradeNote} busy={payBusy}
         confirmLabel="Disapprove grade"
@@ -3450,22 +3565,13 @@ function AdminDashboard() {
 
       <ReasonDialog open={!!handleReq} onClose={() => setHandleReq(null)}
         title="Decline deletion request"
-        description="The student's account and data are kept."
-        label="Message to the student"
+        description="The scholar's account and data are kept."
+        label="Message to the scholar"
         placeholder="Explain why, e.g. payment records must be kept for audit."
         value={reqResponse} onChange={setReqResponse} busy={payBusy}
         confirmLabel="Decline request"
         confirmVariant="default"
         onConfirm={respondToRequest} />
-
-      <ReasonDialog open={!!disapproveReceipt} onClose={() => setDisapproveReceipt(null)}
-        title="Disapprove student's receipt"
-        description="The student is notified and asked to submit their receipt again."
-        hint="Shown to the student."
-        placeholder="e.g. The signature is missing. Please upload the signed voucher."
-        value={receiptNote} onChange={setReceiptNote} busy={payBusy}
-        confirmLabel="Disapprove receipt"
-        onConfirm={async () => { if (disapproveReceipt && await reviewReceipt(disapproveReceipt, "Disapproved", receiptNote)) setDisapproveReceipt(null); }} />
 
       {/* Stored file viewer (receipts, grade reports) */}
       <AppDialog open={!!fileView} onOpenChange={(o) => !o && setFileView(null)} size="lg" title={fileView?.title ?? "Receipt"}
@@ -3498,7 +3604,7 @@ function AdminDashboard() {
             {i.response && <p className="mt-3 whitespace-pre-wrap border-t pt-3"><span className="font-medium">Response: </span>{i.response}</p>}
             {i.status === "Open" && can.finance && (
               <div className="mt-4 space-y-2 border-t pt-4">
-                <DialogField label="Response to the student" htmlFor={`issue-${i.id}`}>
+                <DialogField label="Response to the scholar" htmlFor={`issue-${i.id}`}>
                   <Textarea id={`issue-${i.id}`} rows={3} value={issueResponse} onChange={(e) => setIssueResponse(e.target.value)} placeholder="Explain what you found or what happens next." />
                 </DialogField>
                 <div className="flex justify-end">
@@ -3513,7 +3619,7 @@ function AdminDashboard() {
       <ReasonDialog open={!!disapproveApp} onClose={() => setDisapproveApp(null)}
         title="Disapprove application"
         description={disapproveApp ? `${personName(disapproveApp.profiles)} · ${disapproveApp.scholarships?.name || "—"}` : undefined}
-        hint="Shown to the student."
+        hint="Shown to the scholar."
         placeholder="e.g. Your average grade is below the program's minimum."
         value={disapproveAppNote} onChange={setDisapproveAppNote} busy={disapprovingApp}
         confirmLabel="Disapprove application"
@@ -3528,7 +3634,7 @@ function AdminDashboard() {
       <ReasonDialog open={!!revokeApp} onClose={() => setRevokeApp(null)}
         title="Revoke approval"
         description={`${personName(revokeApp?.profiles)}'s application for ${revokeApp?.scholarships?.name || "this program"} goes back to Pending, and its slot and award are released.`}
-        hint="Shown to the student."
+        hint="Shown to the scholar."
         placeholder="e.g. Approved by mistake: your residency could not be confirmed."
         value={revokeNote} onChange={setRevokeNote} busy={revokingApp}
         confirmLabel="Revoke approval"
@@ -3537,12 +3643,12 @@ function AdminDashboard() {
           setRevokingApp(true);
           const ok = await decideApplication(revokeApp, "Pending", revokeNote);
           setRevokingApp(false);
-          if (ok) { toast.success("Approval revoked — the student was notified"); setRevokeApp(null); loadData(true); }
+          if (ok) { toast.success("Approval revoked — the scholar was notified"); setRevokeApp(null); loadData(true); }
         }} />
 
       <ReasonDialog open={!!reminderFor} onClose={() => setReminderFor(null)}
-        title={`Send reminder${reminderFor && reminderFor.length > 1 ? ` to ${reminderFor.length} students` : reminderFor?.[0] ? ` to ${personName(profiles.find((p) => p.id === reminderFor[0]))}` : ""}`}
-        description="Sent as a notification that links to their Documents page. Each student gets at most one reminder a day."
+        title={`Send reminder${reminderFor && reminderFor.length > 1 ? ` to ${reminderFor.length} scholars` : reminderFor?.[0] ? ` to ${personName(profiles.find((p) => p.id === reminderFor[0]))}` : ""}`}
+        description="Sent as a notification that links to their Documents page. Each scholar gets at most one reminder a day."
         label="Message" rows={4} maxLength={1000}
         value={reminderText} onChange={setReminderText} busy={messaging}
         confirmLabel="Send reminder" confirmVariant="default"
@@ -3551,8 +3657,8 @@ function AdminDashboard() {
       <ReasonDialog open={!!changesFor} onClose={() => setChangesFor(null)}
         title="Request changes"
         description={`${personName(changesFor?.profiles)} is asked to fix something on their ${changesFor?.scholarships?.name || ""} application. Its status doesn't change.`}
-        label="What the student needs to do"
-        hint="To have a document re-uploaded, also mark it Disapproved so the student can replace it."
+        label="What the scholar needs to do"
+        hint="To have a document re-uploaded, also mark it Disapproved so the scholar can replace it."
         placeholder="e.g. Your Certificate of Enrollment is blurry. Please upload a clearer copy."
         maxLength={1000}
         value={changesText} onChange={setChangesText} busy={messaging}
@@ -3561,8 +3667,8 @@ function AdminDashboard() {
 
       <ReasonDialog open={bulkDisapprove} onClose={() => setBulkDisapprove(false)}
         title={`Disapprove ${selectedApps.size} application${selectedApps.size === 1 ? "" : "s"}`}
-        description="Every selected student is notified."
-        hint="Sent to every selected student."
+        description="Every selected scholar is notified."
+        hint="Sent to every selected scholar."
         placeholder="e.g. All slots for this program have been filled."
         value={bulkNote} onChange={setBulkNote} busy={bulkBusy}
         confirmLabel="Disapprove"
@@ -3570,8 +3676,8 @@ function AdminDashboard() {
 
       <ReasonDialog open={!!disapproveDoc} onClose={() => setDisapproveDoc(null)}
         title={`Disapprove ${disapproveDoc?.type ?? "document"}`}
-        description="The student is notified and can upload a replacement."
-        hint="Shown to the student."
+        description="The scholar is notified and can upload a replacement."
+        hint="Shown to the scholar."
         placeholder="e.g. The photo is blurry. Please upload a clear copy."
         value={disapproveNote} onChange={setDisapproveNote} busy={reviewingDoc}
         confirmLabel="Disapprove document"

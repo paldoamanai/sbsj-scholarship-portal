@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Tables } from "@/integrations/supabase/types";
-import { pesoFixed as formatPHP } from "@/lib/format";
+import { pesoCompact, pesoFixed as formatPHP } from "@/lib/format";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { academicYearOf, ayStart } from "@/lib/settings";
 
@@ -254,8 +254,10 @@ export default function OverviewPanel({
 
     // Scholarships: slot usage + deadlines (all time, not period-bound).
     const active = scholarships.filter((s) => s.is_active);
-    const approvedBy = (id: string) => applications.filter((a) => a.scholarship_id === id && a.status === "Approved").length;
-    const applicantsBy = (id: string) => applications.filter((a) => a.scholarship_id === id).length;
+    // Slots are per academic year: count the current year's applications, as the Programs page does.
+    const thisYear = applications.filter((a) => appYear(a) === currentYear);
+    const approvedBy = (id: string) => thisYear.filter((a) => a.scholarship_id === id && a.status === "Approved").length;
+    const applicantsBy = (id: string) => thisYear.filter((a) => a.scholarship_id === id).length;
     const deadlineOf = (s: Tables<"scholarships">) => (s.deadline ? new Date(`${s.deadline}T23:59:59`).getTime() : null);
     const closingSoon = active.filter((s) => { const d = deadlineOf(s); return d !== null && d >= now && d - now <= 14 * DAY; })
       .sort((x, y) => (deadlineOf(x)! - deadlineOf(y)!));
@@ -285,6 +287,8 @@ export default function OverviewPanel({
       monthTotal: perMonth.reduce((t, m) => t + m.count, 0), monthAvg: perMonth.reduce((t, m) => t + m.count, 0) / perMonth.length, monthPeak: perMonth.reduce((b, m) => (m.count > b.count ? m : b), perMonth[0]),
       active, approvedBy, applicantsBy, closingSoon, pastDeadline, fullPrograms,
       budget, disbursedAll, queued, remaining, queuedCount: queuedList.length, awaiting,
+      // The bell and Needs Attention are work to do now, whatever year or period is shown.
+      pendingAll: cnt(applications, "Pending"),
       approvalRate: total ? Math.round((approved / total) * 100) : 0,
       disapprovalRate: total ? Math.round((disapproved / total) * 100) : 0,
       activeStudents: profiles.filter((p) => p.is_active).length,
@@ -297,19 +301,19 @@ export default function OverviewPanel({
 
   const stats = [
     // Ordered like the applicant pipeline: registered → applied → decided → scholar → paid.
-    { label: "Total Applicants", value: data.applicants, sub: "registered students", icon: FileText, color: "text-primary", trend: <Trend current={data.applicants} previous={data.applicantsPrev} />, go: () => onNavigate("applications", { status: "all" }) },
+    { label: "Total Applicants", value: data.applicants, sub: "registered scholars", icon: FileText, color: "text-primary", trend: <Trend current={data.applicants} previous={data.applicantsPrev} />, go: () => onNavigate("applications", { status: "all" }) },
     { label: "Not Yet Applied", value: data.notYetApplied, sub: "registered, no application", icon: UserX, color: "text-warning", trend: <Trend current={data.notYetApplied} previous={data.notYetAppliedPrev} />, go: () => onNavigate("applications", { status: "not_applied" }) },
     { label: "Pending", value: data.pending, sub: data.waitlisted ? `+ ${data.waitlisted} waitlisted` : "Needs review", icon: Clock, color: "text-warning", trend: <Trend current={data.pending} previous={data.prevPending} />, go: () => onNavigate("applications", { status: data.waitlisted ? "open" : "pending" }) },
     { label: "Approved", value: data.approved, sub: `${data.approvalRate}% approval rate`, icon: CheckCircle, color: "text-success", trend: <Trend current={data.approved} previous={data.prevApproved} />, go: () => onNavigate("applications", { status: "approved" }) },
     { label: "Disapproved", value: data.disapproved, sub: `${data.disapprovalRate}% disapproval rate`, icon: XCircle, color: "text-destructive", trend: <Trend current={data.disapproved} previous={data.prevDisapproved} />, go: () => onNavigate("applications", { status: "disapproved" }) },
-    { label: "Students", value: profiles.length, sub: `${data.activeStudents} active · ${data.newStudents} new`, icon: Users, color: "text-primary", trend: <Trend current={data.newStudents} previous={data.newStudentsPrev} />, go: () => onNavigate("students") },
-    { label: "Disbursed", value: formatPHP(data.disbCur), sub: `${data.paidScholars} scholar${data.paidScholars === 1 ? "" : "s"} paid · ${scope}`, icon: Banknote, color: "text-success", trend: <Trend current={data.disbCur} previous={data.disbPrev} />, go: () => onNavigate("disbursement"), small: true },
+    { label: "Scholars", value: profiles.length, sub: `${data.activeStudents} active · ${data.newStudents} new`, icon: Users, color: "text-primary", trend: <Trend current={data.newStudents} previous={data.newStudentsPrev} />, go: () => onNavigate("students") },
+    { label: "Disbursed", value: pesoCompact(data.disbCur), title: formatPHP(data.disbCur), sub: `${data.paidScholars} scholar${data.paidScholars === 1 ? "" : "s"} paid · ${scope}`, icon: Banknote, color: "text-success", trend: <Trend current={data.disbCur} previous={data.disbPrev} />, go: () => onNavigate("disbursement") },
   ];
 
   const attention = [
     { show: data.awaiting.length > 0, icon: Wallet, tone: "text-warning", text: `${data.awaiting.length} approved application${data.awaiting.length === 1 ? "" : "s"} with no payment`, cta: "Disburse", go: () => onNavigate("disbursement") },
     { show: data.queuedCount > 0, icon: Banknote, tone: "text-primary", text: `${data.queuedCount} payment${data.queuedCount === 1 ? "" : "s"} pending or processing (${formatPHP(data.queued)})`, cta: "Open", go: () => onNavigate("disbursement") },
-    { show: data.pending > 0, icon: Clock, tone: "text-warning", text: `${data.pending} application${data.pending === 1 ? "" : "s"} waiting for review`, cta: "Review", go: () => onNavigate("applications", { status: "pending" }) },
+    { show: data.pendingAll > 0, icon: Clock, tone: "text-warning", text: `${data.pendingAll} application${data.pendingAll === 1 ? "" : "s"} waiting for review`, cta: "Review", go: () => onNavigate("applications", { status: "pending" }) },
     ...data.closingSoon.map((s) => ({ show: true, icon: CalendarClock, tone: "text-warning", text: `${s.name} closes ${new Date(`${s.deadline}T00:00:00`).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}`, cta: "View", go: () => onNavigate("scholarships") })),
     ...data.pastDeadline.map((s) => ({ show: true, icon: AlertTriangle, tone: "text-destructive", text: `${s.name} is active but past its deadline`, cta: "Fix", go: () => onNavigate("scholarships") })),
     ...data.fullPrograms.map((s) => ({ show: true, icon: GraduationCap, tone: "text-warning", text: `${s.name} has filled all ${s.slots} slots`, cta: "View", go: () => onNavigate("scholarships") })),
@@ -341,12 +345,12 @@ export default function OverviewPanel({
               className="h-10 w-10 rounded-full bg-white/15 hover:bg-white/25 transition-colors flex items-center justify-center cursor-pointer disabled:opacity-60">
               {refreshing ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}
             </button>
-            <button type="button" onClick={() => onNavigate("applications", { status: "pending" })} aria-label={`${data.pending} pending applications need review`}
+            <button type="button" onClick={() => onNavigate("applications", { status: "pending" })} aria-label={`${data.pendingAll} pending applications need review`}
               className="relative h-10 w-10 rounded-full bg-white/15 hover:bg-white/25 transition-colors flex items-center justify-center cursor-pointer">
               <Bell className="h-5 w-5" />
-              {data.pending > 0 && (
+              {data.pendingAll > 0 && (
                 <span className="absolute -top-1 -right-1 h-4 min-w-4 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">
-                  {data.pending > 99 ? "99+" : data.pending}
+                  {data.pendingAll > 99 ? "99+" : data.pendingAll}
                 </span>
               )}
             </button>
@@ -384,14 +388,14 @@ export default function OverviewPanel({
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
         {stats.map((stat) => (
-          <Card key={stat.label} className="hover-lift cursor-pointer" role="button" tabIndex={0} onClick={stat.go}
+          <Card key={stat.label} className="hover-lift cursor-pointer min-w-0" role="button" tabIndex={0} onClick={stat.go} title={"title" in stat ? stat.title : undefined}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") stat.go(); }}>
             <CardContent className="py-4">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-medium text-muted-foreground truncate">{stat.label}</p>
                 <div className="h-8 w-8 rounded-lg bg-accent flex items-center justify-center shrink-0"><stat.icon className={`h-4 w-4 ${stat.color}`} /></div>
               </div>
-              <p className={`mt-2 ${stat.small ? "text-xl" : "text-3xl"} font-bold font-display tabular-nums leading-none`}>{stat.value}</p>
+              <p className="mt-2 text-3xl font-bold font-display tabular-nums leading-none truncate">{stat.value}</p>
               <div className="mt-2 flex items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground truncate">{stat.sub}</p>
                 {stat.trend}
@@ -562,11 +566,11 @@ export default function OverviewPanel({
           <RankedBars rows={data.distribution} unit="applications" />
         </ChartCard>
 
-        <ChartCard title="Students" subtitle="Active vs inactive accounts"
-          table={{ head: ["Group", "Students"], rows: [["Active", data.activeStudents], ["Inactive", profiles.length - data.activeStudents]] }} empty={profiles.length === 0}>
+        <ChartCard title="Scholars" subtitle="Active vs inactive accounts"
+          table={{ head: ["Group", "Scholars"], rows: [["Active", data.activeStudents], ["Inactive", profiles.length - data.activeStudents]] }} empty={profiles.length === 0}>
           <div className="pt-2">
             <p className="mb-3 text-3xl font-bold font-display tabular-nums">{profiles.length ? Math.round((data.activeStudents / profiles.length) * 100) : 0}%<span className="ml-2 text-sm font-normal text-muted-foreground">active</span></p>
-            <SegmentedBar total={profiles.length} ariaLabel={`${data.activeStudents} active and ${profiles.length - data.activeStudents} inactive students`}
+            <SegmentedBar total={profiles.length} ariaLabel={`${data.activeStudents} active and ${profiles.length - data.activeStudents} inactive scholars`}
               segments={[{ name: "Active", value: data.activeStudents, color: "hsl(var(--success))" }, { name: "Inactive", value: profiles.length - data.activeStudents, color: "hsl(var(--muted-foreground))" }]} />
           </div>
         </ChartCard>

@@ -15,7 +15,7 @@ type Step = {
   state: "done" | "current" | "upcoming" | "warn" | "bad";
 };
 
-/** The steps of one application, from submission to a confirmed receipt, for whatever state it is really in. */
+/** The steps of one application, from submission to the payment being received, for whatever state it is really in. */
 export function buildTimeline(app: App, payments: Payment[]): Step[] {
   const mine = payments.filter((p) => p.application_id === app.id && p.status !== "Cancelled");
   const open = mine.filter((p) => p.status === "Pending" || p.status === "Processing");
@@ -49,19 +49,12 @@ export function buildTimeline(app: App, payments: Payment[]): Step[] {
   if (disbursed.length > 0) {
     steps.push({ key: "payment", title: "Payment scheduled", state: "done" });
     const last = [...disbursed].sort((a, b) => (b.disbursed_at ?? "").localeCompare(a.disbursed_at ?? ""))[0];
-    steps.push({ key: "disbursed", title: "Payment released", date: last.disbursed_at, state: "done",
-      detail: `${pesoFixed(disbursed.reduce((t, p) => t + p.amount, 0))} disbursed${open.length ? `, ${open.length} more scheduled` : ""}` });
-    const unconfirmed = disbursed.filter((p) => !p.student_receipt_at || p.receipt_review_status === "Disapproved");
-    const waiting = disbursed.filter((p) => p.student_receipt_at && p.receipt_review_status === "Pending");
-    steps.push(unconfirmed.length > 0
-      ? { key: "receipt", title: "Enter your receipt number", state: "current", detail: `${unconfirmed.length} payment${unconfirmed.length === 1 ? "" : "s"} still need${unconfirmed.length === 1 ? "s" : ""} the reference number from your receipt.` }
-      : waiting.length > 0
-        ? { key: "receipt", title: "Receipt under review", state: "current", detail: "The office is checking your receipt number." }
-        : { key: "receipt", title: "Receipt accepted", state: "done" });
+    steps.push({ key: "disbursed", title: "Payment received", date: last.disbursed_at, state: "done",
+      detail: `${pesoFixed(disbursed.reduce((t, p) => t + p.amount, 0))} received${open.length ? `, ${open.length} more scheduled` : ""}` });
   } else if (open.length > 0) {
     const next = [...open].sort((a, b) => (a.scheduled_date ?? "9999").localeCompare(b.scheduled_date ?? "9999"))[0];
     steps.push({ key: "payment", title: "Payment scheduled", state: "current", date: next.scheduled_date,
-      detail: `${pesoFixed(next.amount)} via ${next.method || "Cash or Cheque"}` });
+      detail: `${pesoFixed(next.amount)} via ${next.method || "Cash"}` });
     steps.push({ key: "disbursed", title: "Payment received", state: "upcoming" });
   } else {
     steps.push({ key: "payment", title: "Waiting for your payment to be scheduled", state: "current", detail: "The office will schedule it and you will be notified." });

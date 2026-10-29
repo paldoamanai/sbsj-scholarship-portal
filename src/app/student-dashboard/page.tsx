@@ -2,7 +2,6 @@
 
 import { useHistorySync } from "@/hooks/use-history-sync";
 import { useState, useEffect, useRef } from "react";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +23,7 @@ import ProfileSection from "@/components/student/ProfileSection";
 import ProfileImage from "@/components/ProfileImage";
 import SecuritySettings from "@/components/account/SecuritySettings";
 import AccountSettings from "@/components/student/AccountSettings";
-import { Panel, SectionTitle, StatCard, StatusBadge } from "@/components/student/ui";
+import { PAYMENT_STATUS_LABEL, Panel, SectionTitle, StatCard, StatusBadge } from "@/components/student/ui";
 import { profileCompleteness } from "@/lib/profile";
 import NotificationInbox, { NOTIFICATION_PAGE } from "@/components/notifications/NotificationInbox";
 import { useUnreadTitle } from "@/hooks/use-unread-title";
@@ -33,7 +32,7 @@ import NotificationPreferences from "@/components/notifications/NotificationPref
 import type { Tables } from "@/integrations/supabase/types";
 import { profileFromUserMetadata } from "@/lib/registration-profile";
 import { useSystemSettings } from "@/hooks/use-system-settings";
-import { applicationsBlockedReason, ayStart } from "@/lib/settings";
+import { academicYearOf, applicationsBlockedReason, ayStart } from "@/lib/settings";
 import { APPLICATION_DOCS, DOC_MIME, LETTER_OF_INTENT, MOA, PHOTO_MIME, documentPath, shrinkPhoto, uploadLetterPhoto, uploadUserDocument } from "@/lib/documents";
 import { uploadPendingDocuments } from "@/lib/pending-documents";
 import { HOUSE_PHOTO, approvalDocuments, asksLetter, documentNote, followUpDocuments, needsHomeVisit, needsHousePin, needsMoa, photosOnly, programDocuments } from "@/lib/office-requirements";
@@ -48,7 +47,6 @@ import ApplicationTimeline from "@/components/student/ApplicationTimeline";
 import ApplicationHistory, { DisapprovalReason } from "@/components/student/ApplicationHistory";
 import HelpSection from "@/components/student/HelpSection";
 import { printAwardNotice } from "@/lib/award-notice";
-import { downloadReceiptSlipPDF } from "@/lib/receipt-slip";
 import { isOneTime, termLabel, yearlyAward } from "@/lib/release-schedule";
 import DashboardSkeleton from "@/components/DashboardSkeleton";
 
@@ -68,179 +66,26 @@ function DocStatusBadge({ status }: { status: string }) {
 
 // ── Section heading ────────────────────────────────────────────────────────────
 // ── Disbursement section ───────────────────────────────────────────────────────
-// Shared receipt-submission logic. The student types the receipt number printed on the acknowledgment
-// slip they signed. The database checks it against the number the portal issued: a match is accepted on
-// the spot, a wrong number is refused (after 5 wrong tries it goes to staff). Older payments without a
-// portal number are reviewed by staff as before.
-const RECEIPT_REF = /^[A-Za-z0-9][A-Za-z0-9 /#._-]{2,39}$/;
-
-function useReceiptSubmit(onSubmitted: () => void) {
-  const supabase = createClient();
-  const [submittingFor, setSubmittingFor] = useState<string | null>(null);
-  const [refs, setRefs] = useState<Record<string, string>>({});
-  const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
-
-  const submit = async (paymentId: string) => {
-    const ref = (refs[paymentId] ?? "").trim();
-    if (!RECEIPT_REF.test(ref)) { toast.error("Enter the receipt number exactly as printed on your slip (3–40 letters or numbers)."); return; }
-    if (!confirmed[paymentId]) return;
-    setSubmittingFor(paymentId);
-    try {
-      const { data: result, error } = await supabase.rpc("submit_student_receipt", { _payment_id: paymentId, _reference: ref });
-      if (error) { toast.error("Could not submit", { description: error.message }); return; }
-      if (result === "mismatch") {
-        toast.error("That number doesn't match this payment", { description: "Check the receipt number on your slip (e.g. AR-26-7K3QX9) and try again." });
-        return;
-      }
-      if (result === "accepted") toast.success("Receipt confirmed. Thank you!");
-      else if (result === "review") toast.warning("We couldn't match the number, so the office will check it.");
-      else toast.success("Receipt number submitted.");
-      setRefs((prev) => ({ ...prev, [paymentId]: "" }));
-      setConfirmed((prev) => ({ ...prev, [paymentId]: false }));
-      onSubmitted();
-    } catch {
-      toast.error("Failed to submit.");
-    } finally {
-      setSubmittingFor(null);
-    }
-  };
-
-  // Receipts sent as photos before the switch to reference numbers can still be opened.
-  const view = async (path: string | null) => {
-    if (!path) return;
-    const win = window.open("", "_blank");
-    const { data, error } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
-    if (error || !data?.signedUrl) { win?.close(); toast.error("Could not open receipt"); return; }
-    if (win) win.location.href = data.signedUrl; else window.location.href = data.signedUrl;
-  };
-
-  // Soft copy of the acknowledgment slip, once the receipt number is confirmed (migration 053).
-  const [downloadingFor, setDownloadingFor] = useState<string | null>(null);
-  const downloadSlip = async (paymentId: string, period?: string | null) => {
-    setDownloadingFor(paymentId);
-    try {
-      const { data, error } = await supabase.rpc("get_my_receipt_slip", { _payment_id: paymentId });
-      const slip = data?.[0];
-      if (error || !slip) { toast.error("Could not download your slip", { description: error?.message }); return; }
-      await downloadReceiptSlipPDF({
-        receiptNo: slip.receipt_no, studentName: slip.student_name, program: slip.program, period,
-        amount: Number(slip.amount), method: slip.method, reference: slip.reference,
-        disbursedAt: slip.disbursed_at, confirmedAt: slip.confirmed_at,
-      });
-    } catch {
-      toast.error("Could not download your slip");
-    } finally {
-      setDownloadingFor(null);
-    }
-  };
-
-  return { refs, setRefs, submittingFor, confirmed, setConfirmed, submit, view, downloadingFor, downloadSlip };
-}
-
-// Lets the student say whether they'd like Cash or Cheque for a payment that isn't disbursed yet.
-function MethodPreference({ payment, onChanged, compact = false }: { payment: Payment; onChanged: () => void; compact?: boolean }) {
-  const supabase = createClient();
-  const [saving, setSaving] = useState(false);
-  const { settings } = useSystemSettings();
-  if (payment.status !== "Pending" && payment.status !== "Processing") return null;
-
-  const choose = async (method: "Cash" | "Cheque") => {
-    if (payment.preferred_method === method) return;
-    setSaving(true);
-    const { error } = await supabase.rpc("set_payment_preference", { _payment_id: payment.id, _method: method });
-    setSaving(false);
-    if (error) { toast.error("Could not save preference", { description: error.message }); return; }
-    toast.success(`You prefer ${method}. The office will honor it when possible.`);
-    onChanged();
-  };
-
-  return (
-    <div className={compact ? "space-y-1" : "flex items-center gap-2 pt-2 border-t border-muted flex-wrap"}>
-      <span className="text-xs text-muted-foreground">{payment.preferred_method ? "I prefer:" : "How would you like to be paid?"}</span>
-      <div className="inline-flex rounded-lg border border-border overflow-hidden">
-        {settings.payment_methods.map((m) => (
-          <button key={m} type="button" disabled={saving} onClick={() => choose(m)}
-            className={`px-3 py-1 text-xs font-medium cursor-pointer transition-colors ${
-              payment.preferred_method === m ? "bg-primary text-white" : "bg-card text-muted-foreground hover:bg-muted"
-            }`}>{m}</button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-type ReceiptCtl = ReturnType<typeof useReceiptSubmit>;
-
 const ISSUE_KINDS: Record<string, string> = {
   not_received: "I didn't receive this payment",
   wrong_amount: "The amount is wrong",
   other: "Something else",
 };
 
-// Everything a student sees to acknowledge a disbursed payment: the reference number on the receipt they
-// signed, plus a confirmation of the amount. Final unless the office disapproved it.
-function ReceiptSubmit({ payment: p, ctl }: { payment: Payment; ctl: ReceiptCtl }) {
-  const { refs, setRefs, submittingFor, confirmed, setConfirmed, submit, view, downloadingFor, downloadSlip } = ctl;
-  const disapproved = p.receipt_review_status === "Disapproved";
-
-  if (p.student_receipt_at && !disapproved) {
-    const accepted = p.receipt_review_status === "Accepted";
-    return (
-      <div className="space-y-1">
-        {p.student_receipt_ref ? (
-          <span className="inline-flex items-center gap-1 text-xs text-emerald-700 font-medium">
-            <CheckCircle className="h-3.5 w-3.5" /> Receipt no. <span className="font-mono">{p.student_receipt_ref}</span> · {formatDate(p.student_receipt_at)}
-          </span>
-        ) : p.student_receipt_path ? (
-          <button type="button" onClick={() => view(p.student_receipt_path)} className="inline-flex items-center gap-1 text-xs text-emerald-700 font-medium hover:underline cursor-pointer">
-            <CheckCircle className="h-3.5 w-3.5" /> Submitted {formatDate(p.student_receipt_at)} · View
-          </button>
-        ) : (
-          <span className="inline-flex items-center gap-1 text-xs text-emerald-700 font-medium">
-            <CheckCircle className="h-3.5 w-3.5" /> Receipt confirmed {formatDate(p.student_receipt_at)}
-          </span>
-        )}
-        <p className={`text-[11px] font-semibold ${accepted ? "text-emerald-700" : "text-amber-700"}`}>{accepted ? (p.receipt_reviewed_by ? "Accepted by the office" : "Confirmed") : "Waiting for the office to review"}</p>
-        {accepted && p.student_receipt_ref && (
-          <Button size="sm" variant="outline" className="h-7 px-2 text-xs rounded-lg" disabled={downloadingFor === p.id} onClick={() => downloadSlip(p.id, termLabel(p.term, p.academic_year) || null)}>
-            {downloadingFor === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />} Download slip (PDF)
-          </Button>
-        )}
-      </div>
-    );
-  }
-
-  const ref = refs[p.id] ?? "";
-  const checked = !!confirmed[p.id];
-  const canSubmit = RECEIPT_REF.test(ref.trim()) && checked;
+// A school year picker for a history list: "all" or one of the years given, newest first.
+function YearPicker({ years, value, onChange }: { years: string[]; value: string; onChange: (v: string) => void }) {
+  if (years.length < 2) return null;
   return (
-    <div className="space-y-2 min-w-[230px]">
-      {disapproved && (
-        <p className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
-          <span className="font-semibold">Your receipt was not accepted.</span> {p.receipt_review_note}
-        </p>
-      )}
-      <p className="text-xs text-muted-foreground">
-        Enter the <strong>receipt number</strong> printed on the acknowledgment slip you signed when you received the {p.method === "Cheque" ? "cheque" : "money"} (it looks like AR-26-7K3QX9).
-      </p>
-      <div className="flex items-center gap-1.5">
-        <Input value={ref} maxLength={40} placeholder="Receipt no." aria-label="Receipt number"
-          onChange={(e) => setRefs((prev) => ({ ...prev, [p.id]: e.target.value }))}
-          onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) submit(p.id); }}
-          className="h-7 text-xs rounded-lg font-mono uppercase placeholder:normal-case placeholder:font-sans" />
-        <Button size="sm" className="h-7 px-2 text-xs bg-primary hover:bg-primary text-white rounded-lg shrink-0"
-          disabled={!canSubmit || submittingFor === p.id} onClick={() => submit(p.id)}>
-          {submittingFor === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Submit"}
-        </Button>
-      </div>
-      <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
-        <input type="checkbox" className="mt-0.5" checked={checked}
-          onChange={(e) => setConfirmed((prev) => ({ ...prev, [p.id]: e.target.checked }))} />
-        <span>I confirm I received {pesoFixed(p.amount)}{p.method === "Cash" ? " in cash" : p.method === "Cheque" ? " by cheque" : ""}.</span>
-      </label>
-    </div>
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="h-8 w-36 text-xs rounded-lg" aria-label="School year"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">All school years</SelectItem>
+        {years.map((y) => <SelectItem key={y} value={y}>S.Y. {y}</SelectItem>)}
+      </SelectContent>
+    </Select>
   );
 }
+const yearsOf = (list: string[]) => [...new Set(list)].filter((y) => !Number.isNaN(ayStart(y))).sort().reverse();
 
 // One place for everything about money: what you're owed, what's coming, how to claim it, receipts and problems.
 function DisbursementSection({ payments, issues, disbursementStatus, approvedTotal, onChanged }: {
@@ -252,8 +97,12 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
 }) {
   const supabase = createClient();
   const { settings } = useSystemSettings();
-  const ctl = useReceiptSubmit(onChanged);
   const [issueFor, setIssueFor] = useState<Payment | null>(null);
+  // Payout history by school year: the payment's own, else when it was created.
+  const [payYear, setPayYear] = useState("all");
+  const payAY = (p: Payment) => p.academic_year || academicYearOf(new Date(p.created_at));
+  const payYears = yearsOf(payments.map(payAY));
+  const shownPays = payments.filter((p) => payYear === "all" || payAY(p) === payYear);
   const [issueKind, setIssueKind] = useState("not_received");
   const [issueText, setIssueText] = useState("");
   const [sending, setSending] = useState(false);
@@ -280,12 +129,10 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
 
   const downloadCsv = () => {
     const rows = [
-      ["Period", "Reference", "Amount", "Method", "Status", "Scheduled", "Disbursed", "Receipt ref.", "Receipt review"],
-      ...payments.map((p) => [
-        termLabel(p.term, p.academic_year), p.reference ?? "", p.amount.toFixed(2), p.method ?? "", p.status, p.scheduled_date ?? "",
+      ["Period", "Amount", "Method", "Status", "Scheduled", "Received"],
+      ...shownPays.map((p) => [
+        termLabel(p.term, p.academic_year), p.amount.toFixed(2), p.method ?? "", PAYMENT_STATUS_LABEL[p.status] ?? p.status, p.scheduled_date ?? "",
         p.disbursed_at ? p.disbursed_at.slice(0, 10) : "",
-        p.student_receipt_at ? (p.student_receipt_ref ?? (p.student_receipt_path ? "File" : "Confirmed")) : "",
-        p.student_receipt_at ? p.receipt_review_status : "",
       ]),
     ];
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -301,7 +148,7 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {approvedTotal > 0 && <StatCard icon={GraduationCap} label="Approved award" value={pesoFixed(approvedTotal)} />}
-        <StatCard icon={Banknote} label="Disbursed" value={pesoFixed(disbursed)} accent />
+        <StatCard icon={Banknote} label="Received" value={pesoFixed(disbursed)} accent />
         <StatCard icon={Clock} label="Scheduled" value={pesoFixed(scheduled)} sub={next ? `Next: ${formatDate(next.scheduled_date)}` : "Nothing scheduled"} />
         {approvedTotal > 0 && <StatCard icon={Receipt} label="Not yet scheduled" value={pesoFixed(remaining)} sub={remaining === 0 ? "Fully scheduled" : "The office will schedule this"} subTone={remaining === 0 ? "positive" : "neutral"} />}
         {approvedTotal === 0 && (
@@ -321,7 +168,7 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
                 <p className="text-2xl font-bold text-black mt-1">{pesoFixed(next.amount)}</p>
                 <p className="text-sm text-muted-foreground">{termLabel(next.term, next.academic_year) && `${termLabel(next.term, next.academic_year)} · `}{next.scheduled_date ? `Scheduled ${formatDate(next.scheduled_date)}` : "Date to be announced"} · via {next.method || "—"}</p>
               </div>
-              <StatusBadge status={next.status} />
+              <StatusBadge status={next.status} label={PAYMENT_STATUS_LABEL[next.status]} />
             </div>
             {claimInfo.length > 0 && (
               <div className="rounded-xl bg-accent border border-primary/20 px-4 py-3 space-y-1">
@@ -329,35 +176,29 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
                 {claimInfo.map((l, i) => <p key={i} className="text-sm text-foreground">{l as string}</p>)}
               </div>
             )}
-            <MethodPreference payment={next} onChanged={onChanged} />
           </div>
         </Panel>
       )}
 
-      {payments.some((p) => p.status === "Disbursed" && (!p.student_receipt_at || p.receipt_review_status === "Disapproved")) && (
-        <div className="flex items-start gap-3 bg-accent border border-primary/20 rounded-xl px-4 py-3">
-          <Receipt className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-          <p className="text-sm text-primary">
-            For each disbursed payment, <strong>enter the receipt number</strong> printed on the acknowledgment slip you signed and <strong>confirm you received it</strong>.
-          </p>
-        </div>
-      )}
 
       <Panel>
         <div className="px-6 py-4 border-b border-muted flex items-center justify-between gap-2">
           <SectionTitle>Payout History</SectionTitle>
-          <Button size="sm" variant="outline" className="text-xs border-border text-muted-foreground hover:bg-muted rounded-lg" disabled={payments.length === 0} onClick={downloadCsv}>
-            <Download className="mr-1 h-3 w-3" /> Download CSV
-          </Button>
+          <div className="flex items-center gap-2">
+            <YearPicker years={payYears} value={payYear} onChange={setPayYear} />
+            <Button size="sm" variant="outline" className="text-xs border-border text-muted-foreground hover:bg-muted rounded-lg" disabled={shownPays.length === 0} onClick={downloadCsv}>
+              <Download className="mr-1 h-3 w-3" /> Download CSV
+            </Button>
+          </div>
         </div>
         <div className="p-4 space-y-3">
-          {payments.length === 0 && (
+          {shownPays.length === 0 && (
             <div className="text-center py-10">
               <Receipt className="h-8 w-8 text-muted-foreground/70 mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">No payments yet.</p>
+              <p className="text-sm text-muted-foreground">{payments.length === 0 ? "No payments yet." : `No payments for S.Y. ${payYear}.`}</p>
             </div>
           )}
-          {payments.map((p) => {
+          {shownPays.map((p) => {
             const isDisbursedPay = p.status === "Disbursed";
             const cancelled = p.status === "Cancelled";
             const list = issuesFor(p.id);
@@ -372,21 +213,14 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
                     </p>
                     {termLabel(p.term, p.academic_year) && <p className="text-xs font-medium text-primary mt-0.5">{termLabel(p.term, p.academic_year)}</p>}
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {p.reference ? `${p.method === "Cheque" ? "Cheque no." : "Ref"}: ${p.reference}` : "No reference yet"}
-                      {" · "}{isDisbursedPay ? `Disbursed ${formatDate(p.disbursed_at)}` : p.scheduled_date ? `Scheduled ${formatDate(p.scheduled_date)}` : "Date to be announced"}
+                      {isDisbursedPay ? `Received ${formatDate(p.disbursed_at)}` : p.scheduled_date ? `Scheduled ${formatDate(p.scheduled_date)}` : "Date to be announced"}
                     </p>
                   </div>
-                  <StatusBadge status={p.status} />
+                  <StatusBadge status={p.status} label={PAYMENT_STATUS_LABEL[p.status]} />
                 </div>
 
                 {cancelled && p.cancel_reason && (
                   <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground"><span className="font-semibold">Cancelled: </span>{p.cancel_reason}</p>
-                )}
-
-                {p !== next && <MethodPreference payment={p} onChanged={onChanged} />}
-
-                {isDisbursedPay && (
-                  <div className="pt-2 border-t border-muted"><ReceiptSubmit payment={p} ctl={ctl} /></div>
                 )}
 
                 {list.map((i) => (
@@ -559,7 +393,7 @@ export default function StudentDashboardPage() {
     try {
       await loadDataInner();
     } catch (err) {
-      console.error("Student dashboard failed to load", err);
+      console.error("Scholar dashboard failed to load", err);
       const detail = err instanceof Error ? err.message : String(err);
       setLoadError(`We couldn't reach the server. (${detail})`);
       setLoading(false);
@@ -739,6 +573,8 @@ export default function StudentDashboardPage() {
   // The academic year setting, matching the server and database checks (one application per program
   // per academic year).
   const academicYear = settings.academic_year;
+  // Application history: every school year, or one.
+  const [appHistoryYear, setAppHistoryYear] = useState("all");
   // This academic year's applications. A withdrawn one no longer counts: that program can be applied to again.
   const yearApps     = applications.filter((app) => app.status !== "Withdrawn" && app.academic_year === academicYear);
   const yearAppIds   = new Set(yearApps.map((a) => a.id));
@@ -834,7 +670,7 @@ export default function StudentDashboardPage() {
     const pg = ownMin > 0 && isRenewing && settings.renewal_enabled ? settings.renewal_min_grade : ownMin;
     if (pg > 0 && myGrade == null && minGrade < pg) applyIssues.push(`Add your average grade to your profile (${applyProgram.name} requires ${pg}).`);
     else if (pg > 0 && myGrade != null && myGrade < pg) applyIssues.push(`${applyProgram.name} requires an average grade of ${pg}; yours is ${myGrade}.`);
-    if (applyProgram.year_levels?.length && !applyProgram.year_levels.includes(profile?.year_level ?? "")) applyIssues.push(`${applyProgram.name} is open to ${applyProgram.year_levels.join(", ")} students only.`);
+    if (applyProgram.year_levels?.length && !applyProgram.year_levels.includes(profile?.year_level ?? "")) applyIssues.push(`${applyProgram.name} is open to ${applyProgram.year_levels.join(", ")} scholars only.`);
     const town = applyProgram.municipality?.trim();
     if (town && !sameTown(profile?.municipality, town)) {
       const mine = profile?.municipality?.trim();
@@ -1450,10 +1286,14 @@ export default function StudentDashboardPage() {
         </Panel>
       )}
 
-      {/* Every application, all years */}
+      {/* Every application, all years (or one school year) */}
       <Panel>
-        <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Application history</SectionTitle></div>
-        <ApplicationHistory applications={applications} onView={viewApplication} onContact={() => setActive("help")} />
+        <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted flex items-center justify-between gap-2">
+          <SectionTitle>Application history</SectionTitle>
+          <YearPicker years={yearsOf(applications.map((a) => a.academic_year || academicYearOf(new Date(a.created_at))))} value={appHistoryYear} onChange={setAppHistoryYear} />
+        </div>
+        <ApplicationHistory onView={viewApplication} onContact={() => setActive("help")}
+          applications={appHistoryYear === "all" ? applications : applications.filter((a) => (a.academic_year || academicYearOf(new Date(a.created_at))) === appHistoryYear)} />
       </Panel>
 
       {/* View */}
@@ -1812,15 +1652,19 @@ export default function StudentDashboardPage() {
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
       <aside className={`${sidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 fixed lg:sticky top-0 left-0 z-40 h-dvh w-64 max-w-[85vw] bg-sidebar border-r border-sidebar-border flex flex-col transition-transform duration-300`}>
 
-        {/* Logo */}
+        {/* The scholar's profile (opens the Profile tab) */}
         <div className="flex items-center gap-3 px-5 py-5 border-b border-sidebar-border">
-          <div className="h-9 w-9 rounded-xl bg-primary flex items-center justify-center shrink-0 overflow-hidden">
-            <Image src="/municipal-logo.png" alt="Logo" width={36} height={36} className="h-9 w-9 object-cover" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-display font-bold text-sidebar-foreground truncate">San Jose</p>
-            <p className="text-xs text-muted-foreground">Scholarship Portal</p>
-          </div>
+          <button type="button" onClick={() => { setActive("profile"); setSidebarOpen(false); }} title="Open your profile"
+            className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left cursor-pointer hover:opacity-80 transition-opacity">
+            <div className="h-9 w-9 rounded-xl overflow-hidden shrink-0">
+              <ProfileImage value={profile?.profile_picture_url} className="h-full w-full object-cover"
+                fallback={<div className="h-full w-full bg-primary flex items-center justify-center"><User className="h-4 w-4 text-primary-foreground" /></div>} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-display font-bold text-sidebar-foreground truncate">{displayName || "Scholar"}</p>
+              <p className="text-xs text-muted-foreground truncate">{userEmail}</p>
+            </div>
+          </button>
           <button className="lg:hidden ml-auto -mr-2 h-10 w-10 flex items-center justify-center rounded-xl text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent" onClick={() => setSidebarOpen(false)} aria-label="Close menu">
             <X className="h-5 w-5" />
           </button>
@@ -1853,18 +1697,8 @@ export default function StudentDashboardPage() {
           })}
         </nav>
 
-        {/* User + Logout */}
+        {/* Logout */}
         <div className="p-3 pb-safe border-t border-sidebar-border">
-          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-sidebar-accent mb-2">
-            <div className="h-8 w-8 rounded-xl overflow-hidden shrink-0">
-              <ProfileImage value={profile?.profile_picture_url} className="h-full w-full object-cover"
-                fallback={<div className="h-full w-full bg-primary flex items-center justify-center"><User className="h-4 w-4 text-primary-foreground" /></div>} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold text-sidebar-foreground truncate">{displayName || "Student"}</p>
-              <p className="text-xs text-muted-foreground truncate">{userEmail}</p>
-            </div>
-          </div>
           <button onClick={handleLogout}
             className="w-full flex items-center gap-3 px-3 py-3 lg:py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors cursor-pointer">
             <LogOut className="h-4 w-4" /> Sign out

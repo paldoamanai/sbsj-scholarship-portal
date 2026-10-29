@@ -18,8 +18,8 @@ import { createClient } from "@/lib/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 
 const AUDIENCES: Record<string, { label: string; hint: string }> = {
-  all: { label: "All active students", hint: "Everyone with an active account" },
-  scholars: { label: "Scholars", hint: "Students who have ever been approved" },
+  all: { label: "All active scholars", hint: "Everyone with an active account" },
+  scholars: { label: "Scholars", hint: "Scholars who have ever been approved" },
   applicants: { label: "Current applicants", hint: "Pending or waitlisted this academic year" },
   no_application: { label: "Not yet applied", hint: "No application this academic year" },
 };
@@ -71,7 +71,7 @@ export default function AnnouncementsPanel() {
     setBusy(false);
     setConfirm(false);
     if (error) { toast.error("Could not send", { description: error.message }); return; }
-    toast.success(`Sent to ${data} student${data === 1 ? "" : "s"}`);
+    toast.success(`Sent to ${data} scholar${data === 1 ? "" : "s"}`);
     setTitle(""); setMessage(""); setLink("none");
     load();
   };
@@ -80,7 +80,7 @@ export default function AnnouncementsPanel() {
     <Card>
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2"><Megaphone className="h-4 w-4" />Send an announcement</CardTitle>
-        <CardDescription>Students get it as a notification, and by email unless they turned those off.</CardDescription>
+        <CardDescription>Scholars get it as a notification, and by email unless they turned those off.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -122,7 +122,7 @@ export default function AnnouncementsPanel() {
                 <li key={a.id} className="rounded-md border px-3 py-2 text-sm">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <span className="font-medium">{a.title}</span>
-                    <span className="text-xs text-muted-foreground">{AUDIENCES[a.audience]?.label ?? a.audience} · {a.recipient_count} student{a.recipient_count === 1 ? "" : "s"} · {new Date(a.created_at).toLocaleString()}</span>
+                    <span className="text-xs text-muted-foreground">{AUDIENCES[a.audience]?.label ?? a.audience} · {a.recipient_count} scholar{a.recipient_count === 1 ? "" : "s"} · {new Date(a.created_at).toLocaleString()}</span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{a.message}</p>
                   <label className="mt-2 flex w-fit items-center gap-2 text-xs text-muted-foreground cursor-pointer">
@@ -141,7 +141,7 @@ export default function AnnouncementsPanel() {
           <AlertDialogHeader>
             <AlertDialogTitle className="font-display">Send this announcement?</AlertDialogTitle>
             <AlertDialogDescription>
-              It goes to <strong>{AUDIENCES[audience].label.toLowerCase()}</strong> straight away and can&apos;t be recalled. Students may also receive it by email.
+              It goes to <strong>{AUDIENCES[audience].label.toLowerCase()}</strong> straight away and can&apos;t be recalled. Scholars may also receive it by email.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

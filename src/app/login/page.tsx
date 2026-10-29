@@ -132,8 +132,22 @@ export default function LoginPage() {
       return;
     }
 
+    // Lockout: 3 wrong passwords, then a 10-minute wait (/api/auth/login). If the check can't be reached,
+    // the login goes ahead.
+    const lockout = (body: Record<string, string>, token?: string) => fetch("/api/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(body),
+    }).then(async (r) => ({ locked: r.status === 429, ...((await r.json().catch(() => ({}))) as { error?: string; attemptsLeft?: number; lockMinutes?: number }) }))
+      .catch(() => ({ locked: false } as { locked: boolean; error?: string; attemptsLeft?: number; lockMinutes?: number }));
+    const lock = await lockout({ action: "check", email });
+    if (lock.locked) {
+      toast.error("Too many failed attempts", { description: lock.error });
+      setLoading(false);
+      return;
+    }
+
     const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data: signedIn, error } = await supabase.auth.signInWithPassword({
       email, password, options: { captchaToken: captchaToken ?? undefined },
     });
     // Captcha tokens are single-use.
@@ -142,13 +156,19 @@ export default function LoginPage() {
     if (error) {
       const notConfirmed = error.code === "email_not_confirmed" || /not confirmed/i.test(error.message);
       setUnconfirmed(notConfirmed);
-      toast.error("Login failed", {
+      // Only a wrong email or password counts toward the lockout.
+      const failed = error.code === "invalid_credentials" ? await lockout({ action: "failed", email }) : null;
+      toast.error(failed?.locked ? "Too many failed attempts" : "Login failed", {
         description: notConfirmed ? "Your email isn't verified yet. Open the link we emailed you, or resend it below."
-          : error.code === "user_banned" ? DEACTIVATED : error.message,
+          : error.code === "user_banned" ? DEACTIVATED
+          : failed?.locked ? failed.error
+          : failed?.attemptsLeft ? `${error.message}. ${failed.attemptsLeft} attempt${failed.attemptsLeft === 1 ? "" : "s"} left before a ${failed.lockMinutes}-minute wait.`
+          : error.message,
       });
       setLoading(false);
       return;
     }
+    void lockout({ action: "success" }, signedIn.session?.access_token);
 
     // Staff sign in through Admin Login and students through Student Login, never the other way.
     const { data: { user } } = await supabase.auth.getUser();
@@ -171,7 +191,7 @@ export default function LoginPage() {
       toast.error("Login failed", {
         description: accountIsAdmin
           ? "This is an admin account. Use Login as Admin instead."
-          : "This is a student account. Use Login as Student instead.",
+          : "This is a scholar account. Use Login as Scholar instead.",
       });
       setLoading(false);
       return;
@@ -200,7 +220,7 @@ export default function LoginPage() {
               </div>
             </div>
             <CardTitle className="font-display text-2xl">
-              {isAdmin ? "Admin Login" : "Student Login"}
+              {isAdmin ? "Admin Login" : "Scholar Login"}
             </CardTitle>
             <CardDescription>Enter your credentials to access the system.</CardDescription>
           </CardHeader>
@@ -285,7 +305,7 @@ export default function LoginPage() {
                 onClick={() => setIsAdmin(!isAdmin)}
                 className="text-sm text-primary hover:underline"
               >
-                {isAdmin ? "Login as Student" : "Login as Admin"}
+                {isAdmin ? "Login as Scholar" : "Login as Admin"}
               </button>
               <p className="text-sm text-muted-foreground">
                 Don&apos;t have an account?{" "}

@@ -37,7 +37,7 @@ function copy(s: ReceiptSlip, label: string, footer: string) {
     </table>
     <p class="ack">I acknowledge that I received the amount stated above.</p>
     <div class="signs">
-      <div><span></span>Signature of student over printed name</div>
+      <div><span></span>Signature of scholar over printed name</div>
       <div><span></span>Released by</div>
     </div>
     <p class="foot">${footer}</p>
@@ -72,7 +72,7 @@ export function printReceiptSlip(s: ReceiptSlip) {
 </style></head><body>
 ${copy(s, "Office copy", "Keep with the disbursement voucher, then upload a scan of this signed copy in the portal.")}
 <hr class="cut">
-${copy(s, "Student copy", `Keep this copy. To confirm you received this payment, sign in to the scholarship portal, open <strong>Payments</strong> and enter receipt number <strong>${esc(s.receiptNo)}</strong>. Once it is confirmed, you can download a soft copy of this slip there.`)}
+${copy(s, "Scholar copy", `Keep this copy. To confirm you received this payment, sign in to the scholarship portal, open <strong>Payments</strong> and enter receipt number <strong>${esc(s.receiptNo)}</strong>. Once it is confirmed, you can download a soft copy of this slip there.`)}
 </body></html>`;
 
   document.getElementById("receipt-slip-print")?.remove();
@@ -124,7 +124,7 @@ export async function downloadReceiptSlipPDF(s: StudentReceiptSlip) {
   doc.text(s.receiptNo, right, y, { align: "right" });
   y += 5;
   doc.setFont("helvetica", "bold").setFontSize(8);
-  doc.text("STUDENT COPY (SOFT COPY)", right, y, { align: "right" });
+  doc.text("SCHOLAR COPY (SOFT COPY)", right, y, { align: "right" });
   y += 3;
   doc.setLineWidth(0.4).line(left, y, right, y);
   y += 9;

@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "San Jose Scholarship & Financial Assistance",
     description:
-      "Apply, track, and receive scholarships transparently. Built for the students of San Jose, Occidental Mindoro.",
+      "Apply, track, and receive scholarships transparently. Built for the scholars of San Jose, Occidental Mindoro.",
     siteName: "San Jose Scholarship Portal",
     type: "website",
     locale: "en_PH",

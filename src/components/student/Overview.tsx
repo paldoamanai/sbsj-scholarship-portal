@@ -69,7 +69,7 @@ export default function Overview(p: OverviewProps) {
   const [showAllPrograms, setShowAllPrograms] = useState(false);
   const [program, setProgram] = useState<PublicScholarship | null>(null);
 
-  const firstName = p.displayName.split(" ")[0] || "Student";
+  const firstName = p.displayName.split(" ")[0] || "Scholar";
   const unread = p.unreadCount;
   const completeness = useMemo(() => profileCompleteness(profile), [profile]);
 
@@ -110,11 +110,6 @@ export default function Overview(p: OverviewProps) {
     p.docStatus.disapproved.forEach((d) =>
       out.push({ id: `doc-${d.type}`, tone: "red", title: `Upload a new ${d.type}`, detail: d.note ? `The office said: ${d.note}` : "The office didn't accept your copy.", tab: "documents", cta: "Replace" }));
 
-    live.filter((x) => x.status === "Disbursed" && (!x.student_receipt_at || x.receipt_review_status === "Disapproved")).forEach((x) =>
-      out.push({ id: `rcpt-${x.id}`, tone: x.receipt_review_status === "Disapproved" ? "red" : "amber",
-        title: x.receipt_review_status === "Disapproved" ? `Re-enter your receipt number for ${peso(x.amount)}` : `Enter your receipt number for ${peso(x.amount)}`,
-        detail: x.receipt_review_status === "Disapproved" ? x.receipt_review_note ?? undefined : "Type the reference number printed on the receipt you signed.", tab: "disbursement", cta: "Open" }));
-
     if (lastGrade?.status === "Disapproved") {
       out.push({ id: "grade", tone: "red", title: "Your grade update was not accepted", detail: lastGrade.review_note ?? undefined, tab: "profile", cta: "Fix it" });
     }
@@ -136,7 +131,7 @@ export default function Overview(p: OverviewProps) {
 
     const order = { red: 0, amber: 1, blue: 2, green: 3 } as const;
     return out.sort((a, b) => order[a.tone] - order[b.tone]);
-  }, [p.docStatus, p.gradeUpdates, p.issues, live, completeness, profile, yearApps]);
+  }, [p.docStatus, p.gradeUpdates, p.issues, completeness, profile, yearApps]);
 
   // ── programs ──
   // Open programs first, so students see what they can apply for right now.
@@ -322,7 +317,7 @@ export default function Overview(p: OverviewProps) {
                 fallback={<div className="h-16 w-16 rounded-2xl bg-accent flex items-center justify-center shrink-0"><User className="h-7 w-7 text-accent-foreground" /></div>} />
               <div className="flex-1 text-center sm:text-left min-w-0">
                 <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                  <h2 className="text-lg font-display font-bold text-foreground">{p.displayName || "Student"}</h2>
+                  <h2 className="text-lg font-display font-bold text-foreground">{p.displayName || "Scholar"}</h2>
                   {p.locked && (
                     <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${p.isDisbursed ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-accent text-accent-foreground border-primary/20"}`}>
                       <Lock className="h-3 w-3" />{p.isDisbursed ? "Disbursed" : "Approved — Locked"}
