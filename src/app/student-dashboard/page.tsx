@@ -2,7 +2,6 @@
 
 import { useHistorySync } from "@/hooks/use-history-sync";
 import { useState, useEffect, useRef } from "react";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1653,15 +1652,19 @@ export default function StudentDashboardPage() {
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
       <aside className={`${sidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 fixed lg:sticky top-0 left-0 z-40 h-dvh w-64 max-w-[85vw] bg-sidebar border-r border-sidebar-border flex flex-col transition-transform duration-300`}>
 
-        {/* Logo */}
+        {/* The scholar's profile (opens the Profile tab) */}
         <div className="flex items-center gap-3 px-5 py-5 border-b border-sidebar-border">
-          <div className="h-9 w-9 rounded-xl bg-primary flex items-center justify-center shrink-0 overflow-hidden">
-            <Image src="/municipal-logo.png" alt="Logo" width={36} height={36} className="h-9 w-9 object-cover" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-display font-bold text-sidebar-foreground truncate">San Jose</p>
-            <p className="text-xs text-muted-foreground">Scholarship Portal</p>
-          </div>
+          <button type="button" onClick={() => { setActive("profile"); setSidebarOpen(false); }} title="Open your profile"
+            className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left cursor-pointer hover:opacity-80 transition-opacity">
+            <div className="h-9 w-9 rounded-xl overflow-hidden shrink-0">
+              <ProfileImage value={profile?.profile_picture_url} className="h-full w-full object-cover"
+                fallback={<div className="h-full w-full bg-primary flex items-center justify-center"><User className="h-4 w-4 text-primary-foreground" /></div>} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-display font-bold text-sidebar-foreground truncate">{displayName || "Scholar"}</p>
+              <p className="text-xs text-muted-foreground truncate">{userEmail}</p>
+            </div>
+          </button>
           <button className="lg:hidden ml-auto -mr-2 h-10 w-10 flex items-center justify-center rounded-xl text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent" onClick={() => setSidebarOpen(false)} aria-label="Close menu">
             <X className="h-5 w-5" />
           </button>
@@ -1694,18 +1697,8 @@ export default function StudentDashboardPage() {
           })}
         </nav>
 
-        {/* User + Logout */}
+        {/* Logout */}
         <div className="p-3 pb-safe border-t border-sidebar-border">
-          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-sidebar-accent mb-2">
-            <div className="h-8 w-8 rounded-xl overflow-hidden shrink-0">
-              <ProfileImage value={profile?.profile_picture_url} className="h-full w-full object-cover"
-                fallback={<div className="h-full w-full bg-primary flex items-center justify-center"><User className="h-4 w-4 text-primary-foreground" /></div>} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold text-sidebar-foreground truncate">{displayName || "Scholar"}</p>
-              <p className="text-xs text-muted-foreground truncate">{userEmail}</p>
-            </div>
-          </div>
           <button onClick={handleLogout}
             className="w-full flex items-center gap-3 px-3 py-3 lg:py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors cursor-pointer">
             <LogOut className="h-4 w-4" /> Sign out
