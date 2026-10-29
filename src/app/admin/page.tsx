@@ -846,7 +846,6 @@ function AdminDashboard() {
     const fields = {
       amount,
       method: payMethod,
-      reference: String(fd.get("reference") || "").trim() || null,
       scheduled_date: String(fd.get("scheduled_date") || "") || null,
       notes: String(fd.get("notes") || "").trim() || null,
       ...(payTerm ? { term: payTerm } : {}),
@@ -2741,7 +2740,7 @@ function AdminDashboard() {
                                 <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                                   <span className="min-w-0">
                                     <span className="font-medium">{payStudent(p)}</span>
-                                    <span className="block text-xs text-muted-foreground truncate">{payProgram(p)}{termLabel(p.term, p.academic_year) && ` · ${termLabel(p.term, p.academic_year)}`} · {p.method}{p.reference ? ` ${p.reference}` : ""}</span>
+                                    <span className="block text-xs text-muted-foreground truncate">{payProgram(p)}{termLabel(p.term, p.academic_year) && ` · ${termLabel(p.term, p.academic_year)}`} · {p.method}</span>
                                   </span>
                                   <span className="flex shrink-0 items-center gap-2">
                                     <span className="tabular-nums font-medium">{formatPHP(Number(p.amount))}</span>
@@ -2766,10 +2765,10 @@ function AdminDashboard() {
                           onCheckedChange={(v) => setPayPicked((prev) => { const n = new Set(prev); pageOpen.forEach((p) => (v ? n.add(p.id) : n.delete(p.id))); return n; })} />
                       </TableHead>
                     )}
-                    <TableHead>Scholar</TableHead><TableHead>Reference No.</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Scholar prefers</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Scholar</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Scheduled</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {pagedPayments.length === 0 && <TableRow><TableCell colSpan={can.finance ? 9 : 8} className="text-center py-8 text-muted-foreground">No payments found</TableCell></TableRow>}
+                    {pagedPayments.length === 0 && <TableRow><TableCell colSpan={can.finance ? 7 : 6} className="text-center py-8 text-muted-foreground">No payments found</TableCell></TableRow>}
                     {pagedPayments.map((p) => {
                       const open = isOpenPayment(p);
                       return (
@@ -2780,7 +2779,6 @@ function AdminDashboard() {
                             </TableCell>
                           )}
                           <TableCell><p className="font-medium">{payStudent(p)}</p><p className="text-xs text-muted-foreground">{payProgram(p)}{termLabel(p.term, p.academic_year) && ` · ${termLabel(p.term, p.academic_year)}`}</p></TableCell>
-                          <TableCell className="font-mono text-xs">{p.reference || "—"}</TableCell>
                           <TableCell className="font-medium">{formatPHP(p.amount)}</TableCell>
                           <TableCell>
                             <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
@@ -2790,13 +2788,6 @@ function AdminDashboard() {
                             }`}>
                               {p.method || "—"}
                             </span>
-                          </TableCell>
-                          <TableCell>
-                            {p.preferred_method ? (
-                              <Badge variant={p.preferred_method === p.method ? "default" : "secondary"} title="Chosen by the scholar — the payment method is fixed">
-                                {p.preferred_method}
-                              </Badge>
-                            ) : <span className="text-muted-foreground">—</span>}
                           </TableCell>
                           <TableCell>{p.scheduled_date || "—"}</TableCell>
                           <TableCell>
@@ -2903,9 +2894,6 @@ function AdminDashboard() {
                       </div>
                     </DialogField>
                     )}
-                    <DialogField label={payMethod === "Cheque" ? "Cheque number" : "Reference number"} htmlFor="pay-ref" hint={payMethod === "Cheque" ? "Optional now; required before the cheque is disbursed." : "Optional."}>
-                      <Input id="pay-ref" name="reference" defaultValue={cur?.reference ?? ""} placeholder={payMethod === "Cheque" ? "e.g. CHK-2026-001" : "e.g. REF-001"} />
-                    </DialogField>
                     <DialogField label="Notes" htmlFor="pay-notes" hint="Optional. Staff only.">
                       <Textarea id="pay-notes" name="notes" rows={2} defaultValue={cur?.notes ?? ""} />
                     </DialogField>
@@ -3220,9 +3208,11 @@ function AdminDashboard() {
                   <Detail label="Period">{termLabel(pm.term, pm.academic_year) || "—"}</Detail>
                 </DetailGrid>
               )}
-              <DialogField label={pm?.method === "Cheque" ? "Cheque number" : "Reference number"} htmlFor="edit-disb-ref">
-                <Input id="edit-disb-ref" value={editDisbRef} onChange={(e) => setEditDisbRef(e.target.value)} disabled={locked} placeholder={pm?.method === "Cheque" ? "e.g. CHK-2026-001" : "e.g. REF-001"} />
-              </DialogField>
+              {pm?.method === "Cheque" && (
+                <DialogField label="Cheque number" htmlFor="edit-disb-ref">
+                  <Input id="edit-disb-ref" value={editDisbRef} onChange={(e) => setEditDisbRef(e.target.value)} disabled={locked} placeholder="e.g. CHK-2026-001" />
+                </DialogField>
+              )}
               <DialogField label="Disbursement status"
                 hint={!locked && editDisbStatus === "Disbursed" ? "Next, you'll confirm the scholar received it." : undefined}>
                 <Select value={editDisbStatus} onValueChange={setEditDisbStatus} disabled={locked}>
@@ -3268,9 +3258,12 @@ function AdminDashboard() {
           </div>
         </DialogField>
         )}
-        <DialogField label={disbMethod === "Cheque" ? "Cheque number" : "Reference number"} htmlFor="disb-ref" hint={disbMethod === "Cheque" ? "Required for cheques." : "Optional."}>
-          <Input id="disb-ref" placeholder={disbMethod === "Cheque" ? "e.g. CHK-2026-001" : "e.g. REF-001"} value={disbRef} onChange={(e) => setDisbRef(e.target.value)} />
-        </DialogField>
+        {/* Only an older cheque payment still needs its number. */}
+        {disbMethod === "Cheque" && (
+          <DialogField label="Cheque number" htmlFor="disb-ref" hint="Required for cheques.">
+            <Input id="disb-ref" placeholder="e.g. CHK-2026-001" value={disbRef} onChange={(e) => setDisbRef(e.target.value)} />
+          </DialogField>
+        )}
         <DialogNote icon={<Lock className="h-3.5 w-3.5" />}>Once marked received, the payment is locked and the scholar is notified.</DialogNote>
       </AppDialog>
 
@@ -3288,7 +3281,7 @@ function AdminDashboard() {
         <ul className="max-h-64 divide-y overflow-auto rounded-md border text-sm">
           {batchReceive?.map((p) => (
             <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-1.5">
-              <span className="min-w-0 truncate">{payStudent(p)} <span className="text-xs text-muted-foreground">· {payProgram(p)} · {p.method}{p.reference ? ` ${p.reference}` : ""}</span></span>
+              <span className="min-w-0 truncate">{payStudent(p)} <span className="text-xs text-muted-foreground">· {payProgram(p)} · {p.method}</span></span>
               <span className="shrink-0 tabular-nums font-medium">{formatPHP(Number(p.amount))}</span>
             </li>
           ))}
