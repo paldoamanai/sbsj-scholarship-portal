@@ -1139,6 +1139,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      message_students: {
+        Args: { _user_ids: string[]; _title: string; _message: string }
+        Returns: Json
+      }
       message_student: {
         Args: {
           _user_id: string

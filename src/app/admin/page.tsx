@@ -19,7 +19,7 @@ import {
   Menu, X, Search, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock,
   FileDown, Receipt, Loader2, User, ArrowRight,
-   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2, MapPin, CalendarClock,
+   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2, MapPin, CalendarClock, Send,
 } from "@/components/icons";
 import { createClient } from "@/lib/supabase/client";
 import { scholarshipSchema } from "@/validations/scholarship";
@@ -255,6 +255,11 @@ function AdminDashboard() {
   const [changesFor, setChangesFor] = useState<(typeof applications)[number] | null>(null);
   const [changesText, setChangesText] = useState("");
   const [messaging, setMessaging] = useState(false);
+  // Batch message: who it goes to (user ids), its title and text; and scholars ticked on the Scholars page.
+  const [msgFor, setMsgFor] = useState<string[] | null>(null);
+  const [msgTitle, setMsgTitle] = useState("");
+  const [msgText, setMsgText] = useState("");
+  const [pickedScholars, setPickedScholars] = useState<Set<string>>(new Set());
   // Bumped when a document changes over realtime, so open dialogs re-read their document list.
   const [docsVersion, setDocsVersion] = useState(0);
   const [reviewingDoc, setReviewingDoc] = useState(false);
@@ -1644,6 +1649,23 @@ function AdminDashboard() {
     setChangesFor(null);
   };
 
+  // One message to many scholars at once (migration 086). Office staff reach only their own office's scholars.
+  const openMessage = (userIds: string[]) => { setMsgTitle(""); setMsgText(""); setMsgFor([...new Set(userIds)]); };
+  const sendMessage = async () => {
+    if (!msgFor?.length) return;
+    setMessaging(true);
+    const { data, error } = await supabase.rpc("message_students", { _user_ids: msgFor, _title: msgTitle, _message: msgText });
+    setMessaging(false);
+    if (error) {
+      toast.error("Message not sent", { description: error.code === "PGRST202" ? "The database is missing message_students. Run migration 086 in Supabase." : error.message });
+      return;
+    }
+    const { sent = 0, skipped = 0 } = (data ?? {}) as { sent?: number; skipped?: number };
+    toast.success(`Message sent to ${sent} scholar${sent === 1 ? "" : "s"}`,
+      skipped ? { description: `${skipped} skipped: not a scholar, or outside your office.` } : undefined);
+    setMsgFor(null); setPickedScholars(new Set()); setSelectedStudents(new Set()); setSelectedApps(new Set());
+  };
+
   // Approved applications move on to Disbursement: schedule the payment, or look at the ones scheduled.
   const scheduleFor = (a: AppRow) => { setViewApp(null); setActiveSection("disbursement"); openNewPayment(a.id); };
   const paymentsFor = (a: AppRow) => {
@@ -1881,6 +1903,9 @@ function AdminDashboard() {
                   <Button size="sm" variant="outline" disabled={messaging} onClick={() => openReminder([...selectedStudents])}>
                     <Bell className="mr-1 h-4 w-4" /> Send reminder
                   </Button>
+                  <Button size="sm" variant="outline" disabled={messaging} onClick={() => openMessage([...selectedStudents])}>
+                    <Send className="mr-1 h-4 w-4" /> Message
+                  </Button>
                   <Button size="sm" variant="ghost" disabled={messaging} onClick={() => setSelectedStudents(new Set())}>Clear</Button>
                 </div>
               )}
@@ -1895,6 +1920,10 @@ function AdminDashboard() {
                   </Button>
                   <Button size="sm" variant="destructive" disabled={bulkBusy} onClick={() => { setBulkNote(""); setBulkDisapprove(true); }}>
                     <XCircle className="mr-1 h-4 w-4" /> Disapprove
+                  </Button>
+                  <Button size="sm" variant="outline" disabled={bulkBusy || messaging}
+                    onClick={() => openMessage(applications.filter((a) => selectedApps.has(a.id)).map((a) => a.user_id))}>
+                    <Send className="mr-1 h-4 w-4" /> Message
                   </Button>
                   <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={() => setSelectedApps(new Set())}>Clear</Button>
                   <span className="text-xs text-muted-foreground">Each one is checked on its own; any that can&apos;t be changed are listed afterwards.</span>
@@ -2546,15 +2575,34 @@ function AdminDashboard() {
                   </Table>
                 </Card>
               )}
+              {pickedScholars.size > 0 && (
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-accent px-3 py-2 text-sm">
+                  <span className="font-medium">{pickedScholars.size} scholar{pickedScholars.size === 1 ? "" : "s"} selected</span>
+                  <Button size="sm" disabled={messaging} onClick={() => openMessage([...pickedScholars])}><Send className="mr-1 h-4 w-4" /> Message</Button>
+                  {filteredStudents.length > pickedScholars.size && (
+                    <Button size="sm" variant="outline" onClick={() => setPickedScholars(new Set(filteredStudents.map((x) => x.id)))}>Select all {filteredStudents.length} shown</Button>
+                  )}
+                  <Button size="sm" variant="ghost" onClick={() => setPickedScholars(new Set())}>Clear</Button>
+                </div>
+              )}
               <Card>
                 <Table>
                   <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
+                    <TableHead className="w-10">
+                      <Checkbox aria-label="Select every scholar on this page" disabled={pagedStudents.length === 0}
+                        checked={pagedStudents.length > 0 && pagedStudents.every((x) => pickedScholars.has(x.id))}
+                        onCheckedChange={(v) => setPickedScholars((prev) => { const n = new Set(prev); pagedStudents.forEach((x) => (v ? n.add(x.id) : n.delete(x.id))); return n; })} />
+                    </TableHead>
                     <TableHead>Name</TableHead><TableHead>School / Course</TableHead><TableHead>Year</TableHead><TableHead>Grade</TableHead><TableHead title="Approved applications / total applications">Approved / Total</TableHead><TableHead>Program / Award</TableHead><TableHead>Reference No.</TableHead><TableHead>Disbursement</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">{scholars.length === 0 ? "No scholars yet. Applicants appear here once approved." : "No scholars match your search"}</TableCell></TableRow>}
+                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={11} className="text-center py-8 text-muted-foreground">{scholars.length === 0 ? "No scholars yet. Applicants appear here once approved." : "No scholars match your search"}</TableCell></TableRow>}
                     {pagedStudents.map((p) => { const pay = currentPayment(p.id); const apps = approvedApps(p.id); return (
                       <TableRow key={p.id}>
+                        <TableCell>
+                          <Checkbox aria-label={`Select ${p.first_name} ${p.last_name}`} checked={pickedScholars.has(p.id)}
+                            onCheckedChange={(v) => setPickedScholars((prev) => { const n = new Set(prev); if (v) n.add(p.id); else n.delete(p.id); return n; })} />
+                        </TableCell>
                         <TableCell>
                           <p className="font-medium">{p.first_name} {p.last_name}</p><p className="text-xs text-muted-foreground">{p.email}</p>
                           <div className="mt-1 flex gap-1 flex-wrap">
@@ -3659,6 +3707,28 @@ function AdminDashboard() {
           setRevokingApp(false);
           if (ok) { toast.success("Approval revoked — the scholar was notified"); setRevokeApp(null); loadData(true); }
         }} />
+
+      {/* Batch message */}
+      <AppDialog open={!!msgFor} onOpenChange={(o) => !o && setMsgFor(null)} size="md"
+        title={msgFor && msgFor.length === 1 ? `Message ${personName(profiles.find((p) => p.id === msgFor[0]))}` : `Message ${msgFor?.length ?? 0} scholars`}
+        description="Each scholar gets it as a notification, and by email unless they turned email off."
+        footer={<>
+          <Button variant="outline" onClick={() => setMsgFor(null)} disabled={messaging}>Cancel</Button>
+          <Button className="bg-gradient-primary" disabled={messaging || !msgTitle.trim() || !msgText.trim()} onClick={sendMessage}>
+            {messaging ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Send className="mr-1 h-4 w-4" />}Send
+          </Button>
+        </>}>
+        <DialogField label="Title" htmlFor="msg-title">
+          <Input id="msg-title" maxLength={120} value={msgTitle} onChange={(e) => setMsgTitle(e.target.value)} placeholder="e.g. Payout schedule for November" />
+        </DialogField>
+        <DialogField label="Message" htmlFor="msg-text" hint={`${msgText.length}/1000`}>
+          <Textarea id="msg-text" rows={5} maxLength={1000} value={msgText} onChange={(e) => setMsgText(e.target.value)}
+            placeholder="e.g. Payouts are released on November 16 at the Treasurer's Office. Bring a valid ID." />
+        </DialogField>
+        {msgFor && msgFor.length > 1 && (
+          <p className="text-xs text-muted-foreground">To: {msgFor.slice(0, 5).map((id) => personName(profiles.find((p) => p.id === id))).join(", ")}{msgFor.length > 5 ? ` and ${msgFor.length - 5} more` : ""}</p>
+        )}
+      </AppDialog>
 
       <ReasonDialog open={!!reminderFor} onClose={() => setReminderFor(null)}
         title={`Send reminder${reminderFor && reminderFor.length > 1 ? ` to ${reminderFor.length} scholars` : reminderFor?.[0] ? ` to ${personName(profiles.find((p) => p.id === reminderFor[0]))}` : ""}`}
