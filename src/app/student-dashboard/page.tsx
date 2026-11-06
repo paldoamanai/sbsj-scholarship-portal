@@ -3,10 +3,12 @@
 import { useHistorySync } from "@/hooks/use-history-sync";
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AppDialog, Detail, DetailGrid, DialogField, DialogSection } from "@/components/AppDialog";
+import { FileViewerDialog, type ViewedFile } from "@/components/FileViewerDialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -37,7 +39,9 @@ import { APPLICATION_DOCS, DOC_MIME, LETTER_OF_INTENT, MOA, PHOTO_MIME, document
 import { uploadPendingDocuments } from "@/lib/pending-documents";
 import { HOUSE_PHOTO, approvalDocuments, asksLetter, documentNote, followUpDocuments, needsHomeVisit, needsHousePin, needsMoa, photosOnly, programDocuments } from "@/lib/office-requirements";
 import HouseLocationDialog from "@/components/student/HouseLocationDialog";
-import { OFFICE_LABEL, isOffice } from "@/lib/permissions";
+import CameraCapture from "@/components/CameraCapture";
+import { useUploadCheck } from "@/components/UploadCheckDialog";
+import { programOffice } from "@/lib/permissions";
 import { distanceKm, fmtDistance, googleMapsLink, type LatLng } from "@/lib/geo";
 import { photoLocation } from "@/lib/exif-gps";
 import { availabilityInfo, programChecks, requirementLines, sameTown, slotsLabel, deadlineLabel, type PublicScholarship } from "@/lib/scholarships";
@@ -146,14 +150,19 @@ function DisbursementSection({ payments, issues, disbursementStatus, approvedTot
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className={`grid grid-cols-2 gap-4 ${approvedTotal > 0 ? "lg:grid-cols-4" : "sm:grid-cols-3"}`}>
         {approvedTotal > 0 && <StatCard icon={GraduationCap} label="Approved award" value={pesoFixed(approvedTotal)} />}
         <StatCard icon={Banknote} label="Received" value={pesoFixed(disbursed)} accent />
         <StatCard icon={Clock} label="Scheduled" value={pesoFixed(scheduled)} sub={next ? `Next: ${formatDate(next.scheduled_date)}` : "Nothing scheduled"} />
         {approvedTotal > 0 && <StatCard icon={Receipt} label="Not yet scheduled" value={pesoFixed(remaining)} sub={remaining === 0 ? "Fully scheduled" : "The office will schedule this"} subTone={remaining === 0 ? "positive" : "neutral"} />}
         {approvedTotal === 0 && (
-          <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-            <p className="text-xs font-medium text-muted-foreground mb-2">Disbursement status</p>
+          <div className="col-span-2 sm:col-span-1 bg-card rounded-2xl border border-border shadow-sm p-4 sm:p-5">
+            <div className="flex items-center gap-2 sm:gap-2.5 mb-3">
+              <div className="flex-shrink-0 h-8 w-8 sm:h-9 sm:w-9 rounded-xl flex items-center justify-center bg-accent">
+                <Receipt className="h-4.5 w-4.5 text-accent-foreground" />
+              </div>
+              <p className="text-xs font-medium text-muted-foreground truncate">Disbursement status</p>
+            </div>
             <StatusBadge status={disbursementStatus || "—"} />
           </div>
         )}
@@ -328,6 +337,9 @@ export default function StudentDashboardPage() {
   const [replacingLetter, setReplacingLetter]       = useState(false);
   const [uploadingMoa, setUploadingMoa]             = useState<string | null>(null);
   const [houseOpen, setHouseOpen]                   = useState(false);
+  const [fileView, setFileView]                     = useState<ViewedFile | null>(null);
+  // Photo quality and fingerprints, checked before upload (lib/doc-checks).
+  const [checkFile, checkDialog]                    = useUploadCheck();
   // Where the house photo was taken, when the phone kept that in the photo.
   const [photoSpot, setPhotoSpot]                   = useState<LatLng | null>(null);
   const submittingRef = useRef(false);
@@ -342,7 +354,12 @@ export default function StudentDashboardPage() {
   const [removeDoc, setRemoveDoc]                   = useState<Tables<"documents"> | null>(null);
   const [removingDoc, setRemovingDoc]               = useState(false);
   const { settings, loaded: settingsLoaded } = useSystemSettings();
-  const applyBlocked = applicationsBlockedReason(settings);
+  // An archived account (migration 091) can't apply; graduates see why. The rest of the dashboard works.
+  const archivedReason = !profile?.archived_at ? null
+    : profile.archive_reason === "graduated"
+      ? `Congratulations on graduating${profile.graduated_level ? ` (${profile.graduated_level})` : ""}! Your scholarship records and payment history are kept here. To apply again, contact the scholarship office.`
+      : "Your account is archived, so you can't apply for now. Your records and payment history are kept. Contact the scholarship office to reopen it.";
+  const applyBlocked = archivedReason ?? applicationsBlockedReason(settings);
 
 
   useEffect(() => { loadData(); }, []);
@@ -717,10 +734,9 @@ export default function StudentDashboardPage() {
   const openDocument = async (doc: Tables<"documents">) => {
     const path = documentPath(doc);
     if (!path) { toast.error("Could not open document"); return; }
-    const win = window.open("", "_blank");
     const { data, error } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
-    if (error || !data?.signedUrl) { win?.close(); toast.error("Could not open document"); return; }
-    if (win) win.location.href = data.signedUrl; else window.location.href = data.signedUrl;
+    if (error || !data?.signedUrl) { toast.error("Could not open document"); return; }
+    setFileView({ title: doc.document_type, url: data.signedUrl, name: doc.file_name, mime: doc.mime_type });
   };
 
   // ── Loading ────────────────────────────────────────────────────────────────
@@ -745,12 +761,15 @@ export default function StudentDashboardPage() {
     } else if (!DOC_MIME.includes(file.type)) { toast.error("Upload a PDF, JPG or PNG file."); return; }
     if (file.size === 0) { toast.error("That file is empty."); return; }
     if (file.size > settings.max_upload_mb * 1024 * 1024) { toast.error(`File is too large (max ${settings.max_upload_mb} MB).`); return; }
+    // Checked on the original (shrinking drops what the file says about itself). null: they'll retake it.
+    const check = await checkFile(picked);
+    if (!check) return;
 
     setUploadingDoc(`${appId ?? "form"}:${docType}`);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const result = await uploadUserDocument(supabase, { userId: user.id, docType, file, applicationId: appId });
+      const result = await uploadUserDocument(supabase, { userId: user.id, docType, file, applicationId: appId, check });
       if ("error" in result) { toast.error("Upload failed", { description: result.error }); return; }
       const row = result.row;
 
@@ -837,12 +856,14 @@ export default function StudentDashboardPage() {
   };
 
   /** Checks a picked letter of intent photo (shrinking a large phone photo) and shows a preview of it. */
-  const preparePhoto = async (picked: File) => {
-    if (!PHOTO_MIME.includes(picked.type)) { toast.error("The letter of intent must be a photo (JPG or PNG)."); return null; }
+  const preparePhoto = async (picked: File, label = "The letter of intent") => {
+    if (!PHOTO_MIME.includes(picked.type)) { toast.error(`${label} must be a photo (JPG or PNG).`); return null; }
     const file = await shrinkPhoto(picked, settings.max_upload_mb * 1024 * 1024);
     if (file.size === 0) { toast.error("That photo is empty."); return null; }
     if (file.size > settings.max_upload_mb * 1024 * 1024) { toast.error(`Photo is too large (max ${settings.max_upload_mb} MB).`); return null; }
-    return file;
+    const check = await checkFile(picked);
+    if (!check) return null;
+    return Object.assign(file, { uploadCheck: check });
   };
   const pickLetter = async (picked: File | null) => {
     const file = picked ? await preparePhoto(picked) : null;
@@ -857,7 +878,7 @@ export default function StudentDashboardPage() {
     if (!file) return;
     setReplacingLetter(true);
     try {
-      const result = await uploadUserDocument(supabase, { userId, docType: LETTER_OF_INTENT, file, applicationId: app.id });
+      const result = await uploadUserDocument(supabase, { userId, docType: LETTER_OF_INTENT, file, applicationId: app.id, check: file.uploadCheck });
       if ("error" in result) { toast.error("Upload failed", { description: result.error }); return; }
       for (const d of documents.filter((x) => x.document_type === LETTER_OF_INTENT && x.application_id === app.id && x.id !== result.row.id)) {
         const { data: gone } = await supabase.from("documents").delete().eq("id", d.id).select("id");
@@ -873,11 +894,11 @@ export default function StudentDashboardPage() {
 
   // The signed MOA, after approval, where the office asks for one. A newer photo replaces the older one.
   const uploadMoa = async (app: typeof applications[number], picked: File) => {
-    const file = await preparePhoto(picked);
+    const file = await preparePhoto(picked, "The MOA");
     if (!file) return;
     setUploadingMoa(app.id);
     try {
-      const result = await uploadUserDocument(supabase, { userId, docType: MOA, file, applicationId: app.id });
+      const result = await uploadUserDocument(supabase, { userId, docType: MOA, file, applicationId: app.id, check: file.uploadCheck });
       if ("error" in result) { toast.error("Upload failed", { description: result.error }); return; }
       toast.success("MOA uploaded", { description: "The office will check it before your payout." });
       refreshDocuments(userId);
@@ -1048,6 +1069,9 @@ export default function StudentDashboardPage() {
                   {busy ? "Uploading…" : uploaded ? (uploaded.status === "Disapproved" ? "Upload new" : "Replace") : "Upload"}
                 </span>
               </Label>
+              <CameraCapture disabled={busy} className="flex-1 sm:flex-none" title={`Photo of your ${docType}`}
+                scanDefault={docType !== HOUSE_PHOTO} label={docType === HOUSE_PHOTO ? "Take photo" : "Scan"}
+                onCapture={(f) => uploadDocument(docType, f, program.office, program.appId)} />
             </div>
           </div>
           {(followUp || note || notPhoto) && (
@@ -1095,43 +1119,6 @@ export default function StudentDashboardPage() {
           </p>
         </div>
       )}
-
-      {/* Apply: any open program not applied to yet */}
-      <Panel className="p-4 sm:p-6">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div className="min-w-0">
-            <SectionTitle>Apply for a scholarship</SectionTitle>
-            <p className="text-sm text-muted-foreground -mt-3">
-              You can apply to every open program. Each program (office) checks your application against its own requirements, so you can be approved for more than one.
-            </p>
-          </div>
-          <Button disabled={!canApplyMore || programsToApply.length === 0} onClick={() => openApply()} className="bg-primary hover:bg-primary text-white rounded-xl px-5">
-            <FileText className="mr-2 h-4 w-4" /> New application
-          </Button>
-        </div>
-        {applyBlocked ? (
-          <div className="mt-4 flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-700" />
-            <span>{applyBlocked}</span>
-          </div>
-        ) : programsToApply.length === 0 ? (
-          <p className="mt-4 text-sm text-muted-foreground">
-            {yearApps.length > 0 ? "You have applied to every open program. New programs will show up here when they open." : "No programs are open right now. New programs will show up here when they open."}
-          </p>
-        ) : (
-          <ul className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {programsToApply.map((s) => (
-              <li key={s.id} className="flex items-center justify-between gap-2 rounded-xl border border-border px-3 py-2.5">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-foreground truncate">{s.name}</p>
-                  <p className="text-xs text-muted-foreground">{[Number(s.amount) > 0 ? peso(s.amount) : null, s.deadline ? `Closes ${formatDate(s.deadline)}` : null].filter(Boolean).join(" · ") || "Open now"}</p>
-                </div>
-                <Button size="sm" variant="outline" className="rounded-lg text-xs border-primary/30 text-primary hover:bg-accent shrink-0" onClick={() => openApply(s.id)}>Apply</Button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Panel>
 
       {/* This year's applications */}
       {yearApps.map((a) => (
@@ -1206,6 +1193,7 @@ export default function StudentDashboardPage() {
                           onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadMoa(a, f); }} />
                       </label>
                     )}
+                    {moa?.status !== "Verified" && <CameraCapture disabled={busy} label="Scan" title="Photo of your signed MOA" className="rounded-lg px-2.5 py-1.5" onCapture={(f) => uploadMoa(a, f)} />}
                   </div>
                 </div>
               );
@@ -1238,22 +1226,22 @@ export default function StudentDashboardPage() {
             <p className="text-sm text-muted-foreground -mt-3">{currentApp.scholarships?.name} · conditions and requirements</p>
           </div>
           <div className="p-4 sm:p-6 space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="rounded-xl bg-muted border border-muted p-4">
+            <div className="grid grid-cols-2 gap-3 sm:gap-4">
+              <div className="rounded-xl bg-muted border border-muted p-3 sm:p-4">
                 <p className="text-xs text-muted-foreground mb-1">{currentApp.status === "Approved" ? "Approved award" : "Award per scholar"}</p>
-                <p className="text-xl font-bold text-black">{Number(appAward) > 0 ? `${peso(appAward)}${appProgram?.release_schedule === "semester" ? " per semester" : appProgram?.release_schedule === "monthly" ? " a month" : ""}` : "To be announced"}</p>
+                <p className="text-base sm:text-xl font-bold text-black">{Number(appAward) > 0 ? `${peso(appAward)}${appProgram?.release_schedule === "semester" ? " per semester" : appProgram?.release_schedule === "monthly" ? " a month" : ""}` : "To be announced"}</p>
               </div>
-              <div className="rounded-xl bg-muted border border-muted p-4">
+              <div className="rounded-xl bg-muted border border-muted p-3 sm:p-4">
                 <p className="text-xs text-muted-foreground mb-1">Required grade</p>
-                <p className="text-xl font-bold text-black">{appMinGrade > 0 ? `${appMinGrade} and above` : "No minimum"}</p>
+                <p className="text-base sm:text-xl font-bold text-black">{appMinGrade > 0 ? `${appMinGrade} and above` : "No minimum"}</p>
               </div>
               {appProgram && (
                 <>
-                  <div className="rounded-xl bg-muted border border-muted p-4">
+                  <div className="rounded-xl bg-muted border border-muted p-3 sm:p-4">
                     <p className="text-xs text-muted-foreground mb-1">Application deadline</p>
-                    <p className="text-sm font-semibold text-black">{appProgram.deadline ? `${formatDate(appProgram.deadline)} (${deadlineLabel(appProgram.deadline)})` : "No closing date"}</p>
+                    <p className="text-sm font-semibold text-black">{appProgram.deadline ? (deadlineLabel(appProgram.deadline) === formatDate(appProgram.deadline) ? formatDate(appProgram.deadline) : `${formatDate(appProgram.deadline)} (${deadlineLabel(appProgram.deadline)})`) : "No closing date"}</p>
                   </div>
-                  <div className="rounded-xl bg-muted border border-muted p-4">
+                  <div className="rounded-xl bg-muted border border-muted p-3 sm:p-4">
                     <p className="text-xs text-muted-foreground mb-1">Slots</p>
                     <p className="text-sm font-semibold text-black">{slotsLabel(appProgram)}</p>
                   </div>
@@ -1285,6 +1273,43 @@ export default function StudentDashboardPage() {
           </div>
         </Panel>
       )}
+
+      {/* Apply: any open program not applied to yet */}
+      <Panel className="p-4 sm:p-6">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="min-w-0">
+            <SectionTitle>{yearApps.length > 0 ? "Apply to another program" : "Apply for a scholarship"}</SectionTitle>
+            <p className="text-sm text-muted-foreground -mt-3">
+              You can apply to every open program. Each program (office) checks your application against its own requirements, so you can be approved for more than one.
+            </p>
+          </div>
+          <Button disabled={!canApplyMore || programsToApply.length === 0} onClick={() => openApply()} className="bg-primary hover:bg-primary text-white rounded-xl px-5">
+            <FileText className="mr-2 h-4 w-4" /> New application
+          </Button>
+        </div>
+        {applyBlocked ? (
+          <div className="mt-4 flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-700" />
+            <span>{applyBlocked}</span>
+          </div>
+        ) : programsToApply.length === 0 ? (
+          <p className="mt-4 text-sm text-muted-foreground">
+            {yearApps.length > 0 ? "You have applied to every open program. New programs will show up here when they open." : "No programs are open right now. New programs will show up here when they open."}
+          </p>
+        ) : (
+          <ul className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {programsToApply.map((s) => (
+              <li key={s.id} className="flex items-center justify-between gap-2 rounded-xl border border-border px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground truncate">{s.name}</p>
+                  <p className="text-xs text-muted-foreground">{[programOffice(s.office), Number(s.amount) > 0 ? peso(s.amount) : null, s.deadline ? `Closes ${formatDate(s.deadline)}` : null].filter(Boolean).join(" · ") || "Open now"}</p>
+                </div>
+                <Button size="sm" variant="outline" className="rounded-lg text-xs border-primary/30 text-primary hover:bg-accent shrink-0" onClick={() => openApply(s.id)}>Apply</Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
 
       {/* Every application, all years (or one school year) */}
       <Panel>
@@ -1345,6 +1370,7 @@ export default function StudentDashboardPage() {
                             <input type="file" accept="image/jpeg,image/png" className="sr-only" disabled={replacingLetter}
                               onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) replaceLetter(selectedApp, f); }} />
                           </label>
+                          <CameraCapture disabled={replacingLetter} label="Scan" title="Photo of your letter of intent" className="ml-2 mt-1.5 rounded-lg border-red-300 bg-white px-2.5 py-1 text-red-700" onCapture={(f) => replaceLetter(selectedApp, f)} />
                         </div>
                       )}
                     </li>
@@ -1405,7 +1431,7 @@ export default function StudentDashboardPage() {
             <SelectContent>
               {scholarships.filter((s) => (availabilityInfo(s).canApply && !appliedProgramIds.has(s.id)) || s.id === applyScholarshipId).map((s) => (
                 <SelectItem key={s.id} value={s.id} disabled={!availabilityInfo(s).canApply || appliedProgramIds.has(s.id)}>
-                  {s.name}{Number(s.amount) > 0 ? ` · ${peso(s.amount)}` : ""}{appliedProgramIds.has(s.id) ? " (already applied)" : !availabilityInfo(s).canApply ? ` (${availabilityInfo(s).label})` : ""}
+                  {s.name} · {programOffice(s.office)}{Number(s.amount) > 0 ? ` · ${peso(s.amount)}` : ""}{appliedProgramIds.has(s.id) ? " (already applied)" : !availabilityInfo(s).canApply ? ` (${availabilityInfo(s).label})` : ""}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -1441,9 +1467,12 @@ export default function StudentDashboardPage() {
               <Button type="button" size="sm" variant="ghost" className="rounded-lg" disabled={applyLoading} onClick={() => pickLetter(null)}>Remove</Button>
             </div>
           ) : (
-            <label htmlFor="apply-letter" className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-4 text-sm text-muted-foreground hover:bg-muted/50">
-              <Upload className="h-4 w-4" />Take or choose a photo
-            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label htmlFor="apply-letter" className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-4 text-sm text-muted-foreground hover:bg-muted/50">
+                <Upload className="h-4 w-4" />Choose a photo
+              </label>
+              <CameraCapture label="Scan with camera" title="Photo of your letter of intent" className="rounded-xl border-dashed py-4 text-sm" onCapture={(f) => pickLetter(f)} />
+            </div>
           )}
           <input id="apply-letter" type="file" accept="image/jpeg,image/png" className="sr-only"
             onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) pickLetter(f); }} />
@@ -1481,7 +1510,7 @@ export default function StudentDashboardPage() {
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-foreground truncate">{program.name}</p>
                 <p className="text-xs text-muted-foreground">
-                  {[isOffice(program.office) ? OFFICE_LABEL[program.office] : null, a.academic_year, `submitted ${formatDate(a.created_at)}`].filter(Boolean).join(" · ")}
+                  {[programOffice(program.office), a.academic_year, `submitted ${formatDate(a.created_at)}`].filter(Boolean).join(" · ")}
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -1523,6 +1552,8 @@ export default function StudentDashboardPage() {
         );
       })}
 
+      <FileViewerDialog file={fileView} onClose={() => setFileView(null)} />
+      {checkDialog}
       <HouseLocationDialog open={houseOpen} onOpenChange={setHouseOpen} userId={userId} saved={profile}
         barangay={profile?.barangay} municipality={profile?.municipality} photoSpot={photoSpot} onSaved={() => refreshProfile(userId)} />
 
@@ -1552,7 +1583,6 @@ export default function StudentDashboardPage() {
   const SettingsView = () => (
     <div className="space-y-5">
       <div>
-        <h2 className="font-display text-lg font-bold text-foreground">Settings</h2>
         <p className="text-sm text-muted-foreground">How we contact you, how you sign in, and your data. Your personal details are on the Profile tab.</p>
       </div>
 
@@ -1652,27 +1682,21 @@ export default function StudentDashboardPage() {
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
       <aside className={`${sidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 fixed lg:sticky top-0 left-0 z-40 h-dvh w-64 max-w-[85vw] bg-sidebar border-r border-sidebar-border flex flex-col transition-transform duration-300`}>
 
-        {/* The scholar's profile (opens the Profile tab) */}
-        <div className="flex items-center gap-3 px-5 py-5 border-b border-sidebar-border">
-          <button type="button" onClick={() => { setActive("profile"); setSidebarOpen(false); }} title="Open your profile"
-            className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left cursor-pointer hover:opacity-80 transition-opacity">
-            <div className="h-9 w-9 rounded-xl overflow-hidden shrink-0">
-              <ProfileImage value={profile?.profile_picture_url} className="h-full w-full object-cover"
-                fallback={<div className="h-full w-full bg-primary flex items-center justify-center"><User className="h-4 w-4 text-primary-foreground" /></div>} />
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-display font-bold text-sidebar-foreground truncate">{displayName || "Scholar"}</p>
-              <p className="text-xs text-muted-foreground truncate">{userEmail}</p>
-            </div>
-          </button>
-          <button className="lg:hidden ml-auto -mr-2 h-10 w-10 flex items-center justify-center rounded-xl text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent" onClick={() => setSidebarOpen(false)} aria-label="Close menu">
+        {/* Brand */}
+        <div className="flex items-center gap-3 p-4 border-b border-sidebar-border">
+          <Image src="/municipal-logo.png" alt="Municipality of San Jose seal" width={32} height={32} className="h-8 w-8" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-sidebar-foreground truncate">Municipality of San Jose</p>
+            <p className="text-xs text-muted-foreground truncate">Scholarship System</p>
+          </div>
+          <button className="lg:hidden -mr-2 h-10 w-10 flex items-center justify-center rounded-xl text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent" onClick={() => setSidebarOpen(false)} aria-label="Close menu">
             <X className="h-5 w-5" />
           </button>
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 overflow-y-auto p-3 space-y-0.5">
-          <p className="text-xs font-semibold text-muted-foreground px-3 py-2 uppercase tracking-wider">Menu</p>
+        <nav className="flex-1 overflow-y-auto overscroll-contain px-3 py-2 space-y-0.5">
+          <p className="text-[11px] font-semibold text-muted-foreground px-3 pt-3 pb-1 uppercase tracking-wider">Menu</p>
           {sidebarItems.map((item) => {
             const Icon = item.icon;
             const isActive = active === item.key;
@@ -1680,7 +1704,7 @@ export default function StudentDashboardPage() {
             return (
               <button key={item.key}
                 onClick={() => { setActive(item.key); setSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-3 py-3 lg:py-2.5 rounded-xl text-sm font-medium transition-all relative cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-3 py-3 lg:py-2 rounded-xl text-sm font-medium transition-all relative cursor-pointer ${
                   isActive
                     ? "bg-primary text-primary-foreground shadow-primary"
                     : "text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent"
@@ -1697,12 +1721,25 @@ export default function StudentDashboardPage() {
           })}
         </nav>
 
-        {/* Logout */}
+        {/* The scholar's profile (opens the Profile tab) and sign out */}
         <div className="p-3 pb-safe border-t border-sidebar-border">
-          <button onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-3 py-3 lg:py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors cursor-pointer">
-            <LogOut className="h-4 w-4" /> Sign out
-          </button>
+          <div className="flex items-center gap-2 pl-2 pr-1 py-1.5 rounded-xl bg-sidebar-accent">
+            <button type="button" onClick={() => { setActive("profile"); setSidebarOpen(false); }} title="Open your profile"
+              className="flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 text-left cursor-pointer hover:opacity-80 transition-opacity">
+              <div className="h-8 w-8 rounded-xl overflow-hidden shrink-0">
+                <ProfileImage value={profile?.profile_picture_url} className="h-full w-full object-cover"
+                  fallback={<div className="h-full w-full bg-primary flex items-center justify-center"><User className="h-4 w-4 text-primary-foreground" /></div>} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-sidebar-foreground truncate">{displayName || "Scholar"}</p>
+                <p className="text-xs text-muted-foreground truncate">{userEmail}</p>
+              </div>
+            </button>
+            <button onClick={handleLogout} aria-label="Sign out" title="Sign out"
+              className="shrink-0 h-10 w-10 flex items-center justify-center rounded-lg text-muted-foreground hover:text-sidebar-foreground hover:bg-card transition-colors cursor-pointer">
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </aside>
 

@@ -37,6 +37,9 @@ export type Database = {
           average_grade: number | null
           approved_at: string | null
           decided_at: string | null
+          discontinued_at: string | null
+          discontinued_by: string | null
+          discontinued_reason: string | null
           changes_requested: string | null
           changes_requested_at: string | null
           created_at: string
@@ -69,6 +72,9 @@ export type Database = {
           average_grade?: number | null
           approved_at?: string | null
           decided_at?: string | null
+          discontinued_at?: string | null
+          discontinued_by?: string | null
+          discontinued_reason?: string | null
           changes_requested?: string | null
           changes_requested_at?: string | null
           created_at?: string
@@ -101,6 +107,9 @@ export type Database = {
           average_grade?: number | null
           approved_at?: string | null
           decided_at?: string | null
+          discontinued_at?: string | null
+          discontinued_by?: string | null
+          discontinued_reason?: string | null
           changes_requested?: string | null
           changes_requested_at?: string | null
           created_at?: string
@@ -118,6 +127,16 @@ export type Database = {
       }
       documents: {
         Row: {
+          file_sha256: string | null
+          image_hash: string | null
+          upload_check: Json | null
+          check_flags: string[]
+          original_seen_at: string | null
+          original_seen_by: string | null
+          original_seen_note: string | null
+          fabricated_at: string | null
+          fabricated_by: string | null
+          fabricated_note: string | null
           id: string
           user_id: string
           application_id: string | null
@@ -134,6 +153,16 @@ export type Database = {
           reviewed_at: string | null
         }
         Insert: {
+          file_sha256?: string | null
+          image_hash?: string | null
+          upload_check?: Json | null
+          check_flags?: string[]
+          original_seen_at?: string | null
+          original_seen_by?: string | null
+          original_seen_note?: string | null
+          fabricated_at?: string | null
+          fabricated_by?: string | null
+          fabricated_note?: string | null
           id?: string
           user_id: string
           application_id?: string | null
@@ -150,6 +179,16 @@ export type Database = {
           reviewed_at?: string | null
         }
         Update: {
+          file_sha256?: string | null
+          image_hash?: string | null
+          upload_check?: Json | null
+          check_flags?: string[]
+          original_seen_at?: string | null
+          original_seen_by?: string | null
+          original_seen_note?: string | null
+          fabricated_at?: string | null
+          fabricated_by?: string | null
+          fabricated_note?: string | null
           id?: string
           user_id?: string
           application_id?: string | null
@@ -619,6 +658,12 @@ export type Database = {
           grade_term: string | null
           is_active: boolean
           created_at: string
+          deactivated_at: string | null
+          archived_at: string | null
+          archived_by: string | null
+          archive_reason: string | null
+          archive_note: string | null
+          graduated_level: string | null
           updated_at: string
         }
         Insert: {
@@ -654,6 +699,12 @@ export type Database = {
           grade_term?: string | null
           is_active?: boolean
           created_at?: string
+          deactivated_at?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
+          archive_reason?: string | null
+          archive_note?: string | null
+          graduated_level?: string | null
           updated_at?: string
         }
         Update: {
@@ -689,6 +740,12 @@ export type Database = {
           grade_term?: string | null
           is_active?: boolean
           created_at?: string
+          deactivated_at?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
+          archive_reason?: string | null
+          archive_note?: string | null
+          graduated_level?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -893,6 +950,34 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      archive_scholars: {
+        Args: { _users: string[]; _reason: string; _note?: string | null }
+        Returns: { archived: number; skipped: string[] }
+      }
+      restore_scholar: {
+        Args: { _user: string }
+        Returns: undefined
+      }
+      document_matches_for_user: {
+        Args: { _user: string }
+        Returns: { doc_id: string; match_id: string; match_user: string; match_name: string | null; match_type: string; match_status: string; same_file: boolean; distance: number }[]
+      }
+      set_document_original_seen: {
+        Args: { _id: string; _seen: boolean; _note?: string | null }
+        Returns: undefined
+      }
+      mark_document_fabricated: {
+        Args: { _id: string; _note: string }
+        Returns: undefined
+      }
+      discontinue_scholarship: {
+        Args: { _application_id: string; _reason: string }
+        Returns: number
+      }
+      reinstate_scholarship: {
+        Args: { _application_id: string }
+        Returns: undefined
+      }
       public_stats: {
         Args: Record<string, never>
         Returns: {
@@ -1138,6 +1223,10 @@ export type Database = {
           _role: string
         }
         Returns: undefined
+      }
+      message_students: {
+        Args: { _user_ids: string[]; _title: string; _message: string }
+        Returns: Json
       }
       message_student: {
         Args: {

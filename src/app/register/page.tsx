@@ -28,6 +28,7 @@ import { useSystemSettings } from "@/hooks/use-system-settings";
 import type { RegistrationProfileFields } from "@/lib/registration-profile";
 import { PASSWORD_HINT, passwordProblem, passwordScore } from "@/validations/auth";
 import Captcha, { captchaEnabled } from "@/components/Captcha";
+import SearchableSelect from "@/components/SearchableSelect";
 import BarangayField from "@/components/BarangayField";
 import { HOME_MUNICIPALITY } from "@/lib/barangays";
 
@@ -516,9 +517,9 @@ export default function RegisterPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label>Year Level *</Label>
-                    <Select
+                    <SearchableSelect
                       value={academic.yearLevel}
-                      onValueChange={(v) => {
+                      onChange={(v) => {
                         // Reset school & course when level category changes
                         const wasSHS = isSHS(academic.yearLevel);
                         const nowSHS = isSHS(v);
@@ -529,12 +530,10 @@ export default function RegisterPage() {
                           updateAcademic("yearLevel", v);
                         }
                       }}
-                    >
-                      <SelectTrigger><SelectValue placeholder="Select year level" /></SelectTrigger>
-                      <SelectContent>
-                        {YEAR_LEVEL_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                      options={YEAR_LEVEL_OPTIONS}
+                      placeholder="Select year level"
+                      searchPlaceholder="Search year level…"
+                    />
                     <FieldError field="yearLevel" />
                   </div>
                   <div>
@@ -560,46 +559,36 @@ export default function RegisterPage() {
                 {/* School — filtered by year level */}
                 <div>
                   <Label>School Name *</Label>
-                  <Select
+                  <SearchableSelect
                     value={academic.schoolName}
-                    onValueChange={(v) => {
+                    onChange={(v) => {
                       setAcademic((p) => ({ ...p, schoolName: v, course: "" }));
                       setErrors((p) => ({ ...p, schoolName: "", course: "" }));
                     }}
                     disabled={!academic.yearLevel}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={academic.yearLevel ? "Select school" : "Select year level first"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {schoolsFor(academic.yearLevel).map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                    options={schoolsFor(academic.yearLevel)}
+                    placeholder={academic.yearLevel ? "Select school" : "Select year level first"}
+                    searchPlaceholder="Search school…"
+                  />
                   <FieldError field="schoolName" />
                 </div>
 
                 {/* Course / Strand — filtered by school (college) or year level (SHS) */}
                 <div>
                   <Label>Course / Strand *</Label>
-                  <Select
+                  <SearchableSelect
                     value={academic.course}
-                    onValueChange={(v) => updateAcademic("course", v)}
+                    onChange={(v) => updateAcademic("course", v)}
                     disabled={!academic.yearLevel || (isCollege(academic.yearLevel) && !academic.schoolName)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={
-                        !academic.yearLevel ? "Select year level first"
-                        : isCollege(academic.yearLevel) && !academic.schoolName
-                          ? "Select school first"
-                          : "Select course / strand"
-                      } />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {coursesFor(academic.yearLevel, academic.schoolName).map((c) => (
-                        <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    options={coursesFor(academic.yearLevel, academic.schoolName)}
+                    placeholder={
+                      !academic.yearLevel ? "Select year level first"
+                      : isCollege(academic.yearLevel) && !academic.schoolName
+                        ? "Select school first"
+                        : "Select course / strand"
+                    }
+                    searchPlaceholder="Search course or strand…"
+                  />
                   <FieldError field="course" />
                 </div>
               </>

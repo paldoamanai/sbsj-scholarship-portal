@@ -6,6 +6,9 @@
 
 @layer base {
   html { -webkit-text-size-adjust: 100%; }
+  /* Desktop: everything a little smaller (sizes are in rem, so text, spacing and dialogs all follow), so
+     more fits on screen. Phones keep 16px, which also stops iPhones zooming into a focused field. */
+  @media (min-width: 1024px) { html { font-size: 93.75%; } }
   body { min-height: 100dvh; }
   /* Room for the iPhone home indicator on sticky bottom bars. */
   .pb-safe { padding-bottom: max(0.75rem, env(safe-area-inset-bottom)); }

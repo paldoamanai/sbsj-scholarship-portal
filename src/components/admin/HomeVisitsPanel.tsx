@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -23,10 +23,12 @@ const STATUS_LABEL: Record<VisitPoint["status"], string> = { none: "Not schedule
 const DOT: Record<VisitPoint["status"], string> = { none: "bg-orange-600", scheduled: "bg-blue-600", done: "bg-green-600" };
 
 /** Applications in review that need a home visit or a house pin, on one map, for planning the visits. */
-export default function HomeVisitsPanel({ applications, scholarships, onOpen }: {
+export default function HomeVisitsPanel({ applications, scholarships, onOpen, yearFilter }: {
   applications: App[];
   scholarships: { id: string; office?: string | null }[];
   onOpen: (app: App) => void;
+  /** The shared school year picker. */
+  yearFilter?: ReactNode;
 }) {
   const [barangay, setBarangay] = useState("all");
   const [status, setStatus] = useState<"all" | VisitPoint["status"]>("all");
@@ -61,6 +63,7 @@ export default function HomeVisitsPanel({ applications, scholarships, onOpen }: 
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-2">
+          {yearFilter}
           <Select value={barangay} onValueChange={setBarangay}>
             <SelectTrigger className="w-48"><SelectValue placeholder="Barangay" /></SelectTrigger>
             <SelectContent>

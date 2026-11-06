@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { SETTING_DEFAULTS } from "@/lib/settings";
+import { serviceClient } from "@/lib/admin-api";
+import { minutesText, rateLimit, visitorKey } from "@/lib/rate-limit";
 
 // Emails a public contact-form message to the LGU's contact email (the `contact_email`
 // system setting, editable by admins) through Resend. The visitor's address is set as
@@ -11,7 +13,8 @@ const escapeHtml = (s: string) =>
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Light per-instance throttle: 5 messages per 10 minutes per IP.
+// 5 messages per 10 minutes per visitor, kept in the database (migration 092) so it holds on every
+// server instance. Before 092 runs (or without the service role), a lighter per-instance memory limit.
 const hits = new Map<string, number[]>();
 const WINDOW_MS = 10 * 60 * 1000;
 const MAX_HITS = 5;
@@ -43,8 +46,12 @@ export async function POST(request: Request) {
   if (subject.length > 150) return NextResponse.json({ error: "The subject is too long." }, { status: 400 });
   if (!message || message.length > 1000) return NextResponse.json({ error: "Please enter a message of up to 1000 characters." }, { status: 400 });
 
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
-  if (throttled(ip)) {
+  const key = visitorKey(request);
+  const limit = await rateLimit(serviceClient(), "contact", key, MAX_HITS, WINDOW_MS);
+  if (limit.ok === false) {
+    return NextResponse.json({ error: `Too many messages. Please try again in ${minutesText(limit.retryAfterSec)}.` }, { status: 429 });
+  }
+  if (limit.ok === "unavailable" && throttled(key)) {
     return NextResponse.json({ error: "Too many messages. Please try again in a few minutes." }, { status: 429 });
   }
 

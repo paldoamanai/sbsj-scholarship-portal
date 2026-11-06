@@ -22,6 +22,7 @@ import {
   type ReportData, type ReportFilters, type ReportKey, type ReportSection,
 } from "@/lib/reports";
 import type { Tables } from "@/integrations/supabase/types";
+import { programOffice } from "@/lib/permissions";
 
 // The in-page view shows this many rows per section; exports always include every row.
 const REPORT_VIEW_ROWS = 200;
@@ -50,6 +51,8 @@ type Props = {
   toDate: string; setToDate: (v: string) => void;
   /** The office the data is limited to, named on every report; null when it covers every office. */
   office?: string | null;
+  /** The school year, shared with the other admin pages (local when not given). */
+  academicYear?: string; setAcademicYear?: (v: string) => void;
 };
 
 function MoneyTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number }[]; label?: string }) {
@@ -97,11 +100,13 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
   );
 }
 
-export default function ReportsPanel({ data, settings, adminEmail, period, setPeriod, fromDate, setFromDate, toDate, setToDate, office = null }: Props) {
+export default function ReportsPanel({ data, settings, adminEmail, period, setPeriod, fromDate, setFromDate, toDate, setToDate, office = null, academicYear: sharedYear, setAcademicYear: setSharedYear }: Props) {
   const supabase = useMemo(() => createClient(), []);
   const [program, setProgram] = useState("all");
   const [payStatus, setPayStatus] = useState("all");
-  const [academicYear, setAcademicYear] = useState("all");
+  const [localYear, setLocalYear] = useState("all");
+  const academicYear = sharedYear ?? localYear;
+  const setAcademicYear = setSharedYear ?? setLocalYear;
   const [student, setStudent] = useState("");
   const [auditAction, setAuditAction] = useState("all");
   const [auditEntity, setAuditEntity] = useState("all");
@@ -165,7 +170,8 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
     };
   }, [auditLogs, reportData]);
 
-  const academicYears = useMemo(() => [...new Set(data.applications.map((a) => a.academic_year).filter((x): x is string => !!x))].sort().reverse(), [data.applications]);
+  // Every year with applications, the current one, and whichever is picked (so the picker never shows blank).
+  const academicYears = useMemo(() => [...new Set([...data.applications.map((a) => a.academic_year), settings.academic_year, academicYear !== "all" ? academicYear : null].filter((x): x is string => !!x))].sort().reverse(), [data.applications, settings.academic_year, academicYear]);
   const students = useMemo(() => {
     const applied = new Set(data.applications.map((a) => a.user_id));
     return data.profiles.filter((p) => applied.has(p.id)).sort((x, y) => personName(x).localeCompare(personName(y)));
@@ -177,7 +183,7 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
     const totalBudget = budgets.reduce((t, r) => t + r.budget, 0);
     const disbursed = budgets.reduce((t, r) => t + r.disbursed, 0);
     const queued = budgets.reduce((t, r) => t + r.queued, 0);
-    const byProgram = applicationGroups(reportData, filters, (a) => a.scholarships?.name);
+    const byProgram = applicationGroups(reportData, filters, (a) => a.scholarships?.name && `${a.scholarships.name} · ${programOffice(reportData.scholarships.find((sc) => sc.id === a.scholarship_id)?.office)}`);
     const apps = byProgram.reduce((t, r) => t + r.total, 0);
     const approved = byProgram.reduce((t, r) => t + r.approved, 0);
     return {
@@ -211,6 +217,8 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
   const cell = (sec: ReportSection, c: string | number, i: number) => (sec.money?.includes(sec.head[i]) && typeof c === "number" ? formatPHP(c) : String(c));
   const scopeText = `${office ? `${office} · ` : ""}${periodLabel(filters)}${program === "all" ? "" : ` · ${data.scholarships.find((s) => s.id === program)?.name ?? ""}`}${academicYear === "all" ? "" : ` · AY ${academicYear}`}`;
   const noSignatories = !settings.report_prepared_by && !settings.report_approved_by;
+  // "Educational Assistance · MSWDO": the office a program comes from (Mayor Office when it has none).
+  const budgetLabel = (id: string, name: string) => `${name} · ${programOffice(reportData.scholarships.find((sc) => sc.id === id)?.office)}`;
   const remaining = analytics.totalBudget - analytics.disbursed - analytics.queued;
 
   return (
@@ -243,7 +251,7 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
               <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All programs</SelectItem>
-                {data.scholarships.map((sc) => <SelectItem key={sc.id} value={sc.id}>{sc.name}</SelectItem>)}
+                {data.scholarships.map((sc) => <SelectItem key={sc.id} value={sc.id}>{sc.name} · {programOffice(sc.office)}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -271,11 +279,11 @@ export default function ReportsPanel({ data, settings, adminEmail, period, setPe
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ChartCard title="Budget Utilization" subtitle={`Disbursed ÷ budget per program · ${scopeText}`}
-          table={{ head: ["Program", "Budget", "Disbursed", "Queued", "Used"], rows: analytics.budgets.map((r) => [r.name, formatPHP(r.budget), formatPHP(r.disbursed), formatPHP(r.queued), r.budget ? `${((r.disbursed / r.budget) * 100).toFixed(1)}%` : "—"]) }}
+          table={{ head: ["Program", "Budget", "Disbursed", "Queued", "Used"], rows: analytics.budgets.map((r) => [budgetLabel(r.id, r.name), formatPHP(r.budget), formatPHP(r.disbursed), formatPHP(r.queued), r.budget ? `${((r.disbursed / r.budget) * 100).toFixed(1)}%` : "—"]) }}
           empty={analytics.budgets.length === 0}>
           <div className="max-h-[260px] overflow-y-auto pr-1">
             <PercentBars rows={analytics.budgets.map((r) => ({
-              name: r.name,
+              name: budgetLabel(r.id, r.name),
               pct: r.budget ? (r.disbursed / r.budget) * 100 : null,
               detail: r.budget ? `${formatPHP(r.disbursed)} of ${formatPHP(r.budget)}` : `${formatPHP(r.disbursed)} disbursed · no budget set`,
               warn: r.budget > 0 && r.remaining < 0 ? "Over budget" : undefined,

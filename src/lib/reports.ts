@@ -1,5 +1,5 @@
 import type { Tables, Json } from "@/integrations/supabase/types";
-import { staffLabel } from "@/lib/permissions";
+import { programOffice, staffLabel } from "@/lib/permissions";
 import { pesoFixed } from "@/lib/format";
 import { RELEASE_SCHEDULES, asSchedule, openTerms, termLabel, yearlyAward } from "@/lib/release-schedule";
 import { approvalDocuments } from "@/lib/office-requirements";
@@ -313,9 +313,12 @@ export function turnaround(data: ReportData, f: ReportFilters) {
 export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters): ReportDef {
   const s = scope(data, f);
   const programName = (id: string | null | undefined) => data.scholarships.find((sc) => sc.id === id)?.name || "Unassigned";
+  // The office a program comes from (Mayor Office when it has none); "—" when there's no program.
+  const officeOf = (id: string | null | undefined) => { const sc = id ? data.scholarships.find((x) => x.id === id) : undefined; return sc ? programOffice(sc.office) : "—"; };
+  const appOffice = (a: Pick<Tables<"applications">, "scholarship_id">) => officeOf(a.scholarship_id);
   const filters = REPORT_FILTERS[key].flatMap((k): string[] => {
     if (k === "period") return [`Period: ${periodLabel(f)}`];
-    if (k === "program") return [`Program: ${f.program === "all" ? "All programs" : programName(f.program)}`];
+    if (k === "program") return [`Program: ${f.program === "all" ? "All programs" : `${programName(f.program)} (${officeOf(f.program)})`}`];
     if (k === "term") return [`Academic year: ${f.academicYear === "all" ? "All" : `AY ${f.academicYear}`}`];
     if (k === "payStatus") return [`Payments: ${f.payStatus === "all" ? "All except cancelled" : f.payStatus}`];
     return [];
@@ -326,6 +329,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
   const paidFor = (appId: string) => sum(data.payments.filter((p) => p.application_id === appId && p.status === "Disbursed"));
   const minFor = (a: Pick<Tables<"applications">, "scholarship_id">) => Number(data.scholarships.find((sc) => sc.id === a.scholarship_id)?.min_grade ?? data.minGrade);
   const payProgram = (p: Tables<"payments">) => s.payApp(p)?.scholarships?.name || "—";
+  const payOffice = (p: Tables<"payments">) => officeOf(s.payApp(p)?.scholarship_id);
   const kind = (a: ReportApp) => (a.is_renewal ? "Renewal" : "New");
 
   if (key === "scholars") {
@@ -343,13 +347,13 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
       sections: [
         {
           name: "Scholars",
-          head: ["#", "Name", "School", "Course", "Year Level", "Grade at Application", "Current Grade", "Scholarship", "Academic Year", "Type", "Approved On", "Award", "Disbursed", "Balance", "Payout Status"],
+          head: ["#", "Name", "School", "Course", "Year Level", "Grade at Application", "Current Grade", "Scholarship", "Office", "Academic Year", "Type", "Approved On", "Award", "Disbursed", "Balance", "Payout Status"],
           rows: apps.map((a, i) => {
             const award = s.appAward(a), paid = paidFor(a.id);
             const g = a.profiles?.average_grade;
             const current = g === null || g === undefined ? "—" : Number(g) < minFor(a) ? `${g} (below ${minFor(a)})` : g;
             return [i + 1, listName(a.profiles), appSchool(a) || "—", appCourse(a) || "—", appYearLevel(a) || "—", a.average_grade ?? "—", current,
-              a.scholarships?.name || "—", termText(a), kind(a), fmtDate(appApprovedAt(a)), award, paid, award - paid, a.disbursement_status || "—"];
+              a.scholarships?.name || "—", appOffice(a), termText(a), kind(a), fmtDate(appApprovedAt(a)), award, paid, award - paid, a.disbursement_status || "—"];
           }),
           money: ["Award", "Disbursed", "Balance"], totals: ["Award", "Disbursed", "Balance"],
         },
@@ -380,14 +384,14 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
       sections: [
         {
           name: "Budget",
-          head: ["Scholarship", "Budget", "Committed", "Disbursed", "Queued", "Remaining", "Used %"],
-          rows: rows.map((r) => [r.name, r.budget, r.committed, r.disbursed, r.queued, r.remaining, pct(r.disbursed, r.budget)]),
+          head: ["Scholarship", "Office", "Budget", "Committed", "Disbursed", "Queued", "Remaining", "Used %"],
+          rows: rows.map((r) => [r.name, officeOf(r.id), r.budget, r.committed, r.disbursed, r.queued, r.remaining, pct(r.disbursed, r.budget)]),
           money: ["Budget", "Committed", "Disbursed", "Queued", "Remaining"], totals: ["Budget", "Committed", "Disbursed", "Queued", "Remaining"],
         },
         {
           name: "Slots",
-          head: ["Scholarship", "Slots", "Approved", "Open Slots", "Filled %"],
-          rows: rows.map((r) => [r.name, r.slots, r.approved, Math.max(0, r.slots - r.approved), pct(r.approved, r.slots)]),
+          head: ["Scholarship", "Office", "Slots", "Approved", "Open Slots", "Filled %"],
+          rows: rows.map((r) => [r.name, officeOf(r.id), r.slots, r.approved, Math.max(0, r.slots - r.approved), pct(r.approved, r.slots)]),
           totals: ["Slots", "Approved", "Open Slots"],
         },
       ],
@@ -407,8 +411,8 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
       const l = pays.filter((p) => (s.payApp(p)?.scholarship_id ?? null) === id);
       const lp = l.filter((p) => p.status === "Disbursed");
       const scholars = new Set(lp.map((p) => p.user_id)).size;
-      return [programName(id), lp.length, scholars, sum(lp), scholars ? sum(lp) / scholars : 0, queuedOf(l), sum(l.filter((p) => p.status === "Cancelled"))];
-    }).filter((r, i) => programIds[i] !== null || (r[3] as number) + (r[5] as number) + (r[6] as number) > 0);
+      return [programName(id), officeOf(id), lp.length, scholars, sum(lp), scholars ? sum(lp) / scholars : 0, queuedOf(l), sum(l.filter((p) => p.status === "Cancelled"))];
+    }).filter((r, i) => programIds[i] !== null || (r[4] as number) + (r[6] as number) + (r[7] as number) > 0);
     const methods = new Map<string, Tables<"payments">[]>();
     paid.forEach((p) => methods.set(p.method || "Other", [...(methods.get(p.method || "Other") ?? []), p]));
     const months = new Map<string, Tables<"payments">[]>();
@@ -422,14 +426,14 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
       sections: [
         {
           name: "Budget Utilization",
-          head: ["Scholarship", "Budget", "Disbursed", "Queued", "Remaining", "Utilized %"],
-          rows: budgets.map((r) => [r.name, r.budget, r.disbursed, r.queued, r.remaining, pct(r.disbursed, r.budget)]),
+          head: ["Scholarship", "Office", "Budget", "Disbursed", "Queued", "Remaining", "Utilized %"],
+          rows: budgets.map((r) => [r.name, officeOf(r.id), r.budget, r.disbursed, r.queued, r.remaining, pct(r.disbursed, r.budget)]),
           money: ["Budget", "Disbursed", "Queued", "Remaining"], totals: ["Budget", "Disbursed", "Queued", "Remaining"],
         },
         { name: "Payment Pipeline", head: ["Status", "Payments", "Amount"], rows: pipeline, money: ["Amount"] },
         {
           name: "By Scholarship Program",
-          head: ["Scholarship", "Payments", "Scholars Paid", "Disbursed", "Avg per Scholar", "Queued", "Cancelled"], rows: byProgram,
+          head: ["Scholarship", "Office", "Payments", "Scholars Paid", "Disbursed", "Avg per Scholar", "Queued", "Cancelled"], rows: byProgram,
           money: ["Disbursed", "Avg per Scholar", "Queued", "Cancelled"], totals: ["Payments", "Disbursed", "Queued", "Cancelled"],
         },
         {
@@ -444,8 +448,8 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
         },
         { name: "By Payment Method", head: ["Method", "Payments", "Amount", "Share %"], rows: [...methods.entries()].sort((x, y) => sum(y[1]) - sum(x[1])).map(([m, l]) => [m, l.length, sum(l), pct(sum(l), sum(paid))]), money: ["Amount"], totals: ["Payments", "Amount"] },
         {
-          name: "Cancelled Payments", head: ["Scholar", "Program", "Period", "Reference", "Created", "Cancelled On", "Cancelled By", "Amount", "Reason"],
-          rows: cancelled.map((p) => [payStudent(p), payProgram(p), payPeriod(p), p.reference || "—", fmtDate(p.created_at), fmtDate(p.cancelled_at), staffName(p.cancelled_by), Number(p.amount), p.cancel_reason || "—"]),
+          name: "Cancelled Payments", head: ["Scholar", "Program", "Office", "Period", "Reference", "Created", "Cancelled On", "Cancelled By", "Amount", "Reason"],
+          rows: cancelled.map((p) => [payStudent(p), payProgram(p), payOffice(p), payPeriod(p), p.reference || "—", fmtDate(p.created_at), fmtDate(p.cancelled_at), staffName(p.cancelled_by), Number(p.amount), p.cancel_reason || "—"]),
           money: ["Amount"], totals: ["Amount"],
         },
       ],
@@ -459,7 +463,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
       .map((st) => { const l = list.filter((p) => p.status === st); return [st, l.length, sum(l)]; })
       .filter((r) => (r[1] as number) > 0);
     const programs = new Map<string, Tables<"payments">[]>();
-    list.forEach((p) => { const k = payProgram(p); programs.set(k, [...(programs.get(k) ?? []), p]); });
+    list.forEach((p) => { const k = s.payApp(p)?.scholarship_id ?? ""; programs.set(k, [...(programs.get(k) ?? []), p]); });
     const paid = list.filter((p) => p.status === "Disbursed");
     const receiptText = (p: Tables<"payments">) => (p.student_receipt_ref ?? (p.student_receipt_path ? "Photo (before reference numbers)" : p.student_receipt_at ? "Confirmed, no number" : "Not yet submitted"));
     const matches = (p: Tables<"payments">) => {
@@ -476,22 +480,22 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
       sections: [
         {
           name: "Payments",
-          head: ["Scholar", "Barangay", "Program", "Period", "Type", "Reference", "Method", "Preferred", "Status", "Scheduled", "Disbursed", "Disbursed By", "Proof on File", "Notes", "Amount"],
+          head: ["Scholar", "Barangay", "Program", "Office", "Period", "Type", "Reference", "Method", "Preferred", "Status", "Scheduled", "Disbursed", "Disbursed By", "Proof on File", "Notes", "Amount"],
           rows: list.map((p) => {
             const st = s.profById.get(p.user_id), a = s.payApp(p);
-            return [payStudent(p), st?.barangay || "—", payProgram(p), payPeriod(p), a ? kind(a) : "—", p.reference || "—", p.method || "—", p.preferred_method || "—",
+            return [payStudent(p), st?.barangay || "—", payProgram(p), payOffice(p), payPeriod(p), a ? kind(a) : "—", p.reference || "—", p.method || "—", p.preferred_method || "—",
               p.status, fmtDate(p.scheduled_date), fmtDate(p.disbursed_at), staffName(p.disbursed_by), p.receipt_path ? "Yes" : "No", clip(p.notes, 80), Number(p.amount)];
           }),
           money: ["Amount"], totals: ["Amount"],
         },
         {
           name: "Scholar Receipt Confirmation",
-          head: ["Scholar", "Program", "Period", "Reference", "Disbursed", "Receipt Ref.", "Matches", "Submitted", "Review", "Reviewed By", "Reviewed On", "Review Note", "Amount"],
-          rows: paid.map((p) => [payStudent(p), payProgram(p), payPeriod(p), p.reference || "—", fmtDate(p.disbursed_at), receiptText(p), matches(p), fmtDate(p.student_receipt_at),
+          head: ["Scholar", "Program", "Office", "Period", "Reference", "Disbursed", "Receipt Ref.", "Matches", "Submitted", "Review", "Reviewed By", "Reviewed On", "Review Note", "Amount"],
+          rows: paid.map((p) => [payStudent(p), payProgram(p), payOffice(p), payPeriod(p), p.reference || "—", fmtDate(p.disbursed_at), receiptText(p), matches(p), fmtDate(p.student_receipt_at),
             p.student_receipt_at ? p.receipt_review_status : "—", staffName(p.receipt_reviewed_by), fmtDate(p.receipt_reviewed_at), clip(p.receipt_review_note, 80), Number(p.amount)]),
           money: ["Amount"], totals: ["Amount"],
         },
-        { name: "Totals by Program", head: ["Program", "Payments", "Scholars", "Amount"], rows: [...programs.entries()].sort(([x], [y]) => x.localeCompare(y)).map(([k, l]) => [k, l.length, new Set(l.map((p) => p.user_id)).size, sum(l)]), money: ["Amount"], totals: ["Payments", "Amount"] },
+        { name: "Totals by Program", head: ["Program", "Office", "Payments", "Scholars", "Amount"], rows: [...programs.values()].map((l) => [payProgram(l[0]), payOffice(l[0]), l.length, new Set(l.map((p) => p.user_id)).size, sum(l)]).sort((x, y) => String(x[0]).localeCompare(String(y[0]))), money: ["Amount"], totals: ["Payments", "Amount"] },
         { name: "Totals by Status", head: ["Status", "Payments", "Amount"], rows: totals, money: ["Amount"], totals: ["Payments", "Amount"] },
       ],
     };
@@ -526,7 +530,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
       }).filter((x) => x.amount > 0);
     });
     const byProgram = new Map<string, typeof rows>();
-    rows.forEach((r) => { const k = r.a.scholarships?.name || "—"; byProgram.set(k, [...(byProgram.get(k) ?? []), r]); });
+    rows.forEach((r) => { const k = r.a.scholarship_id ?? ""; byProgram.set(k, [...(byProgram.get(k) ?? []), r]); });
     const total = (l: typeof rows, k: "award" | "paid" | "scheduled" | "balance" | "unscheduled") => l.reduce((t, r) => t + r[k], 0);
     return {
       title: "Schedule of Remaining Balance Disbursement", filters, count: rows.length, countLabel: "scholars with a balance",
@@ -537,28 +541,28 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
       sections: [
         {
           name: "Remaining Balance by Scholar",
-          head: ["#", "Name", "Program", "Academic Year", "Release", "Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled", "Next Payout", "Periods Left"],
-          rows: rows.map((r, i) => [i + 1, listName(r.a.profiles), r.a.scholarships?.name || "—", termText(r.a), release(r.sch?.release_schedule),
+          head: ["#", "Name", "Program", "Office", "Academic Year", "Release", "Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled", "Next Payout", "Periods Left"],
+          rows: rows.map((r, i) => [i + 1, listName(r.a.profiles), r.a.scholarships?.name || "—", appOffice(r.a), termText(r.a), release(r.sch?.release_schedule),
             r.award, r.paid, r.scheduled, r.balance, r.unscheduled, fmtDate(r.next), r.left.length ? r.left.join(", ") : "—"]),
           money: ["Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled"],
           totals: ["Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled"],
         },
         {
           name: "Upcoming Payouts (Scheduled)",
-          head: ["Scheduled Date", "Scholar", "Program", "Period", "Method", "Status", "Reference", "Amount"],
-          rows: upcoming.map(({ r, p }) => [fmtDate(p.scheduled_date), listName(r.a.profiles), r.a.scholarships?.name || "—", payPeriod(p), p.method || "—", p.status, p.reference || "—", Number(p.amount)]),
+          head: ["Scheduled Date", "Scholar", "Program", "Office", "Period", "Method", "Status", "Reference", "Amount"],
+          rows: upcoming.map(({ r, p }) => [fmtDate(p.scheduled_date), listName(r.a.profiles), r.a.scholarships?.name || "—", appOffice(r.a), payPeriod(p), p.method || "—", p.status, p.reference || "—", Number(p.amount)]),
           money: ["Amount"], totals: ["Amount"],
         },
         {
           name: "Periods Not Yet Scheduled",
-          head: ["Scholar", "Program", "Academic Year", "Period", "Expected Amount"],
-          rows: toSchedule.map(({ r, t, amount }) => [listName(r.a.profiles), r.a.scholarships?.name || "—", termText(r.a), termLabel(t, r.a.academic_year) || t, amount]),
+          head: ["Scholar", "Program", "Office", "Academic Year", "Period", "Expected Amount"],
+          rows: toSchedule.map(({ r, t, amount }) => [listName(r.a.profiles), r.a.scholarships?.name || "—", appOffice(r.a), termText(r.a), termLabel(t, r.a.academic_year) || t, amount]),
           money: ["Expected Amount"], totals: ["Expected Amount"],
         },
         {
           name: "Totals by Program",
-          head: ["Program", "Scholars", "Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled"],
-          rows: [...byProgram.entries()].sort(([x], [y]) => x.localeCompare(y)).map(([k, l]) => [k, l.length, total(l, "award"), total(l, "paid"), total(l, "scheduled"), total(l, "balance"), total(l, "unscheduled")]),
+          head: ["Program", "Office", "Scholars", "Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled"],
+          rows: [...byProgram.values()].map((l) => [l[0].a.scholarships?.name || "—", appOffice(l[0].a), l.length, total(l, "award"), total(l, "paid"), total(l, "scheduled"), total(l, "balance"), total(l, "unscheduled")]),
           money: ["Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled"],
           totals: ["Scholars", "Yearly Award", "Disbursed", "Scheduled", "Remaining Balance", "Not Yet Scheduled"],
         },
@@ -589,7 +593,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
           .sort((x, y) => y.uploaded_at.localeCompare(x.uploaded_at))[0],
       }));
       const missing = latest.filter((x) => !x.doc).map((x) => x.type);
-      return [personName(a.profiles), a.scholarships?.name || "—", fmtDate(a.created_at), required.length, latest.filter((x) => x.doc).length, latest.filter((x) => x.doc?.status === "Verified").length, latest.filter((x) => x.doc?.status === "Disapproved").length, missing.join(", ") || "—"];
+      return [personName(a.profiles), a.scholarships?.name || "—", appOffice(a), fmtDate(a.created_at), required.length, latest.filter((x) => x.doc).length, latest.filter((x) => x.doc?.status === "Verified").length, latest.filter((x) => x.doc?.status === "Disapproved").length, missing.join(", ") || "—"];
     });
     const reqs = data.dataRequests.filter((r) => s.within(r.created_at));
     const handleDays = (r: Tables<"data_requests">) => (r.handled_at ? daysBetween(r.created_at, r.handled_at) : null);
@@ -622,7 +626,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
           rows: issues.map((i) => { const d = resolveDays(i); return [personName(s.profById.get(i.user_id)), i.kind, i.status, fmtDate(i.created_at), fmtDate(i.resolved_at), d === null ? "—" : d.toFixed(1), clip(i.message)]; }),
         },
         { name: "Scholar Receipt Confirmations", head: ["Status", "Disbursed Payments"], rows: receiptRows, totals: ["Disbursed Payments"] },
-        { name: "Document Completeness (open applications)", head: ["Scholar", "Program", "Submitted", "Required", "Uploaded", "Verified", "Disapproved", "Missing"], rows: docRows },
+        { name: "Document Completeness (open applications)", head: ["Scholar", "Program", "Office", "Submitted", "Required", "Uploaded", "Verified", "Disapproved", "Missing"], rows: docRows },
         {
           name: "Data & Deletion Requests",
           head: ["Scholar", "Kind", "Status", "Requested", "Handled", "Days"],
@@ -664,13 +668,13 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
           ],
         },
         {
-          name: "Applications", head: ["Submitted", "Program", "Academic Year", "Type", "School", "Grade", "Status", "Decided", "Award"],
-          rows: apps.map((a) => [fmtDate(a.created_at), a.scholarships?.name || "—", termText(a), kind(a), appSchool(a) || "—", appGrade(a) ?? "—", a.status, fmtDate(a.decided_at), a.status === "Approved" ? s.appAward(a) : "—"]),
+          name: "Applications", head: ["Submitted", "Program", "Office", "Academic Year", "Type", "School", "Grade", "Status", "Decided", "Award"],
+          rows: apps.map((a) => [fmtDate(a.created_at), a.scholarships?.name || "—", appOffice(a), termText(a), kind(a), appSchool(a) || "—", appGrade(a) ?? "—", a.status, fmtDate(a.decided_at), a.status === "Approved" ? s.appAward(a) : "—"]),
           money: ["Award"],
         },
         {
-          name: "Payments", head: ["Created", "Program", "Period", "Reference", "Method", "Status", "Disbursed", "Receipt Ref.", "Receipt Review", "Amount"],
-          rows: pays.map((x) => [fmtDate(x.created_at), payProgram(x), payPeriod(x), x.reference || "—", x.method || "—", x.status, fmtDate(x.disbursed_at),
+          name: "Payments", head: ["Created", "Program", "Office", "Period", "Reference", "Method", "Status", "Disbursed", "Receipt Ref.", "Receipt Review", "Amount"],
+          rows: pays.map((x) => [fmtDate(x.created_at), payProgram(x), payOffice(x), payPeriod(x), x.reference || "—", x.method || "—", x.status, fmtDate(x.disbursed_at),
             x.student_receipt_ref ?? (x.student_receipt_path ? "Photo" : "—"), x.student_receipt_at ? x.receipt_review_status : "—", Number(x.amount)]),
           money: ["Amount"],
         },
@@ -711,14 +715,16 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
   const apps = data.applications.filter((a) => s.appOk(a) && s.within(a.created_at));
   const by = (st: string) => apps.filter((a) => a.status === st).length;
   const approved = by("Approved");
-  const decided = approved + by("Disapproved");
+  // Discontinued scholars were approved first, so they count as approved in the rates.
+  const everApproved = approved + by("Discontinued");
+  const decided = everApproved + by("Disapproved");
   // Turnaround here is for the applications submitted in the period, so it describes the same group as every other figure.
   const toDecision = apps.filter((a) => a.decided_at).map((a) => daysBetween(a.created_at, a.decided_at!));
   const incomes = apps.map((a) => a.household_income).filter((x): x is number => x !== null).map(Number);
   const sizes = apps.map((a) => a.household_size).filter((x): x is number => x !== null).map(Number);
   const groupRow = (name: string, l: ReportApp[]) => {
     const c = (st: string) => l.filter((a) => a.status === st).length;
-    return [name, l.length, c("Approved"), c("Disapproved"), c("Pending") + c("Waitlisted"), c("Withdrawn"), pct(c("Approved"), c("Approved") + c("Disapproved"))];
+    return [name, l.length, c("Approved"), c("Disapproved"), c("Pending") + c("Waitlisted"), c("Withdrawn"), c("Discontinued"), pct(c("Approved") + c("Discontinued"), c("Approved") + c("Disapproved") + c("Discontinued"))];
   };
   const groupSection = (name: string, label: (a: ReportApp) => string | null | undefined, order?: string[]): ReportSection => {
     const m = new Map<string, ReportApp[]>();
@@ -727,9 +733,9 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
     if (order) entries.sort(([x], [y]) => (order.indexOf(x) + 1 || 99) - (order.indexOf(y) + 1 || 99));
     else entries.sort((x, y) => y[1].length - x[1].length);
     return {
-      name, head: [name.replace(/^By /, ""), "Applications", "Approved", "Disapproved", "Pending", "Withdrawn", "Approval Rate"],
+      name, head: [name.replace(/^By /, ""), "Applications", "Approved", "Disapproved", "Pending", "Withdrawn", "Discontinued", "Approval Rate"],
       rows: entries.map(([k, l]) => groupRow(k, l)),
-      totals: ["Applications", "Approved", "Disapproved", "Pending", "Withdrawn"],
+      totals: ["Applications", "Approved", "Disapproved", "Pending", "Withdrawn", "Discontinued"],
     };
   };
   const ageAt = (a: ReportApp) => ageOn(a.profiles?.dob, a.created_at);
@@ -742,7 +748,7 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
   return {
     title: "Applicant Statistics", filters, count: apps.length, countLabel: "applications",
     notes: [
-      "Approval rate is approved ÷ decided (approved + disapproved). Pending includes waitlisted. Every row adds up: Applications = Approved + Disapproved + Pending + Withdrawn.",
+      "Approval rate is approved ÷ decided (approved + disapproved). Pending includes waitlisted. Every row adds up: Applications = Approved + Disapproved + Pending + Withdrawn + Discontinued. Discontinued scholars were approved, then stopped; they count as approved in the approval rate.",
       "Days to decision cover the applications submitted in the period that have been decided. Household income is monthly, as entered by the applicant. Age is at the time of applying.",
     ],
     sections: [
@@ -750,15 +756,21 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
         name: "Summary", head: ["Metric", "Value"],
         rows: [
           ["Total Applications", apps.length], ["Unique Applicants", new Set(apps.map((a) => a.user_id)).size],
-          ["Approved", approved], ["Disapproved", by("Disapproved")], ["Pending", by("Pending")], ["Waitlisted", by("Waitlisted")], ["Withdrawn", by("Withdrawn")],
-          ["Approval Rate (of all)", pct(approved, apps.length)], ["Approval Rate (of decided)", pct(approved, decided)],
+          ["Approved", approved], ["Disapproved", by("Disapproved")], ["Pending", by("Pending")], ["Waitlisted", by("Waitlisted")], ["Withdrawn", by("Withdrawn")], ["Discontinued", by("Discontinued")],
+          ["Approval Rate (of all)", pct(everApproved, apps.length)], ["Approval Rate (of decided)", pct(everApproved, decided)],
           ["New Applicants", apps.filter((a) => !a.is_renewal).length], ["Renewals", apps.filter((a) => a.is_renewal).length],
           ["Average Days to Decision", dayText(avgDecision)], ["Median Days to Decision", dayText(medDecision)],
           ["Average Monthly Household Income", avgIncome === null ? "—" : formatPHP(avgIncome)], ["Median Monthly Household Income", medIncome === null ? "—" : formatPHP(medIncome)],
           ["Average Household Size", avgSize === null ? "—" : avgSize.toFixed(1)],
         ],
       },
-      { ...groupSection("By Scholarship Program", (a) => a.scholarships?.name), rows: data.scholarships.filter((sc) => s.progOk(sc.id)).map((sc) => groupRow(sc.name, apps.filter((a) => a.scholarship_id === sc.id))) },
+      (() => {
+        const sec = groupSection("By Scholarship Program", (a) => a.scholarships?.name);
+        return {
+          ...sec, head: [sec.head[0], "Office", ...sec.head.slice(1)],
+          rows: data.scholarships.filter((sc) => s.progOk(sc.id)).map((sc) => { const [name, ...rest] = groupRow(sc.name, apps.filter((a) => a.scholarship_id === sc.id)); return [name, programOffice(sc.office), ...rest]; }),
+        };
+      })(),
       groupSection("By Month Submitted", (a) => monthLabel(a.created_at.slice(0, 7)), months.map(monthLabel)),
       groupSection("By Academic Year", (a) => termText(a), [...new Set(apps.map(termText))].sort().reverse()),
       groupSection("By Applicant Type", kind, ["New", "Renewal"]),

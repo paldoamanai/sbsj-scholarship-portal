@@ -54,7 +54,6 @@ export default function HelpSection({ name, email }: { name: string; email: stri
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="font-display text-lg font-bold text-foreground">Help</h2>
         <p className="text-sm text-muted-foreground">Reach the scholarship office, or find a quick answer below.</p>
       </div>
 
