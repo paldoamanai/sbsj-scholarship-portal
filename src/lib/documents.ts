@@ -1,5 +1,5 @@
 import type { createClient } from "@/lib/supabase/client";
-import type { Tables } from "@/integrations/supabase/types";
+import type { Json, Tables } from "@/integrations/supabase/types";
 
 export const DOC_MIME = ["application/pdf", "image/jpeg", "image/png"];
 
@@ -32,6 +32,9 @@ export function documentPath(d: Pick<Tables<"documents">, "storage_path" | "file
   return decodeURIComponent(d.file_url.slice(i + "/documents/".length).split("?")[0]);
 }
 
+/** The upload report and fingerprints sent with a document (lib/doc-checks, migration 087). */
+export type UploadExtras = { checks: Json | null; sha256: string | null; phash: string | null };
+
 /**
  * Upload a document to private storage and record it.
  * The file goes straight to storage; the database then re-checks type, size, ownership and the lock
@@ -40,9 +43,9 @@ export function documentPath(d: Pick<Tables<"documents">, "storage_path" | "file
  */
 export async function uploadUserDocument(
   supabase: ReturnType<typeof createClient>,
-  opts: { userId: string; docType: string; file: File; applicationId?: string | null }
+  opts: { userId: string; docType: string; file: File; applicationId?: string | null; checks?: UploadExtras }
 ): Promise<{ row: Tables<"documents"> } | { error: string }> {
-  const { userId, docType, file, applicationId } = opts;
+  const { userId, docType, file, applicationId, checks } = opts;
   const path = docType === LETTER_OF_INTENT
     ? letterPath(userId, file)
     : docType === MOA
@@ -55,6 +58,7 @@ export async function uploadUserDocument(
   const { data, error } = await supabase.from("documents").insert({
     user_id: userId, application_id: applicationId ?? null, document_type: docType,
     file_url: path, storage_path: path, file_name: file.name, file_size: file.size, mime_type: file.type,
+    checks: checks?.checks ?? null, sha256: checks?.sha256 ?? null, phash: checks?.phash ?? null,
   }).select().single();
   if (error || !data) {
     await supabase.storage.from("documents").remove([path]);

@@ -132,6 +132,21 @@ export type Database = {
           review_note: string | null
           reviewed_by: string | null
           reviewed_at: string | null
+          checks: Json | null
+          scan: Json | null
+          scanned_at: string | null
+          scanned_by: string | null
+          sha256: string | null
+          phash: string | null
+          control_no: string | null
+          ai_score: number | null
+          ai_checked_at: string | null
+          flags: string[]
+          needs_original: boolean
+          original_seen_at: string | null
+          original_seen_by: string | null
+          original_note: string | null
+          review_flags: string[] | null
         }
         Insert: {
           id?: string
@@ -148,6 +163,21 @@ export type Database = {
           review_note?: string | null
           reviewed_by?: string | null
           reviewed_at?: string | null
+          checks?: Json | null
+          scan?: Json | null
+          scanned_at?: string | null
+          scanned_by?: string | null
+          sha256?: string | null
+          phash?: string | null
+          control_no?: string | null
+          ai_score?: number | null
+          ai_checked_at?: string | null
+          flags?: string[]
+          needs_original?: boolean
+          original_seen_at?: string | null
+          original_seen_by?: string | null
+          original_note?: string | null
+          review_flags?: string[] | null
         }
         Update: {
           id?: string
@@ -164,6 +194,21 @@ export type Database = {
           review_note?: string | null
           reviewed_by?: string | null
           reviewed_at?: string | null
+          checks?: Json | null
+          scan?: Json | null
+          scanned_at?: string | null
+          scanned_by?: string | null
+          sha256?: string | null
+          phash?: string | null
+          control_no?: string | null
+          ai_score?: number | null
+          ai_checked_at?: string | null
+          flags?: string[]
+          needs_original?: boolean
+          original_seen_at?: string | null
+          original_seen_by?: string | null
+          original_note?: string | null
+          review_flags?: string[] | null
         }
         Relationships: [
           {
@@ -888,6 +933,168 @@ export type Database = {
         }
         Relationships: []
       }
+      document_signatories: {
+        Row: {
+          id: string
+          document_type: string | null
+          place: string | null
+          name: string
+          position: string | null
+          active: boolean
+          created_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          document_type?: string | null
+          place?: string | null
+          name?: string
+          position?: string | null
+          active?: boolean
+          created_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          document_type?: string | null
+          place?: string | null
+          name?: string
+          position?: string | null
+          active?: boolean
+          created_by?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      document_samples: {
+        Row: {
+          id: string
+          document_type: string
+          place: string | null
+          label: string | null
+          storage_path: string
+          mime_type: string | null
+          phash: string | null
+          layout: Json | null
+          created_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          document_type?: string
+          place?: string | null
+          label?: string | null
+          storage_path?: string
+          mime_type?: string | null
+          phash?: string | null
+          layout?: Json | null
+          created_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          document_type?: string
+          place?: string | null
+          label?: string | null
+          storage_path?: string
+          mime_type?: string | null
+          phash?: string | null
+          layout?: Json | null
+          created_by?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      application_source_checks: {
+        Row: {
+          id: string
+          application_id: string
+          kind: string
+          result: string
+          contact: string | null
+          note: string | null
+          checked_by: string | null
+          checked_at: string
+        }
+        Insert: {
+          id?: string
+          application_id?: string
+          kind?: string
+          result?: string
+          contact?: string | null
+          note?: string | null
+          checked_by?: string | null
+          checked_at?: string
+        }
+        Update: {
+          id?: string
+          application_id?: string
+          kind?: string
+          result?: string
+          contact?: string | null
+          note?: string | null
+          checked_by?: string | null
+          checked_at?: string
+        }
+        Relationships: []
+      }
+      document_audits: {
+        Row: {
+          id: string
+          application_id: string
+          academic_year: string
+          status: string
+          note: string | null
+          selected_by: string | null
+          selected_at: string
+          resolved_by: string | null
+          resolved_at: string | null
+        }
+        Insert: {
+          id?: string
+          application_id?: string
+          academic_year?: string
+          status?: string
+          note?: string | null
+          selected_by?: string | null
+          selected_at?: string
+          resolved_by?: string | null
+          resolved_at?: string | null
+        }
+        Update: {
+          id?: string
+          application_id?: string
+          academic_year?: string
+          status?: string
+          note?: string | null
+          selected_by?: string | null
+          selected_at?: string
+          resolved_by?: string | null
+          resolved_at?: string | null
+        }
+        Relationships: []
+      }
+      barred_students: {
+        Row: {
+          user_id: string
+          reason: string
+          barred_by: string | null
+          barred_at: string
+        }
+        Insert: {
+          user_id?: string
+          reason?: string
+          barred_by?: string | null
+          barred_at?: string
+        }
+        Update: {
+          user_id?: string
+          reason?: string
+          barred_by?: string | null
+          barred_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -1137,6 +1344,42 @@ export type Database = {
           _user_id: string
           _role: string
         }
+        Returns: undefined
+      }
+      set_upload_checks: {
+        Args: { _path: string; _checks: Json; _sha256: string | null; _phash: string | null }
+        Returns: undefined
+      }
+      record_document_scan: {
+        Args: { _id: string; _scan: Json; _sha256: string | null; _phash: string | null; _control_no: string | null }
+        Returns: { flags: string[]; needs_original: boolean }[]
+      }
+      record_ai_score: {
+        Args: { _id: string; _score: number }
+        Returns: { flags: string[]; needs_original: boolean }[]
+      }
+      mark_original_seen: {
+        Args: { _id: string; _seen: boolean; _note?: string | null }
+        Returns: undefined
+      }
+      set_needs_original: {
+        Args: { _id: string; _needs: boolean; _reason?: string | null }
+        Returns: undefined
+      }
+      document_matches: {
+        Args: { _id: string }
+        Returns: { kind: string; other_id: string; other_user: string; student_name: string | null; document_type: string; uploaded_at: string; distance: number | null; same_office: boolean }[]
+      }
+      select_audit_sample: {
+        Args: { _percent: number; _academic_year: string }
+        Returns: number
+      }
+      resolve_document_audit: {
+        Args: { _id: string; _status: string; _note?: string | null }
+        Returns: undefined
+      }
+      set_student_barred: {
+        Args: { _user: string; _barred: boolean; _reason?: string | null }
         Returns: undefined
       }
       message_students: {

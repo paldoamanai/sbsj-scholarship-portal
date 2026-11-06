@@ -29,11 +29,12 @@ import NotificationInbox, { NOTIFICATION_PAGE } from "@/components/notifications
 import { useUnreadTitle } from "@/hooks/use-unread-title";
 import { showDesktopAlert } from "@/lib/desktop-alerts";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
-import type { Tables } from "@/integrations/supabase/types";
+import type { Json, Tables } from "@/integrations/supabase/types";
 import { profileFromUserMetadata } from "@/lib/registration-profile";
 import { useSystemSettings } from "@/hooks/use-system-settings";
 import { academicYearOf, applicationsBlockedReason, ayStart } from "@/lib/settings";
-import { APPLICATION_DOCS, DOC_MIME, LETTER_OF_INTENT, MOA, PHOTO_MIME, documentPath, shrinkPhoto, uploadLetterPhoto, uploadUserDocument } from "@/lib/documents";
+import { APPLICATION_DOCS, DOC_MIME, LETTER_OF_INTENT, MOA, PHOTO_MIME, documentPath, shrinkPhoto, uploadLetterPhoto, uploadUserDocument, type UploadExtras } from "@/lib/documents";
+import { checkUpload, fingerprint, type UploadChecks } from "@/lib/doc-checks";
 import { uploadPendingDocuments } from "@/lib/pending-documents";
 import { HOUSE_PHOTO, approvalDocuments, asksLetter, documentNote, followUpDocuments, needsHomeVisit, needsHousePin, needsMoa, photosOnly, programDocuments } from "@/lib/office-requirements";
 import HouseLocationDialog from "@/components/student/HouseLocationDialog";
@@ -324,7 +325,11 @@ export default function StudentDashboardPage() {
   const [applyLoading, setApplyLoading]             = useState(false);
   const [applyCertified, setApplyCertified]         = useState(false);
   // The letter of intent photo for the application being written, and a preview of it.
-  const [applyLetter, setApplyLetter]               = useState<{ file: File; url: string } | null>(null);
+  const [applyLetter, setApplyLetter]               = useState<{ file: File; url: string; checks: UploadChecks | null } | null>(null);
+  // A picked photo with quality problems: the student retakes it or uploads it anyway.
+  const [qualityPrompt, setQualityPrompt]           = useState<{ docType: string; warnings: string[]; resolve: (ok: boolean) => void } | null>(null);
+  // Barred from applying after fake documents (migration 087).
+  const [barred, setBarred]                         = useState(false);
   const [replacingLetter, setReplacingLetter]       = useState(false);
   const [uploadingMoa, setUploadingMoa]             = useState<string | null>(null);
   const [houseOpen, setHouseOpen]                   = useState(false);
@@ -342,10 +347,17 @@ export default function StudentDashboardPage() {
   const [removeDoc, setRemoveDoc]                   = useState<Tables<"documents"> | null>(null);
   const [removingDoc, setRemovingDoc]               = useState(false);
   const { settings, loaded: settingsLoaded } = useSystemSettings();
-  const applyBlocked = applicationsBlockedReason(settings);
+  const applyBlocked = barred ? "Your account can't apply for scholarships. Please contact the scholarship office." : applicationsBlockedReason(settings);
 
 
   useEffect(() => { loadData(); }, []);
+
+  useEffect(() => {
+    if (!userId) return;
+    supabase.from("barred_students").select("user_id").eq("user_id", userId).maybeSingle()
+      .then(({ data }) => setBarred(!!data));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -733,6 +745,26 @@ export default function StudentDashboardPage() {
   // ── Document actions ───────────────────────────────────────────────────────
   // Files go straight to private storage; the database then re-checks type, size, ownership and the
   // lock against the stored object before it accepts the row, so these client checks are for UX only.
+  // Checks a picked file before it is uploaded (lib/doc-checks). Photo problems (blur, glare, cut off) are
+  // shown so the student can retake it; they may still upload it. Returns the report to save with the
+  // document, or null when the student chose to retake the photo.
+  const inspectUpload = async (picked: File, docType: string): Promise<{ checks: UploadChecks | null } | null> => {
+    let report: Awaited<ReturnType<typeof checkUpload>> | null = null;
+    try { report = await checkUpload(picked, docType); } catch { /* the checks are optional */ }
+    if (report?.warnings.length) {
+      const warnings = report.warnings;
+      const ok = await new Promise<boolean>((resolve) => setQualityPrompt({ docType, warnings, resolve }));
+      setQualityPrompt(null);
+      if (!ok) return null;
+    }
+    return { checks: report?.checks ?? null };
+  };
+  // The report and fingerprints of the file actually uploaded (it may have been shrunk).
+  const extrasFor = async (file: File, checks: UploadChecks | null): Promise<UploadExtras> => {
+    const fp = await fingerprint(file).catch(() => ({ sha256: null, phash: null }));
+    return { checks: checks as unknown as Json, sha256: fp.sha256, phash: fp.phash };
+  };
+
   // appId: the application in review it's for, or null for the application form.
   const uploadDocument = async (docType: string, picked: File, office: string | null, appId: string | null) => {
     let file = picked;
@@ -748,9 +780,13 @@ export default function StudentDashboardPage() {
 
     setUploadingDoc(`${appId ?? "form"}:${docType}`);
     try {
+      const inspected = await inspectUpload(picked, docType);
+      if (!inspected) return;
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const result = await uploadUserDocument(supabase, { userId: user.id, docType, file, applicationId: appId });
+      const result = await uploadUserDocument(supabase, {
+        userId: user.id, docType, file, applicationId: appId, checks: await extrasFor(file, inspected.checks),
+      });
       if ("error" in result) { toast.error("Upload failed", { description: result.error }); return; }
       const row = result.row;
 
@@ -820,6 +856,11 @@ export default function StudentDashboardPage() {
       if (!res.ok) {
         toast.error(json.error ?? "Failed to submit application.");
       } else {
+        // The database filed the letter from the application; add its upload report.
+        if (applyLetter && letterPath) {
+          const ex = await extrasFor(applyLetter.file, applyLetter.checks);
+          await supabase.rpc("set_upload_checks", { _path: letterPath, _checks: ex.checks ?? { v: 1, flags: [] }, _sha256: ex.sha256, _phash: ex.phash });
+        }
         letterPath = null;
         toast.success(isRenewing ? "Renewal application submitted!" : "Application submitted!");
         setApplyDialogOpen(false);
@@ -837,27 +878,32 @@ export default function StudentDashboardPage() {
   };
 
   /** Checks a picked letter of intent photo (shrinking a large phone photo) and shows a preview of it. */
-  const preparePhoto = async (picked: File) => {
-    if (!PHOTO_MIME.includes(picked.type)) { toast.error("The letter of intent must be a photo (JPG or PNG)."); return null; }
+  const preparePhoto = async (picked: File, docType: string) => {
+    if (!PHOTO_MIME.includes(picked.type)) { toast.error(`The ${docType === MOA ? "MOA" : "letter of intent"} must be a photo (JPG or PNG).`); return null; }
+    const inspected = await inspectUpload(picked, docType);
+    if (!inspected) return null;
     const file = await shrinkPhoto(picked, settings.max_upload_mb * 1024 * 1024);
     if (file.size === 0) { toast.error("That photo is empty."); return null; }
     if (file.size > settings.max_upload_mb * 1024 * 1024) { toast.error(`Photo is too large (max ${settings.max_upload_mb} MB).`); return null; }
-    return file;
+    return { file, checks: inspected.checks };
   };
   const pickLetter = async (picked: File | null) => {
-    const file = picked ? await preparePhoto(picked) : null;
-    if (picked && !file) return;
+    const prepared = picked ? await preparePhoto(picked, LETTER_OF_INTENT) : null;
+    if (picked && !prepared) return;
     if (applyLetter) URL.revokeObjectURL(applyLetter.url);
-    setApplyLetter(file ? { file, url: URL.createObjectURL(file) } : null);
+    setApplyLetter(prepared ? { file: prepared.file, url: URL.createObjectURL(prepared.file), checks: prepared.checks } : null);
   };
 
   // A disapproved letter is replaced from its application; the older copy is removed once the new one is filed.
   const replaceLetter = async (app: typeof applications[number], picked: File) => {
-    const file = await preparePhoto(picked);
-    if (!file) return;
+    const prepared = await preparePhoto(picked, LETTER_OF_INTENT);
+    if (!prepared) return;
+    const { file } = prepared;
     setReplacingLetter(true);
     try {
-      const result = await uploadUserDocument(supabase, { userId, docType: LETTER_OF_INTENT, file, applicationId: app.id });
+      const result = await uploadUserDocument(supabase, {
+        userId, docType: LETTER_OF_INTENT, file, applicationId: app.id, checks: await extrasFor(file, prepared.checks),
+      });
       if ("error" in result) { toast.error("Upload failed", { description: result.error }); return; }
       for (const d of documents.filter((x) => x.document_type === LETTER_OF_INTENT && x.application_id === app.id && x.id !== result.row.id)) {
         const { data: gone } = await supabase.from("documents").delete().eq("id", d.id).select("id");
@@ -873,11 +919,14 @@ export default function StudentDashboardPage() {
 
   // The signed MOA, after approval, where the office asks for one. A newer photo replaces the older one.
   const uploadMoa = async (app: typeof applications[number], picked: File) => {
-    const file = await preparePhoto(picked);
-    if (!file) return;
+    const prepared = await preparePhoto(picked, MOA);
+    if (!prepared) return;
+    const { file } = prepared;
     setUploadingMoa(app.id);
     try {
-      const result = await uploadUserDocument(supabase, { userId, docType: MOA, file, applicationId: app.id });
+      const result = await uploadUserDocument(supabase, {
+        userId, docType: MOA, file, applicationId: app.id, checks: await extrasFor(file, prepared.checks),
+      });
       if ("error" in result) { toast.error("Upload failed", { description: result.error }); return; }
       toast.success("MOA uploaded", { description: "The office will check it before your payout." });
       refreshDocuments(userId);
@@ -1034,6 +1083,7 @@ export default function StudentDashboardPage() {
               )}
               <Label className={`flex-1 sm:flex-none ${busy ? "pointer-events-none" : "cursor-pointer"}`}>
                 <Input type="file" className="hidden" accept={photo ? "image/jpeg,image/png" : ".pdf,.jpg,.jpeg,.png"} disabled={busy}
+                  capture={photo && settings.camera_only_photos ? "environment" : undefined}
                   onChange={async (e) => {
                     const input = e.target;
                     const file = input.files?.[0];
@@ -1203,6 +1253,7 @@ export default function StudentDashboardPage() {
                       <label className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${busy ? "opacity-60" : "cursor-pointer border-primary bg-primary text-white"}`}>
                         {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}{moa ? "Upload new photo" : "Upload photo"}
                         <input type="file" accept="image/jpeg,image/png" className="sr-only" disabled={busy}
+                          capture={settings.camera_only_photos ? "environment" : undefined}
                           onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadMoa(a, f); }} />
                       </label>
                     )}
@@ -1343,6 +1394,7 @@ export default function StudentDashboardPage() {
                           <label className={`mt-1.5 inline-flex items-center gap-1 rounded-lg border border-red-300 bg-white px-2.5 py-1 font-medium ${replacingLetter ? "opacity-60" : "cursor-pointer hover:bg-red-100"}`}>
                             {replacingLetter ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}Replace photo
                             <input type="file" accept="image/jpeg,image/png" className="sr-only" disabled={replacingLetter}
+                              capture={settings.camera_only_photos ? "environment" : undefined}
                               onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) replaceLetter(selectedApp, f); }} />
                           </label>
                         </div>
@@ -1446,12 +1498,17 @@ export default function StudentDashboardPage() {
             </label>
           )}
           <input id="apply-letter" type="file" accept="image/jpeg,image/png" className="sr-only"
+            capture={settings.camera_only_photos ? "environment" : undefined}
             onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) pickLetter(f); }} />
         </DialogField>
         )}
         <label className="flex items-start gap-3 rounded-xl border bg-muted/30 px-4 py-3 text-sm text-foreground cursor-pointer">
           <Checkbox checked={applyCertified} onCheckedChange={(v) => setApplyCertified(v === true)} className="mt-0.5" />
-          <span>I certify that the information and documents I have provided are true and correct.</span>
+          <span>
+            I certify that the information and documents I have provided are true and correct. I understand that a fake or
+            altered document disqualifies me from the scholarship, bars me from applying again, and that I must return any
+            amount already released to me.
+          </span>
         </label>
       </AppDialog>
     </div>
@@ -1537,6 +1594,21 @@ export default function StudentDashboardPage() {
         <p className="text-sm text-muted-foreground">
           <span className="font-semibold text-foreground">{removeDoc?.document_type}</span> ({removeDoc?.file_name}) will be deleted. You will need to upload it again before you can apply.
         </p>
+      </AppDialog>
+
+      <AppDialog open={!!qualityPrompt} onOpenChange={(o) => { if (!o) qualityPrompt?.resolve(false); }} size="sm" className="rounded-2xl"
+        title="Check your photo"
+        description={qualityPrompt ? `Your ${qualityPrompt.docType} photo may be hard for the office to read.` : undefined}
+        footer={<>
+          <Button variant="outline" className="rounded-xl" onClick={() => qualityPrompt?.resolve(true)}>Upload anyway</Button>
+          <Button className="rounded-xl" onClick={() => qualityPrompt?.resolve(false)}>Retake photo</Button>
+        </>}>
+        <ul className="space-y-1.5 text-sm">
+          {qualityPrompt?.warnings.map((w) => (
+            <li key={w} className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />{w}</li>
+          ))}
+        </ul>
+        <p className="mt-3 text-xs text-muted-foreground">Lay the document flat in good light, fill the photo with it, and hold the phone steady.</p>
       </AppDialog>
     </div>
   );

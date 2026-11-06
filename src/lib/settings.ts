@@ -32,6 +32,8 @@ export interface AppSettings {
   maintenance_mode: boolean;
   maintenance_message: string;
   max_upload_mb: number;
+  /** Photo-only documents open the phone camera instead of the gallery (discourages edited files). */
+  camera_only_photos: boolean;
   program_name: string;
   contact_email: string;
   contact_phone: string;
@@ -64,6 +66,7 @@ export const SETTING_DEFAULTS: AppSettings = {
   maintenance_mode: false,
   maintenance_message: "The portal is temporarily unavailable for submissions. Please try again later.",
   max_upload_mb: 5,
+  camera_only_photos: false,
   program_name: "San Jose Scholarship Portal",
   contact_email: "scholarship@sbsj.gov.ph",
   contact_phone: "(043) 457-0001",
@@ -125,6 +128,7 @@ export function parseSettings(rows: { key: string; value: Json }[] | null | unde
     maintenance_mode: bool(raw.maintenance_mode, d.maintenance_mode),
     maintenance_message: str(raw.maintenance_message, d.maintenance_message) || d.maintenance_message,
     max_upload_mb: num(raw.max_upload_mb, d.max_upload_mb),
+    camera_only_photos: bool(raw.camera_only_photos, d.camera_only_photos),
     program_name: str(raw.program_name, d.program_name) || d.program_name,
     contact_email: str(raw.contact_email, d.contact_email) || d.contact_email,
     contact_phone: str(raw.contact_phone, d.contact_phone),

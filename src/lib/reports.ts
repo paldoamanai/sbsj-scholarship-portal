@@ -10,7 +10,11 @@ export type ReportSection = { name: string; head: string[]; rows: (string | numb
 export type ReportDef = { title: string; filters: string[]; sections: ReportSection[]; count: number; countLabel: string; notes?: string[] };
 
 export type ReportApp = Tables<"applications"> & { scholarships: { name: string } | null; profiles?: Tables<"profiles"> | null };
-export type DocSummary = { id: string; user_id: string; application_id: string | null; document_type: string; status: string; uploaded_at: string };
+export type DocSummary = {
+  id: string; user_id: string; application_id: string | null; document_type: string; status: string; uploaded_at: string;
+  /** Document checks (migration 087); absent before it runs. */
+  flags?: string[]; needs_original?: boolean; original_seen_at?: string | null;
+};
 /** Admin / super admin accounts, kept apart from student profiles. */
 export type StaffMember = { id: string; name: string; email: string | null; role: string; office?: string | null };
 

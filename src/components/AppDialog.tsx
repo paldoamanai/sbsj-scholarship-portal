@@ -114,12 +114,14 @@ type ReasonDialogProps = {
   cancelLabel?: ReactNode;
   busy?: boolean;
   onConfirm: () => void;
+  /** Ready-made reasons shown as buttons; picking one fills the text, which can still be edited. */
+  presets?: string[];
 };
 
 /** "Write why, then confirm" — disapprovals, revocations, declines and similar. */
 export function ReasonDialog({
   open, onClose, title, description, label = "Reason", hint, placeholder, value, onChange, rows = 3, maxLength,
-  required = true, confirmLabel, confirmVariant = "destructive", cancelLabel = "Cancel", busy, onConfirm,
+  required = true, confirmLabel, confirmVariant = "destructive", cancelLabel = "Cancel", busy, onConfirm, presets,
 }: ReasonDialogProps) {
   return (
     <AppDialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} size="sm" title={title} description={description}
@@ -132,6 +134,20 @@ export function ReasonDialog({
       <DialogField label={label} htmlFor="reason-dialog-text" hint={hint}>
         <Textarea id="reason-dialog-text" rows={rows} maxLength={maxLength} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} autoFocus />
       </DialogField>
+      {presets && presets.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          <p className="text-xs font-medium text-muted-foreground">Common reasons</p>
+          <div className="flex flex-col gap-1.5">
+            {presets.map((p) => (
+              <button key={p} type="button" onClick={() => onChange(p)}
+                className={cn("rounded-lg border px-3 py-1.5 text-left text-xs transition-colors hover:border-primary/40 hover:bg-muted/50",
+                  value === p && "border-primary bg-primary/5 text-primary")}>
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </AppDialog>
   );
 }

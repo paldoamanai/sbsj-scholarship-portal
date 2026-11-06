@@ -19,7 +19,7 @@ import {
   Menu, X, Search, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock,
   FileDown, Receipt, Loader2, User, ArrowRight,
-   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2, MapPin, CalendarClock, Send,
+   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2, MapPin, CalendarClock, Send, ClipboardCheck,
 } from "@/components/icons";
 import { createClient } from "@/lib/supabase/client";
 import { scholarshipSchema } from "@/validations/scholarship";
@@ -52,6 +52,11 @@ import { LETTER_OF_INTENT, MOA } from "@/lib/documents";
 import { approvalDocuments, needsHomeVisit, needsHousePin, needsMoa } from "@/lib/office-requirements";
 import { directionsLink, distanceKm, earthLink, fmtDistance, googleMapsLink, streetViewLink } from "@/lib/geo";
 import HomeVisitsPanel from "@/components/admin/HomeVisitsPanel";
+import DocumentChecksPanel from "@/components/admin/DocumentChecksPanel";
+import ApplicationVerification from "@/components/admin/ApplicationVerification";
+import { DocCheckLine, DocumentViewer, RiskBadge, useAutoScan } from "@/components/admin/DocumentChecks";
+import { DISAPPROVAL_REASONS, applicationRisk } from "@/lib/doc-checks/flags";
+import { OFFICE_REQUIREMENTS } from "@/lib/office-requirements";
 import dynamic from "next/dynamic";
 import { peso, pesoFixed as formatPHP } from "@/lib/format";
 import { MoneyInput } from "@/components/MoneyInput";
@@ -73,6 +78,7 @@ const sidebarItems = [
   { icon: GraduationCap, label: "Scholarships", key: "scholarships", group: "Process" },
   { icon: FileText, label: "Applicants", key: "applications", group: "Process" },
   { icon: MapPin, label: "Home Visits", key: "visits", group: "Process" },
+  { icon: ClipboardCheck, label: "Document Checks", key: "doc-checks", group: "Process" },
   { icon: Users, label: "Scholars", key: "students", group: "Process" },
   { icon: Banknote, label: "Disbursement", key: "disbursement", group: "Process" },
   { icon: Wallet, label: "Funds", key: "funds", group: "Monitoring" },
@@ -87,7 +93,7 @@ const sidebarItems = [
 // Sections each role doesn't need. Everything is still enforced by the database (migration 050).
 const hiddenSections: Record<string, string[]> = {
   reviewer: ["disbursement", "funds", "audit-logs"],
-  finance_admin: ["applications", "visits", "audit-logs"],
+  finance_admin: ["applications", "visits", "audit-logs", "doc-checks"],
 };
 
 
@@ -115,7 +121,7 @@ function StatusBadge({ status, label }: { status: string | null | undefined; lab
 }
 
 // ── Reports / audit helpers ──
-type AdminDoc = { id: string; applicationId: string | null; name: string; type: string; url: string; status: string; note: string | null; size: number | null; uploadedAt: string };
+type AdminDoc = { id: string; applicationId: string | null; name: string; type: string; url: string; status: string; note: string | null; size: number | null; uploadedAt: string; row: Tables<"documents"> };
 
 // Older audit rows stored their values as JSON-encoded strings; newer ones are real JSON.
 function parseJson(v: Json | null | undefined): unknown {
@@ -227,6 +233,9 @@ function AdminDashboard() {
   const [viewDocs, setViewDocs] = useState<AdminDoc[]>([]);
   const [allDocs, setAllDocs] = useState<DocSummary[]>([]);
   const [disapproveDoc, setDisapproveDoc] = useState<AdminDoc | null>(null);
+  // Document checks (migration 087): the document open in the viewer, and students barred from applying.
+  const [viewerDoc, setViewerDoc] = useState<AdminDoc | null>(null);
+  const [barredIds, setBarredIds] = useState<Set<string>>(new Set());
   const [disapproveNote, setDisapproveNote] = useState("");
   const [disapproveApp, setDisapproveApp] = useState<(typeof applications)[number] | null>(null);
   const [disapproveAppNote, setDisapproveAppNote] = useState("");
@@ -388,7 +397,12 @@ function AdminDashboard() {
   const fetchAllApps = () => fetchAll((f, t) => supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }).order("id").range(f, t));
   const fetchAllPayments = () => fetchAll((f, t) => supabase.from("payments").select("*").order("created_at", { ascending: false }).order("id").range(f, t));
   const fetchAllProfiles = () => fetchAll((f, t) => supabase.from("profiles").select("*").order("id").range(f, t));
-  const fetchAllDocs = () => fetchAll((f, t) => supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at").order("id").range(f, t));
+  // With the document-check columns (migration 087) when the database has them.
+  const fetchAllDocs = async () => {
+    const withChecks = await fetchAll((f, t) => supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at, flags, needs_original, original_seen_at").order("id").range(f, t));
+    if (!withChecks.error) return withChecks;
+    return fetchAll((f, t) => supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at").order("id").range(f, t));
+  };
 
   const loadData = async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
@@ -548,7 +562,7 @@ function AdminDashboard() {
         const { data: signed } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
         if (signed?.signedUrl) url = signed.signedUrl;
       }
-      return { id: d.id, applicationId: d.application_id, name: d.file_name, type: d.document_type, url, status: d.status, note: d.review_note, size: d.file_size, uploadedAt: d.uploaded_at };
+      return { id: d.id, applicationId: d.application_id, name: d.file_name, type: d.document_type, url, status: d.status, note: d.review_note, size: d.file_size, uploadedAt: d.uploaded_at, row: d };
     }));
   };
 
@@ -559,12 +573,35 @@ function AdminDashboard() {
     setReviewingDoc(false);
     const data = rows?.[0];
     if (error || !data) { toast.error(error?.message ?? "Could not update the document"); return false; }
-    const patch = (list: AdminDoc[]) => list.map((x) => (x.id === doc.id ? { ...x, status: data.status, note: data.review_note } : x));
+    const patch = (list: AdminDoc[]) => list.map((x) => (x.id === doc.id ? { ...x, status: data.status, note: data.review_note, row: { ...x.row, status: data.status, review_note: data.review_note } } : x));
     setViewDocs(patch); setStudentDocs(patch);
     setAllDocs((prev) => prev.map((x) => (x.id === doc.id ? { ...x, status: data.status } : x)));
     toast.success(status === "Verified" ? `${doc.type} verified` : status === "Disapproved" ? `${doc.type} disapproved` : `${doc.type} reopened`);
     return true;
   };
+
+  // A document's check results changed (scanned, original seen, ...): update every list showing it.
+  const onDocChecked = (row: Tables<"documents">) => {
+    const patch = (list: AdminDoc[]) => list.map((x) => (x.id === row.id ? { ...x, row, status: row.status, note: row.review_note } : x));
+    setViewDocs(patch); setStudentDocs(patch);
+    setViewerDoc((v) => (v && v.id === row.id ? { ...v, row, status: row.status } : v));
+    setAllDocs((prev) => prev.map((x) => (x.id === row.id ? { ...x, status: row.status, flags: row.flags, needs_original: row.needs_original, original_seen_at: row.original_seen_at } : x)));
+  };
+  const scanContext = (row: Tables<"documents">) => ({
+    profile: profiles.find((p) => p.id === row.user_id) ?? null,
+    academicYear: applications.find((a) => a.id === row.application_id)?.academic_year ?? parseSettings(systemSettings).academic_year,
+  });
+  const loadBarredIds = () => {
+    supabase.from("barred_students").select("user_id")
+      .then(({ data }) => setBarredIds(new Set((data ?? []).map((b) => b.user_id))));
+  };
+  useEffect(() => {
+    loadBarredIds();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Documents are read once, in the reviewer's browser, the first time someone who reviews opens them.
+  const { scanningId, remaining: scansLeft } = useAutoScan(
+    [...viewDocs, ...studentDocs].filter((d) => d.row).map((d) => ({ row: d.row, url: d.url })), can.review, scanContext, onDocChecked);
 
   const docList = (docs: AdminDoc[], loading: boolean) => {
     if (loading) return <ul className="mt-1 space-y-2" aria-busy>{[1, 2, 3].map((i) => <li key={i}><Skeleton className="h-14 w-full" /></li>)}</ul>;
@@ -593,6 +630,7 @@ function AdminDashboard() {
               </span>}
             </div>
             {d.status === "Disapproved" && d.note && <p className="mt-1 text-xs text-destructive">Reason: {d.note}</p>}
+            {d.row && <DocCheckLine row={d.row} scanning={scanningId === d.id} onOpen={() => setViewerDoc(d)} />}
           </li>
         ))}
       </ul>
@@ -1861,6 +1899,19 @@ function AdminDashboard() {
             <HomeVisitsPanel applications={applications} scholarships={scholarships} onOpen={(a) => setViewApp(a)} />
           )}
 
+          {activeSection === "doc-checks" && (
+            <DocumentChecksPanel
+              applications={applications} profiles={profiles} currentAY={currentAY}
+              documentTypes={[...new Set([
+                ...parseSettings(systemSettings).required_documents,
+                ...Object.values(OFFICE_REQUIREMENTS).flatMap((o) => [...(o?.documents ?? []), ...(o?.followUps ?? [])]),
+                LETTER_OF_INTENT, MOA,
+              ])]}
+              canReview={can.review} canManage={can.manage}
+              onOpenApp={(id) => { const a = applications.find((x) => x.id === id); if (a) setViewApp(a); else toast.error("That application isn't in your list"); }}
+              onBarredChange={loadBarredIds} />
+          )}
+
           {activeSection === "applications" && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex items-center justify-between flex-wrap gap-3">
@@ -1995,6 +2046,10 @@ function AdminDashboard() {
                             <p className="font-medium">{name}</p>
                             {a.profiles?.email && <p className="text-xs text-muted-foreground">{a.profiles.email}</p>}
                             <div className="mt-1 flex gap-1 flex-wrap empty:hidden">
+                              {(() => {
+                                const risk = applicationRisk(allDocs.filter((d) => d.application_id === a.id), barredIds.has(a.user_id));
+                                return risk === "high" || risk === "medium" ? <RiskBadge risk={risk} className="text-[10px]" /> : null;
+                              })()}
                               {gradeReviews.some((g) => g.user_id === a.user_id && g.status === "Pending") && <Badge variant="secondary" className="text-[10px]">Grade to review</Badge>}
                               {dataReqs.some((r) => r.user_id === a.user_id && r.status === "Pending") && <Badge variant="destructive" className="text-[10px]">Deletion requested</Badge>}
                             </div>
@@ -2260,7 +2315,13 @@ function AdminDashboard() {
                         );
                       })()}
                       <div>
-                        <h3 className="mb-1.5 text-sm font-semibold">Documents for this application</h3>
+                        <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                          <h3 className="text-sm font-semibold">Documents for this application</h3>
+                          {!docsLoading && currentDocs.some((d) => d.row?.scanned_at || d.row?.flags?.length) && (
+                            <RiskBadge risk={applicationRisk(currentDocs.map((d) => ({ flags: d.row?.flags })), barredIds.has(viewApp.user_id))} />
+                          )}
+                          {scansLeft > 0 && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Checking documents ({scansLeft} left)</span>}
+                        </div>
                         {docList(currentDocs, docsLoading)}
                         {!docsLoading && olderDocs.length > 0 && (
                           <details className="mt-2 text-sm">
@@ -2271,6 +2332,10 @@ function AdminDashboard() {
                           </details>
                         )}
                       </div>
+
+                      <ApplicationVerification applicationId={viewApp.id} userId={viewApp.user_id} studentName={personName(viewApp.profiles)}
+                        canReview={can.review} canManage={can.manage} onBarredChange={loadBarredIds}
+                        staffName={(id) => staff.find((m) => m.id === id)?.name ?? (id === adminUserId ? "You" : "Staff")} />
 
                       {viewApp.status === "Approved" && (
                         <div>
@@ -3763,9 +3828,15 @@ function AdminDashboard() {
         description="The scholar is notified and can upload a replacement."
         hint="Shown to the scholar."
         placeholder="e.g. The photo is blurry. Please upload a clear copy."
-        value={disapproveNote} onChange={setDisapproveNote} busy={reviewingDoc}
+        value={disapproveNote} onChange={setDisapproveNote} busy={reviewingDoc} presets={DISAPPROVAL_REASONS}
         confirmLabel="Disapprove document"
         onConfirm={async () => { if (disapproveDoc && await reviewDocument(disapproveDoc, "Disapproved", disapproveNote)) setDisapproveDoc(null); }} />
+
+      <DocumentViewer
+        doc={viewerDoc ? { row: viewerDoc.row, url: viewerDoc.url, studentName: personName(profiles.find((p) => p.id === viewerDoc.row.user_id)) } : null}
+        profile={viewerDoc ? profiles.find((p) => p.id === viewerDoc.row.user_id) ?? null : null}
+        academicYear={viewerDoc ? scanContext(viewerDoc.row).academicYear : null}
+        canReview={can.review} onClose={() => setViewerDoc(null)} onUpdated={onDocChecked} />
     </div>
   );
 }
