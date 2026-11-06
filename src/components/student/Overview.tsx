@@ -3,14 +3,14 @@
 import { useMemo, useState } from "react";
 import {
   AlertTriangle, ArrowRight, Banknote, Bell, CalendarDays, CheckCircle, Eye, FileText,
-  GraduationCap, Info, Lock, Upload, User, Users, XCircle,
+  GraduationCap, Info, Lock, Upload, Users, XCircle,
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { AppDialog, Detail, DetailGrid, DialogNote, DialogSection } from "@/components/AppDialog";
-import ProfileImage from "@/components/ProfileImage";
 import { Panel, SectionTitle, StatCard, StatusBadge } from "@/components/student/ui";
 import ApplicationHistory from "@/components/student/ApplicationHistory";
 import { profileCompleteness } from "@/lib/profile";
+import { programOffice } from "@/lib/permissions";
 import { availabilityInfo, deadlineLabel, programChecks, requirementLines, slotsLabel, textLines, type PublicScholarship } from "@/lib/scholarships";
 import { daysUntil, formatDate, peso } from "@/lib/format";
 import { ayStart, type AppSettings } from "@/lib/settings";
@@ -163,16 +163,16 @@ export default function Overview(p: OverviewProps) {
   const programsPanel = (
     <Panel className={promotePrograms ? "border-primary/40 ring-2 ring-primary/15" : ""}>
       <div className={`px-5 py-4 border-b border-border flex items-center justify-between gap-2 ${promotePrograms ? "bg-accent/60 rounded-t-2xl" : ""}`}>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <SectionTitle>Available Scholarships</SectionTitle>
           {openCount > 0 && (
-            <span className="-mt-3 inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-[11px] font-semibold">
+            <span className="-mt-3 hidden sm:inline-flex shrink-0 whitespace-nowrap items-center rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-[11px] font-semibold">
               {openCount} open
             </span>
           )}
         </div>
         {scholarships.length > 3 && (
-          <button onClick={() => setShowAllPrograms((v) => !v)} className="text-xs text-primary font-semibold hover:text-primary/80 cursor-pointer -mt-3">
+          <button onClick={() => setShowAllPrograms((v) => !v)} className="shrink-0 whitespace-nowrap text-xs text-primary font-semibold hover:text-primary/80 cursor-pointer -mt-3">
             {showAllPrograms ? "Show fewer" : `Browse all ${scholarships.length}`}
           </button>
         )}
@@ -196,6 +196,7 @@ export default function Overview(p: OverviewProps) {
                       <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-[11px] font-semibold">Open</span>
                     )}
                   </div>
+                  <p className="text-xs font-medium text-muted-foreground mt-0.5">{programOffice(s.office)}</p>
                   {s.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{s.description}</p>}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -216,7 +217,7 @@ export default function Overview(p: OverviewProps) {
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-4 mt-3 text-xs text-muted-foreground">
-                {s.deadline && <span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {short(s.deadline)} ({deadlineLabel(s.deadline)})</span>}
+                {s.deadline && <span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> Closes {short(s.deadline)}{deadlineLabel(s.deadline) !== short(s.deadline) && ` (${deadlineLabel(s.deadline)})`}</span>}
                 <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" /> {slotsLabel(s)}</span>
                 {Number(s.amount) > 0 && <span>{awardText(s.amount, s.release_schedule, s.release_months)}</span>}
                 {!av.canApply && <span className="font-semibold text-destructive">{av.label}</span>}
@@ -241,9 +242,20 @@ export default function Overview(p: OverviewProps) {
       <div className="relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-hero p-5 sm:p-7">
         <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: "repeating-linear-gradient(135deg, #fff 0, #fff 1px, transparent 1px, transparent 14px)" }} />
         <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-xl sm:text-3xl font-display font-bold text-white">Dashboard</h1>
-            <p className="text-sm text-white mt-1">Welcome back, {firstName}! {actions.some((a) => a.tone !== "green" && a.tone !== "blue") ? "There are a few things that need your attention." : "Here's where things stand."}</p>
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-xl sm:text-3xl font-display font-bold text-white">Welcome back, {firstName}!</h1>
+                {p.locked && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-semibold text-white">
+                    <Lock className="h-3 w-3" />{p.isDisbursed ? "Disbursed" : "Approved — Locked"}
+                  </span>
+                )}
+              </div>
+              <p className="text-sm text-white/90 mt-0.5 truncate">
+                {[profile?.course, profile?.year_level, profile?.school_name].filter(Boolean).join(" · ") || "Add your school details in your profile"}
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-3 sm:shrink-0">
             <button onClick={() => p.onNavigate("application")}
@@ -254,6 +266,25 @@ export default function Overview(p: OverviewProps) {
           </div>
         </div>
       </div>
+
+      {/* At a glance */}
+      <section aria-label="At a glance" className="space-y-3">
+      <h2 className="text-base font-display font-semibold text-foreground">At a glance</h2>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard icon={FileText} label="Application" value={approvedApps.length > 0 ? "Approved" : currentApp?.status || "None"} sub={statusSub}
+          subTone={currentApp?.status === "Approved" ? "positive" : currentApp?.status === "Disapproved" ? "warning" : "neutral"}
+          accent={currentApp?.status === "Approved"} onClick={() => p.onNavigate("application")} />
+        <StatCard icon={Upload} label="Documents" value={`${p.docStatus.uploaded} / ${p.docStatus.required}`}
+          sub={p.docStatus.required === 0 ? "Listed once you apply" : p.docStatus.disapproved.length > 0 ? `${p.docStatus.disapproved.length} need${p.docStatus.disapproved.length === 1 ? "s" : ""} a new copy` : p.docStatus.uploaded === p.docStatus.required ? "All complete" : `${p.docStatus.required - p.docStatus.uploaded} remaining`}
+          subTone={p.docStatus.required === 0 ? "neutral" : p.docStatus.disapproved.length === 0 && p.docStatus.uploaded === p.docStatus.required ? "positive" : "warning"} onClick={() => p.onNavigate("documents")} />
+        <StatCard icon={Banknote} label="Payouts" value={peso(disbursedTotal)}
+          sub={nextPayment ? `Next: ${peso(nextPayment.amount)}${nextPayment.scheduled_date ? ` on ${short(nextPayment.scheduled_date)}` : ""}` : p.approvedTotal > 0 ? `of ${peso(p.approvedTotal)} approved` : "No payments yet"}
+          onClick={() => p.onNavigate("disbursement")} />
+        <StatCard icon={GraduationCap} label="Average Grade" value={profile?.average_grade ?? "—"}
+          sub={profile?.average_grade == null ? "Not set yet" : profile.grade_verified_at ? `Verified${profile.grade_term ? ` · ${profile.grade_term}` : ""}` : "Self-declared · not verified"}
+          subTone={profile?.grade_verified_at ? "positive" : "warning"} onClick={() => p.onNavigate("profile")} />
+      </div>
+      </section>
 
       {/* System / deadline notices */}
       {notices.map((n, i) => (
@@ -292,44 +323,10 @@ export default function Overview(p: OverviewProps) {
 
       {promotePrograms && programsPanel}
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={FileText} label="Application Status" value={approvedApps.length > 0 ? "Approved" : currentApp?.status || "None"} sub={statusSub}
-          subTone={currentApp?.status === "Approved" ? "positive" : currentApp?.status === "Disapproved" ? "warning" : "neutral"}
-          accent={currentApp?.status === "Approved"} onClick={() => p.onNavigate("application")} />
-        <StatCard icon={Upload} label="Documents" value={`${p.docStatus.uploaded} / ${p.docStatus.required}`}
-          sub={p.docStatus.required === 0 ? "Listed once you apply" : p.docStatus.disapproved.length > 0 ? `${p.docStatus.disapproved.length} need${p.docStatus.disapproved.length === 1 ? "s" : ""} a new copy` : p.docStatus.uploaded === p.docStatus.required ? "All complete" : `${p.docStatus.required - p.docStatus.uploaded} remaining`}
-          subTone={p.docStatus.required === 0 ? "neutral" : p.docStatus.disapproved.length === 0 && p.docStatus.uploaded === p.docStatus.required ? "positive" : "warning"} onClick={() => p.onNavigate("documents")} />
-        <StatCard icon={Banknote} label="Payouts" value={peso(disbursedTotal)}
-          sub={nextPayment ? `Next: ${peso(nextPayment.amount)}${nextPayment.scheduled_date ? ` on ${short(nextPayment.scheduled_date)}` : ""}` : p.approvedTotal > 0 ? `of ${peso(p.approvedTotal)} approved` : "No payments yet"}
-          onClick={() => p.onNavigate("disbursement")} />
-        <StatCard icon={GraduationCap} label="Average Grade" value={profile?.average_grade ?? "—"}
-          sub={profile?.average_grade == null ? "Not set yet" : profile.grade_verified_at ? `Verified${profile.grade_term ? ` · ${profile.grade_term}` : ""}` : "Self-declared · not verified"}
-          subTone={profile?.grade_verified_at ? "positive" : "warning"} onClick={() => p.onNavigate("profile")} />
-      </div>
 
       {/* Body */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="lg:col-span-2 space-y-5">
-          <Panel className="p-5">
-            <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
-              <ProfileImage value={profile?.profile_picture_url} alt="Profile" className="h-16 w-16 rounded-2xl object-cover shrink-0"
-                fallback={<div className="h-16 w-16 rounded-2xl bg-accent flex items-center justify-center shrink-0"><User className="h-7 w-7 text-accent-foreground" /></div>} />
-              <div className="flex-1 text-center sm:text-left min-w-0">
-                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                  <h2 className="text-lg font-display font-bold text-foreground">{p.displayName || "Scholar"}</h2>
-                  {p.locked && (
-                    <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${p.isDisbursed ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-accent text-accent-foreground border-primary/20"}`}>
-                      <Lock className="h-3 w-3" />{p.isDisbursed ? "Disbursed" : "Approved — Locked"}
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm text-muted-foreground mt-0.5">{profile?.course || "—"}{profile?.year_level ? ` · ${profile.year_level}` : ""}</p>
-                <p className="text-sm text-muted-foreground">{profile?.school_name || "—"}</p>
-              </div>
-            </div>
-          </Panel>
-
           {/* Application history */}
           <Panel>
             <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-2">

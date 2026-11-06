@@ -4,7 +4,8 @@ import { isStaffRole } from "@/lib/permissions";
 // Payments are cash only. "Cheque" stays in the type for payments made by cheque before.
 export type PaymentMethod = "Cash" | "Cheque";
 export const PAYMENT_METHODS: PaymentMethod[] = ["Cash"];
-export const SEMESTERS = ["1st Semester", "2nd Semester", "Summer"] as const;
+// Summer isn't offered: scholarships run on the 1st and 2nd semesters only.
+export const SEMESTERS = ["1st Semester", "2nd Semester"] as const;
 
 // The application cycle is the academic year (the academic_year setting): one application per program
 // per academic year, renewals, slots and budgets all follow it (migration 055).
@@ -32,8 +33,6 @@ export interface AppSettings {
   maintenance_mode: boolean;
   maintenance_message: string;
   max_upload_mb: number;
-  /** Photo-only documents open the phone camera instead of the gallery (discourages edited files). */
-  camera_only_photos: boolean;
   program_name: string;
   contact_email: string;
   contact_phone: string;
@@ -66,7 +65,6 @@ export const SETTING_DEFAULTS: AppSettings = {
   maintenance_mode: false,
   maintenance_message: "The portal is temporarily unavailable for submissions. Please try again later.",
   max_upload_mb: 5,
-  camera_only_photos: false,
   program_name: "San Jose Scholarship Portal",
   contact_email: "scholarship@sbsj.gov.ph",
   contact_phone: "(043) 457-0001",
@@ -118,7 +116,8 @@ export function parseSettings(rows: { key: string; value: Json }[] | null | unde
     max_renewals: num(raw.max_renewals, d.max_renewals),
     // Unset: the academic year today falls in, as current_academic_year() does.
     academic_year: str(raw.academic_year, academicYearOf(new Date())),
-    current_semester: str(raw.current_semester, d.current_semester),
+    // A setting saved as "Summer" before it was removed reads as the 1st semester.
+    current_semester: (SEMESTERS as readonly string[]).includes(str(raw.current_semester, d.current_semester)) ? str(raw.current_semester, d.current_semester) : d.current_semester,
     min_grade_requirement: num(raw.min_grade_requirement, d.min_grade_requirement),
     payment_methods: methods.length ? methods : d.payment_methods,
     email_notifications: bool(raw.email_notifications, d.email_notifications),
@@ -128,7 +127,6 @@ export function parseSettings(rows: { key: string; value: Json }[] | null | unde
     maintenance_mode: bool(raw.maintenance_mode, d.maintenance_mode),
     maintenance_message: str(raw.maintenance_message, d.maintenance_message) || d.maintenance_message,
     max_upload_mb: num(raw.max_upload_mb, d.max_upload_mb),
-    camera_only_photos: bool(raw.camera_only_photos, d.camera_only_photos),
     program_name: str(raw.program_name, d.program_name) || d.program_name,
     contact_email: str(raw.contact_email, d.contact_email) || d.contact_email,
     contact_phone: str(raw.contact_phone, d.contact_phone),

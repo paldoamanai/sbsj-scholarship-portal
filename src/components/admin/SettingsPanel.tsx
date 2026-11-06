@@ -244,11 +244,7 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
             <Switch checked={draft.maintenance_mode} onCheckedChange={(v) => set("maintenance_mode", v)} />
           </div>
           <div><Label>Message shown to scholars</Label><Textarea rows={2} maxLength={300} value={draft.maintenance_message} onChange={(e) => set("maintenance_message", e.target.value)} /></div>
-          <div className="flex items-center justify-between gap-3">
-            <div><p className="text-sm font-medium">Camera only for photo documents</p><p className="text-xs text-muted-foreground">On phones, documents that must be photos open the camera instead of the gallery. This discourages uploading edited or downloaded images. Computers still pick a file.</p></div>
-            <Switch checked={draft.camera_only_photos} onCheckedChange={(v) => set("camera_only_photos", v)} />
-          </div>
-          <SaveBar id="maintenance" keys={["max_upload_mb", "maintenance_mode", "maintenance_message", "camera_only_photos"]} />
+          <SaveBar id="maintenance" keys={["max_upload_mb", "maintenance_mode", "maintenance_message"]} />
         </CardContent>
       </Card>
 

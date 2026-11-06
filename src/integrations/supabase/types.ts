@@ -37,6 +37,9 @@ export type Database = {
           average_grade: number | null
           approved_at: string | null
           decided_at: string | null
+          discontinued_at: string | null
+          discontinued_by: string | null
+          discontinued_reason: string | null
           changes_requested: string | null
           changes_requested_at: string | null
           created_at: string
@@ -69,6 +72,9 @@ export type Database = {
           average_grade?: number | null
           approved_at?: string | null
           decided_at?: string | null
+          discontinued_at?: string | null
+          discontinued_by?: string | null
+          discontinued_reason?: string | null
           changes_requested?: string | null
           changes_requested_at?: string | null
           created_at?: string
@@ -101,6 +107,9 @@ export type Database = {
           average_grade?: number | null
           approved_at?: string | null
           decided_at?: string | null
+          discontinued_at?: string | null
+          discontinued_by?: string | null
+          discontinued_reason?: string | null
           changes_requested?: string | null
           changes_requested_at?: string | null
           created_at?: string
@@ -118,6 +127,16 @@ export type Database = {
       }
       documents: {
         Row: {
+          file_sha256: string | null
+          image_hash: string | null
+          upload_check: Json | null
+          check_flags: string[]
+          original_seen_at: string | null
+          original_seen_by: string | null
+          original_seen_note: string | null
+          fabricated_at: string | null
+          fabricated_by: string | null
+          fabricated_note: string | null
           id: string
           user_id: string
           application_id: string | null
@@ -132,23 +151,18 @@ export type Database = {
           review_note: string | null
           reviewed_by: string | null
           reviewed_at: string | null
-          checks: Json | null
-          scan: Json | null
-          scanned_at: string | null
-          scanned_by: string | null
-          sha256: string | null
-          phash: string | null
-          control_no: string | null
-          ai_score: number | null
-          ai_checked_at: string | null
-          flags: string[]
-          needs_original: boolean
-          original_seen_at: string | null
-          original_seen_by: string | null
-          original_note: string | null
-          review_flags: string[] | null
         }
         Insert: {
+          file_sha256?: string | null
+          image_hash?: string | null
+          upload_check?: Json | null
+          check_flags?: string[]
+          original_seen_at?: string | null
+          original_seen_by?: string | null
+          original_seen_note?: string | null
+          fabricated_at?: string | null
+          fabricated_by?: string | null
+          fabricated_note?: string | null
           id?: string
           user_id: string
           application_id?: string | null
@@ -163,23 +177,18 @@ export type Database = {
           review_note?: string | null
           reviewed_by?: string | null
           reviewed_at?: string | null
-          checks?: Json | null
-          scan?: Json | null
-          scanned_at?: string | null
-          scanned_by?: string | null
-          sha256?: string | null
-          phash?: string | null
-          control_no?: string | null
-          ai_score?: number | null
-          ai_checked_at?: string | null
-          flags?: string[]
-          needs_original?: boolean
-          original_seen_at?: string | null
-          original_seen_by?: string | null
-          original_note?: string | null
-          review_flags?: string[] | null
         }
         Update: {
+          file_sha256?: string | null
+          image_hash?: string | null
+          upload_check?: Json | null
+          check_flags?: string[]
+          original_seen_at?: string | null
+          original_seen_by?: string | null
+          original_seen_note?: string | null
+          fabricated_at?: string | null
+          fabricated_by?: string | null
+          fabricated_note?: string | null
           id?: string
           user_id?: string
           application_id?: string | null
@@ -194,21 +203,6 @@ export type Database = {
           review_note?: string | null
           reviewed_by?: string | null
           reviewed_at?: string | null
-          checks?: Json | null
-          scan?: Json | null
-          scanned_at?: string | null
-          scanned_by?: string | null
-          sha256?: string | null
-          phash?: string | null
-          control_no?: string | null
-          ai_score?: number | null
-          ai_checked_at?: string | null
-          flags?: string[]
-          needs_original?: boolean
-          original_seen_at?: string | null
-          original_seen_by?: string | null
-          original_note?: string | null
-          review_flags?: string[] | null
         }
         Relationships: [
           {
@@ -664,6 +658,12 @@ export type Database = {
           grade_term: string | null
           is_active: boolean
           created_at: string
+          deactivated_at: string | null
+          archived_at: string | null
+          archived_by: string | null
+          archive_reason: string | null
+          archive_note: string | null
+          graduated_level: string | null
           updated_at: string
         }
         Insert: {
@@ -699,6 +699,12 @@ export type Database = {
           grade_term?: string | null
           is_active?: boolean
           created_at?: string
+          deactivated_at?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
+          archive_reason?: string | null
+          archive_note?: string | null
+          graduated_level?: string | null
           updated_at?: string
         }
         Update: {
@@ -734,6 +740,12 @@ export type Database = {
           grade_term?: string | null
           is_active?: boolean
           created_at?: string
+          deactivated_at?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
+          archive_reason?: string | null
+          archive_note?: string | null
+          graduated_level?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -933,173 +945,39 @@ export type Database = {
         }
         Relationships: []
       }
-      document_signatories: {
-        Row: {
-          id: string
-          document_type: string | null
-          place: string | null
-          name: string
-          position: string | null
-          active: boolean
-          created_by: string | null
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          document_type?: string | null
-          place?: string | null
-          name?: string
-          position?: string | null
-          active?: boolean
-          created_by?: string | null
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          document_type?: string | null
-          place?: string | null
-          name?: string
-          position?: string | null
-          active?: boolean
-          created_by?: string | null
-          created_at?: string
-        }
-        Relationships: []
-      }
-      document_samples: {
-        Row: {
-          id: string
-          document_type: string
-          place: string | null
-          label: string | null
-          storage_path: string
-          mime_type: string | null
-          phash: string | null
-          layout: Json | null
-          created_by: string | null
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          document_type?: string
-          place?: string | null
-          label?: string | null
-          storage_path?: string
-          mime_type?: string | null
-          phash?: string | null
-          layout?: Json | null
-          created_by?: string | null
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          document_type?: string
-          place?: string | null
-          label?: string | null
-          storage_path?: string
-          mime_type?: string | null
-          phash?: string | null
-          layout?: Json | null
-          created_by?: string | null
-          created_at?: string
-        }
-        Relationships: []
-      }
-      application_source_checks: {
-        Row: {
-          id: string
-          application_id: string
-          kind: string
-          result: string
-          contact: string | null
-          note: string | null
-          checked_by: string | null
-          checked_at: string
-        }
-        Insert: {
-          id?: string
-          application_id?: string
-          kind?: string
-          result?: string
-          contact?: string | null
-          note?: string | null
-          checked_by?: string | null
-          checked_at?: string
-        }
-        Update: {
-          id?: string
-          application_id?: string
-          kind?: string
-          result?: string
-          contact?: string | null
-          note?: string | null
-          checked_by?: string | null
-          checked_at?: string
-        }
-        Relationships: []
-      }
-      document_audits: {
-        Row: {
-          id: string
-          application_id: string
-          academic_year: string
-          status: string
-          note: string | null
-          selected_by: string | null
-          selected_at: string
-          resolved_by: string | null
-          resolved_at: string | null
-        }
-        Insert: {
-          id?: string
-          application_id?: string
-          academic_year?: string
-          status?: string
-          note?: string | null
-          selected_by?: string | null
-          selected_at?: string
-          resolved_by?: string | null
-          resolved_at?: string | null
-        }
-        Update: {
-          id?: string
-          application_id?: string
-          academic_year?: string
-          status?: string
-          note?: string | null
-          selected_by?: string | null
-          selected_at?: string
-          resolved_by?: string | null
-          resolved_at?: string | null
-        }
-        Relationships: []
-      }
-      barred_students: {
-        Row: {
-          user_id: string
-          reason: string
-          barred_by: string | null
-          barred_at: string
-        }
-        Insert: {
-          user_id?: string
-          reason?: string
-          barred_by?: string | null
-          barred_at?: string
-        }
-        Update: {
-          user_id?: string
-          reason?: string
-          barred_by?: string | null
-          barred_at?: string
-        }
-        Relationships: []
-      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      archive_scholars: {
+        Args: { _users: string[]; _reason: string; _note?: string | null }
+        Returns: { archived: number; skipped: string[] }
+      }
+      restore_scholar: {
+        Args: { _user: string }
+        Returns: undefined
+      }
+      document_matches_for_user: {
+        Args: { _user: string }
+        Returns: { doc_id: string; match_id: string; match_user: string; match_name: string | null; match_type: string; match_status: string; same_file: boolean; distance: number }[]
+      }
+      set_document_original_seen: {
+        Args: { _id: string; _seen: boolean; _note?: string | null }
+        Returns: undefined
+      }
+      mark_document_fabricated: {
+        Args: { _id: string; _note: string }
+        Returns: undefined
+      }
+      discontinue_scholarship: {
+        Args: { _application_id: string; _reason: string }
+        Returns: number
+      }
+      reinstate_scholarship: {
+        Args: { _application_id: string }
+        Returns: undefined
+      }
       public_stats: {
         Args: Record<string, never>
         Returns: {
@@ -1344,42 +1222,6 @@ export type Database = {
           _user_id: string
           _role: string
         }
-        Returns: undefined
-      }
-      set_upload_checks: {
-        Args: { _path: string; _checks: Json; _sha256: string | null; _phash: string | null }
-        Returns: undefined
-      }
-      record_document_scan: {
-        Args: { _id: string; _scan: Json; _sha256: string | null; _phash: string | null; _control_no: string | null }
-        Returns: { flags: string[]; needs_original: boolean }[]
-      }
-      record_ai_score: {
-        Args: { _id: string; _score: number }
-        Returns: { flags: string[]; needs_original: boolean }[]
-      }
-      mark_original_seen: {
-        Args: { _id: string; _seen: boolean; _note?: string | null }
-        Returns: undefined
-      }
-      set_needs_original: {
-        Args: { _id: string; _needs: boolean; _reason?: string | null }
-        Returns: undefined
-      }
-      document_matches: {
-        Args: { _id: string }
-        Returns: { kind: string; other_id: string; other_user: string; student_name: string | null; document_type: string; uploaded_at: string; distance: number | null; same_office: boolean }[]
-      }
-      select_audit_sample: {
-        Args: { _percent: number; _academic_year: string }
-        Returns: number
-      }
-      resolve_document_audit: {
-        Args: { _id: string; _status: string; _note?: string | null }
-        Returns: undefined
-      }
-      set_student_barred: {
-        Args: { _user: string; _barred: boolean; _reason?: string | null }
         Returns: undefined
       }
       message_students: {

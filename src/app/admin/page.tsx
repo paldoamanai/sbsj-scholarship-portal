@@ -18,16 +18,17 @@ import {
   Plus, Pencil, Trash2, CheckCircle, XCircle, Clock, Eye,
   Menu, X, Search, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock,
-  FileDown, Receipt, Loader2, User, ArrowRight, Download,
-   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2, MapPin, CalendarClock, Send, ClipboardCheck,
+  FileDown, Receipt, Loader2, User, ArrowRight,
+   ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2, MapPin, CalendarClock, Send, Archive, Info,
 } from "@/components/icons";
 import { createClient } from "@/lib/supabase/client";
 import { scholarshipSchema } from "@/validations/scholarship";
 import ProfileImage from "@/components/ProfileImage";
-import { programChecks, type RequirementCheck } from "@/lib/scholarships";
+import { YEAR_LEVELS, programChecks, type RequirementCheck } from "@/lib/scholarships";
 import { HOME_MUNICIPALITY } from "@/lib/barangays";
 import { ScholarshipFormFields } from "@/components/admin/ScholarshipFormFields";
 import { AppDialog, ChoiceButton, Detail, DetailGrid, DialogField, DialogNote, DialogSection, ReasonDialog } from "@/components/AppDialog";
+import { FileViewerDialog, type ViewedFile } from "@/components/FileViewerDialog";
 import NotificationInbox, { NOTIFICATION_PAGE } from "@/components/notifications/NotificationInbox";
 import AnnouncementsPanel from "@/components/admin/AnnouncementsPanel";
 import ReminderJobsCard from "@/components/admin/ReminderJobsCard";
@@ -47,21 +48,16 @@ import {
 } from "@/lib/reports";
 import { parseSettings, isAdminRole, academicYearOf, ayStart, type AppSettings } from "@/lib/settings";
 import { asMonths, asSchedule, isMonthTerm, openTerms, secondSemesterGradeWarning, termLabel, termsFor, yearlyAward, type PaymentTerm } from "@/lib/release-schedule";
-import { OFFICE_FULL_NAME, OFFICE_LABEL, STAFF_OFFICES, isOffice, officeLogo, permissionsFor, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
+import { OFFICE_FULL_NAME, OFFICE_LABEL, STAFF_OFFICES, isOffice, officeLogo, permissionsFor, programOffice, roleCanHaveOffice, staffLabel } from "@/lib/permissions";
 import { LETTER_OF_INTENT, MOA } from "@/lib/documents";
 import { approvalDocuments, needsHomeVisit, needsHousePin, needsMoa } from "@/lib/office-requirements";
 import { directionsLink, distanceKm, earthLink, fmtDistance, googleMapsLink, streetViewLink } from "@/lib/geo";
 import HomeVisitsPanel from "@/components/admin/HomeVisitsPanel";
-import DocumentChecksPanel from "@/components/admin/DocumentChecksPanel";
-import ApplicationVerification from "@/components/admin/ApplicationVerification";
-import { FileView } from "@/components/FilePreview";
-import { DocCheckLine, DocumentViewer, RiskBadge, useAutoScan } from "@/components/admin/DocumentChecks";
-import { DISAPPROVAL_REASONS, applicationRisk } from "@/lib/doc-checks/flags";
-import { OFFICE_REQUIREMENTS } from "@/lib/office-requirements";
 import dynamic from "next/dynamic";
 import { peso, pesoFixed as formatPHP } from "@/lib/format";
 import { MoneyInput } from "@/components/MoneyInput";
 import type { Tables, Json } from "@/integrations/supabase/types";
+import { FLAG_LABEL } from "@/lib/doc-checks";
 import DashboardSkeleton from "@/components/DashboardSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchAll } from "@/lib/fetch-all";
@@ -79,11 +75,11 @@ const sidebarItems = [
   { icon: GraduationCap, label: "Scholarships", key: "scholarships", group: "Process" },
   { icon: FileText, label: "Applicants", key: "applications", group: "Process" },
   { icon: MapPin, label: "Home Visits", key: "visits", group: "Process" },
-  { icon: ClipboardCheck, label: "Document Checks", key: "doc-checks", group: "Process" },
   { icon: Users, label: "Scholars", key: "students", group: "Process" },
   { icon: Banknote, label: "Disbursement", key: "disbursement", group: "Process" },
   { icon: Wallet, label: "Funds", key: "funds", group: "Monitoring" },
   { icon: BarChart3, label: "Reports", key: "reports", group: "Monitoring" },
+  { icon: Archive, label: "Archive", key: "archive", group: "Monitoring" },
   { icon: ScrollText, label: "Audit Logs", key: "audit-logs", group: "Monitoring" },
   { icon: Bell, label: "Notifications", key: "notifications", group: "Monitoring" },
   { icon: ShieldCheck, label: "Staff", key: "staff", group: "Administration" },
@@ -94,7 +90,7 @@ const sidebarItems = [
 // Sections each role doesn't need. Everything is still enforced by the database (migration 050).
 const hiddenSections: Record<string, string[]> = {
   reviewer: ["disbursement", "funds", "audit-logs"],
-  finance_admin: ["applications", "visits", "audit-logs", "doc-checks"],
+  finance_admin: ["applications", "visits", "audit-logs"],
 };
 
 
@@ -110,6 +106,7 @@ function StatusBadge({ status, label }: { status: string | null | undefined; lab
     Waitlisted: { icon: Clock,        cls: "bg-muted text-muted-foreground border-border" },
     Cancelled:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
     Withdrawn:  { icon: XCircle,      cls: "bg-muted text-muted-foreground border-border" },
+    Discontinued: { icon: XCircle,    cls: "bg-orange-50 text-orange-800 border-orange-200" },
   };
   const m = map[status];
   if (!m) return <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium">{label ?? status}</span>;
@@ -122,9 +119,36 @@ function StatusBadge({ status, label }: { status: string | null | undefined; lab
 }
 
 // ── Reports / audit helpers ──
-type AdminDoc = { id: string; applicationId: string | null; name: string; type: string; url: string; status: string; note: string | null; size: number | null; uploadedAt: string; row: Tables<"documents"> };
+type DocMatch = { docId: string; matchId: string; matchUser: string; matchName: string | null; matchType: string; matchStatus: string; sameFile: boolean; distance: number };
+type AdminDoc = {
+  id: string; userId: string; applicationId: string | null; name: string; type: string; url: string; mime: string | null; status: string; note: string | null; size: number | null; uploadedAt: string;
+  // Document checks (migration 093): what the upload checks found, and what reviewers recorded.
+  flags: string[]; originalSeenAt: string | null; originalSeenBy: string | null; originalSeenNote: string | null;
+  fabricatedAt: string | null; fabricatedNote: string | null;
+  matches: DocMatch[];
+};
 
 // Older audit rows stored their values as JSON-encoded strings; newer ones are real JSON.
+/** Payouts to a deactivated scholar: warn, and ask staff to confirm before going ahead. */
+function InactiveScholarWarning({ names, ok, onOk, action }: { names: string[]; ok: boolean; onOk: (v: boolean) => void; action: string }) {
+  if (names.length === 0) return null;
+  return (
+    <div role="alert" className="space-y-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
+      <p className="flex items-start gap-2 font-medium">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>
+          {names.length === 1 ? `${names[0]}'s account is inactive.` : `${names.length} of these scholars have inactive accounts: ${names.join(", ")}.`}
+          {" "}They can&apos;t sign in to confirm the payment. Check with the office that they should still be paid.
+        </span>
+      </p>
+      <label className="flex cursor-pointer items-center gap-2 pl-6 text-foreground">
+        <Checkbox className="rounded-[4px]" checked={ok} onCheckedChange={(v) => onOk(!!v)} />
+        {action}
+      </label>
+    </div>
+  );
+}
+
 function parseJson(v: Json | null | undefined): unknown {
   if (typeof v === "string") { try { return JSON.parse(v); } catch { return v; } }
   return v ?? null;
@@ -206,6 +230,8 @@ function AdminDashboard() {
   const [studentFilter, setStudentFilter] = useState("all");
   const [studentSort, setStudentSort] = useState("name");
   const [studentProgram, setStudentProgram] = useState("all");
+  // Year level (Grade 11 to 4th Year), shared by Applicants and Scholars.
+  const [levelView, setLevelView] = useState("all");
   const [studentDisb, setStudentDisb] = useState("all");
   const [studentPage, setStudentPage] = useState(1);
   const [viewStudent, setViewStudent] = useState<Tables<"profiles"> | null>(null);
@@ -234,9 +260,6 @@ function AdminDashboard() {
   const [viewDocs, setViewDocs] = useState<AdminDoc[]>([]);
   const [allDocs, setAllDocs] = useState<DocSummary[]>([]);
   const [disapproveDoc, setDisapproveDoc] = useState<AdminDoc | null>(null);
-  // Document checks (migration 087): the document open in the viewer, and students barred from applying.
-  const [viewerDoc, setViewerDoc] = useState<AdminDoc | null>(null);
-  const [barredIds, setBarredIds] = useState<Set<string>>(new Set());
   const [disapproveNote, setDisapproveNote] = useState("");
   const [disapproveApp, setDisapproveApp] = useState<(typeof applications)[number] | null>(null);
   const [disapproveAppNote, setDisapproveAppNote] = useState("");
@@ -245,6 +268,10 @@ function AdminDashboard() {
   const [revokeApp, setRevokeApp] = useState<(typeof applications)[number] | null>(null);
   const [revokeNote, setRevokeNote] = useState("");
   const [revokingApp, setRevokingApp] = useState(false);
+  // Discontinue an approved scholarship (migration 090): payouts stop, slot freed, reason recorded.
+  const [discontinueApp, setDiscontinueApp] = useState<(typeof applications)[number] | null>(null);
+  const [discontinueNote, setDiscontinueNote] = useState("");
+  const [discontinuing, setDiscontinuing] = useState(false);
   // Award amount in the application dialog: set when approving, editable once approved.
   const [awardInput, setAwardInput] = useState("");
   // Internal notes on the open application (staff only; never shown to the student).
@@ -270,9 +297,24 @@ function AdminDashboard() {
   const [msgTitle, setMsgTitle] = useState("");
   const [msgText, setMsgText] = useState("");
   const [pickedScholars, setPickedScholars] = useState<Set<string>>(new Set());
+  // Archive (migration 091): graduated, discontinued, long-inactive scholars, kept on record but out of the way.
+  const [archiveFor, setArchiveFor] = useState<string[] | null>(null);
+  const [archiveReason, setArchiveReason] = useState("graduated");
+  const [archiveNote, setArchiveNote] = useState("");
+  const [archiving, setArchiving] = useState(false);
+  const [gradReviewOpen, setGradReviewOpen] = useState(false);
+  const [gradPicked, setGradPicked] = useState<Set<string>>(new Set());
+  const [archiveTab, setArchiveTab] = useState("all");
+  const [archiveSearch, setArchiveSearch] = useState("");
+  const [archivePage, setArchivePage] = useState(1);
   // Bumped when a document changes over realtime, so open dialogs re-read their document list.
   const [docsVersion, setDocsVersion] = useState(0);
   const [reviewingDoc, setReviewingDoc] = useState(false);
+  // Document checks (migration 093): recording the original or a fabrication.
+  const [seenDoc, setSeenDoc] = useState<AdminDoc | null>(null);
+  const [seenNote, setSeenNote] = useState("");
+  const [fabricateDoc, setFabricateDoc] = useState<AdminDoc | null>(null);
+  const [fabricateNote, setFabricateNote] = useState("");
   const [docsLoading, setDocsLoading] = useState(false);
   const [auditLogs, setAuditLogs] = useState<Tables<"audit_logs">[]>([]);
   // Bumped whenever the audit log may have new entries, so the Audit Logs page fetches its page again.
@@ -356,6 +398,8 @@ function AdminDashboard() {
 
   // Mark-received dialog (one payment), the payments picked for a batch, and the list or schedule view.
   const [disbDialog, setDisbDialog] = useState(false);
+  // Staff ticked "pay anyway" for an inactive scholar in the open payout dialog.
+  const [inactiveOk, setInactiveOk] = useState(false);
   const [disbPaymentId, setDisbPaymentId] = useState<string>("");
   const [disbMethod, setDisbMethod] = useState<"Cheque" | "Cash">("Cash");
   const [disbRef, setDisbRef] = useState("");
@@ -366,7 +410,7 @@ function AdminDashboard() {
   const [batchDate, setBatchDate] = useState("");
   const [payView, setPayView] = useState<"list" | "schedule">("list");
   // A stored receipt being viewed: its signed link and whether it's an image or a PDF (shown in the page).
-  const [fileView, setFileView] = useState<{ title: string; url: string; kind: "image" | "pdf" | "other"; mime?: string | null; fileName?: string | null } | null>(null);
+  const [fileView, setFileView] = useState<ViewedFile | null>(null);
   const [disbLoading, setDisbLoading] = useState(false);
 
   useEffect(() => { loadData(); }, []);
@@ -398,12 +442,7 @@ function AdminDashboard() {
   const fetchAllApps = () => fetchAll((f, t) => supabase.from("applications").select("*, scholarships(name)").order("created_at", { ascending: false }).order("id").range(f, t));
   const fetchAllPayments = () => fetchAll((f, t) => supabase.from("payments").select("*").order("created_at", { ascending: false }).order("id").range(f, t));
   const fetchAllProfiles = () => fetchAll((f, t) => supabase.from("profiles").select("*").order("id").range(f, t));
-  // With the document-check columns (migration 087) when the database has them.
-  const fetchAllDocs = async () => {
-    const withChecks = await fetchAll((f, t) => supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at, flags, needs_original, original_seen_at").order("id").range(f, t));
-    if (!withChecks.error) return withChecks;
-    return fetchAll((f, t) => supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at").order("id").range(f, t));
-  };
+  const fetchAllDocs = () => fetchAll((f, t) => supabase.from("documents").select("id, user_id, application_id, document_type, status, uploaded_at").order("id").range(f, t));
 
   const loadData = async (silent = false) => {
     if (silent) setRefreshing(true); else setLoading(true);
@@ -554,7 +593,16 @@ function AdminDashboard() {
 
   // Documents live in a private bucket, so sign a short-lived URL from the stored object path.
   const loadSignedDocs = async (userId: string) => {
-    const { data } = await supabase.from("documents").select("*").eq("user_id", userId).order("uploaded_at", { ascending: false });
+    const [{ data }, matchRes] = await Promise.all([
+      supabase.from("documents").select("*").eq("user_id", userId).order("uploaded_at", { ascending: false }),
+      // Same file or a near-identical image elsewhere (migration 093; nothing before it runs).
+      supabase.rpc("document_matches_for_user", { _user: userId }),
+    ]);
+    type MatchRow = { doc_id: string; match_id: string; match_user: string; match_name: string | null; match_type: string; match_status: string; same_file: boolean; distance: number };
+    const matches: DocMatch[] = ((matchRes.data ?? []) as MatchRow[]).map((m) => ({
+      docId: m.doc_id, matchId: m.match_id, matchUser: m.match_user, matchName: m.match_name, matchType: m.match_type,
+      matchStatus: m.match_status, sameFile: m.same_file, distance: m.distance,
+    }));
     return Promise.all((data ?? []).map(async (d): Promise<AdminDoc> => {
       const m = d.file_url.match(/\/documents\/(.+)$/);
       const path = d.storage_path ?? (m ? decodeURIComponent(m[1]) : null);
@@ -563,7 +611,15 @@ function AdminDashboard() {
         const { data: signed } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
         if (signed?.signedUrl) url = signed.signedUrl;
       }
-      return { id: d.id, applicationId: d.application_id, name: d.file_name, type: d.document_type, url, status: d.status, note: d.review_note, size: d.file_size, uploadedAt: d.uploaded_at, row: d };
+      return {
+        id: d.id, userId: d.user_id, applicationId: d.application_id, name: d.file_name, type: d.document_type, url, mime: d.mime_type,
+        status: d.status, note: d.review_note, size: d.file_size, uploadedAt: d.uploaded_at,
+        flags: d.check_flags ?? [], originalSeenAt: d.original_seen_at ?? null, originalSeenBy: d.original_seen_by ?? null,
+        originalSeenNote: d.original_seen_note ?? null,
+        fabricatedAt: d.fabricated_at ?? null, fabricatedNote: d.fabricated_note ?? null,
+        // One entry per other document, the closest first.
+        matches: [...new Map(matches.filter((m) => m.docId === d.id).map((m) => [m.matchId, m])).values()],
+      };
     }));
   };
 
@@ -574,35 +630,72 @@ function AdminDashboard() {
     setReviewingDoc(false);
     const data = rows?.[0];
     if (error || !data) { toast.error(error?.message ?? "Could not update the document"); return false; }
-    const patch = (list: AdminDoc[]) => list.map((x) => (x.id === doc.id ? { ...x, status: data.status, note: data.review_note, row: { ...x.row, status: data.status, review_note: data.review_note } } : x));
+    const patch = (list: AdminDoc[]) => list.map((x) => (x.id === doc.id ? { ...x, status: data.status, note: data.review_note } : x));
     setViewDocs(patch); setStudentDocs(patch);
     setAllDocs((prev) => prev.map((x) => (x.id === doc.id ? { ...x, status: data.status } : x)));
     toast.success(status === "Verified" ? `${doc.type} verified` : status === "Disapproved" ? `${doc.type} disapproved` : `${doc.type} reopened`);
     return true;
   };
 
-  // A document's check results changed (scanned, original seen, ...): update every list showing it.
-  const onDocChecked = (row: Tables<"documents">) => {
-    const patch = (list: AdminDoc[]) => list.map((x) => (x.id === row.id ? { ...x, row, status: row.status, note: row.review_note } : x));
-    setViewDocs(patch); setStudentDocs(patch);
-    setViewerDoc((v) => (v && v.id === row.id ? { ...v, row, status: row.status } : v));
-    setAllDocs((prev) => prev.map((x) => (x.id === row.id ? { ...x, status: row.status, flags: row.flags, needs_original: row.needs_original, original_seen_at: row.original_seen_at } : x)));
+  const patchDoc = (id: string, patch: Partial<AdminDoc>) => {
+    const apply = (list: AdminDoc[]) => list.map((x) => (x.id === id ? { ...x, ...patch } : x));
+    setViewDocs(apply); setStudentDocs(apply);
   };
-  const scanContext = (row: Tables<"documents">) => ({
-    profile: profiles.find((p) => p.id === row.user_id) ?? null,
-    academicYear: applications.find((a) => a.id === row.application_id)?.academic_year ?? parseSettings(systemSettings).academic_year,
-  });
-  const loadBarredIds = () => {
-    supabase.from("barred_students").select("user_id")
-      .then(({ data }) => setBarredIds(new Set((data ?? []).map((b) => b.user_id))));
+  const needs093 = (msg: string) => (/schema cache|does not exist/i.test(msg) ? "Run migration 093_document_verification.sql in Supabase first." : msg);
+  const setOriginalSeen = async (doc: AdminDoc, seen: boolean, note?: string) => {
+    setReviewingDoc(true);
+    const { error } = await supabase.rpc("set_document_original_seen", { _id: doc.id, _seen: seen, _note: note || null });
+    setReviewingDoc(false);
+    if (error) { toast.error("Couldn't save", { description: needs093(error.message) }); return false; }
+    patchDoc(doc.id, seen ? { originalSeenAt: new Date().toISOString(), originalSeenBy: adminUserId, originalSeenNote: note || null } : { originalSeenAt: null, originalSeenBy: null, originalSeenNote: null });
+    toast.success(seen ? `Original ${doc.type} recorded as seen` : "Original-seen mark removed");
+    return true;
   };
-  useEffect(() => {
-    loadBarredIds();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  // Documents are read once, in the reviewer's browser, the first time someone who reviews opens them.
-  const { scanningId, remaining: scansLeft } = useAutoScan(
-    [...viewDocs, ...studentDocs].filter((d) => d.row).map((d) => ({ row: d.row, url: d.url })), can.review, scanContext, onDocChecked);
+  // What a reviewer sees under a document: the upload checks, matches, and what's been recorded.
+  const docChecks = (d: AdminDoc) => {
+    const chip = (key: string, label: string, title: string, cls: string) => (
+      <span key={key} title={title} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${cls}`}>{label}</span>
+    );
+    const amber = "border-amber-200 bg-amber-50 text-amber-800", red = "border-red-200 bg-red-50 text-red-700", green = "border-emerald-200 bg-emerald-50 text-emerald-700", grey = "border-border bg-muted/50 text-muted-foreground";
+    const chips = [
+      ...d.flags.filter((f) => FLAG_LABEL[f]).map((f) => chip(f, FLAG_LABEL[f].label, FLAG_LABEL[f].detail, FLAG_LABEL[f].tone === "note" ? grey : amber)),
+      ...d.matches.slice(0, 4).map((m) => chip(m.matchId,
+        `${m.sameFile ? "Same file" : "Looks like"} ${m.matchUser === d.userId ? `their ${m.matchType}` : `${m.matchName ?? "another student"}'s ${m.matchType}`}`,
+        m.matchUser === d.userId
+          ? "This student uploaded the same picture as a different document. Each document should be its own photo."
+          : `Another student (${m.matchName ?? "unknown"}) uploaded ${m.sameFile ? "the same file" : "a near-identical image"} (their ${m.matchType}, ${m.matchStatus.toLowerCase()}).`,
+        m.matchUser === d.userId ? amber : red)),
+      ...(d.matches.length > 4 ? [chip("more", `+${d.matches.length - 4} more matches`, "", amber)] : []),
+      ...(d.fabricatedAt ? [chip("fab", "Marked fabricated", d.fabricatedNote ?? "", red)] : []),
+      ...(d.originalSeenAt ? [chip("seen", `Original seen ${new Date(d.originalSeenAt).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}`,
+        [d.originalSeenNote, d.originalSeenBy && `by ${staff.find((m) => m.id === d.originalSeenBy)?.name ?? "staff"}`].filter(Boolean).join(" · "), green)] : []),
+    ];
+    return (
+      <>
+        {chips.length > 0 && <div className="mt-1.5 flex flex-wrap gap-1">{chips}</div>}
+        {can.review && (
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {d.originalSeenAt
+              ? <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={reviewingDoc} onClick={() => setOriginalSeen(d, false)}>Undo original seen</Button>
+              : <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={reviewingDoc} onClick={() => { setSeenNote(""); setSeenDoc(d); }}><Eye className="mr-1 h-3.5 w-3.5" />Original seen</Button>}
+            {!d.fabricatedAt && <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive" disabled={reviewingDoc} onClick={() => { setFabricateNote(""); setFabricateDoc(d); }}>Fabricated…</Button>}
+          </div>
+        )}
+      </>
+    );
+  };
+
+  // Any document of this person marked fabricated, on any application: shown above their documents.
+  const fabricatedBanner = (docs: AdminDoc[]) => {
+    const fab = docs.filter((d) => d.fabricatedAt);
+    if (!fab.length) return null;
+    return (
+      <div role="alert" className="mb-2 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <span><strong>Fabricated document on record:</strong> {fab.map((d) => `${d.type}${d.fabricatedNote ? ` (${d.fabricatedNote})` : ""}`).join("; ")}.</span>
+      </div>
+    );
+  };
 
   const docList = (docs: AdminDoc[], loading: boolean) => {
     if (loading) return <ul className="mt-1 space-y-2" aria-busy>{[1, 2, 3].map((i) => <li key={i}><Skeleton className="h-14 w-full" /></li>)}</ul>;
@@ -613,8 +706,7 @@ function AdminDashboard() {
         {docs.map((d) => (
           <li key={d.id} className="rounded-md border px-3 py-2 text-sm">
             <div className="flex items-center justify-between gap-2">
-              <button type="button" className="flex min-w-0 items-center gap-2 text-left hover:underline"
-                onClick={() => setFileView({ title: `${d.type} · ${personName(profiles.find((p) => p.id === d.row?.user_id))}`, url: d.url, kind: "other", mime: d.row?.mime_type, fileName: d.name })}>
+              <button type="button" onClick={() => setFileView({ title: `${d.type} · ${d.name}`, url: d.url, name: d.name })} className="flex min-w-0 items-center gap-2 text-left hover:underline">
                 <span className="truncate"><span className="font-medium">{d.type}</span> · {d.name}</span>
                 <Eye className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               </button>
@@ -632,7 +724,7 @@ function AdminDashboard() {
               </span>}
             </div>
             {d.status === "Disapproved" && d.note && <p className="mt-1 text-xs text-destructive">Reason: {d.note}</p>}
-            {d.row && <DocCheckLine row={d.row} scanning={scanningId === d.id} onOpen={() => setViewerDoc(d)} />}
+            {docChecks(d)}
           </li>
         ))}
       </ul>
@@ -717,6 +809,15 @@ function AdminDashboard() {
       </SelectContent>
     </Select>
   );
+  const levelSelect = (
+    <Select value={levelView} onValueChange={(v) => { setLevelView(v); setAppPage(1); setStudentPage(1); clearSelection(); }}>
+      <SelectTrigger className="w-40" aria-label="Year level"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">All year levels</SelectItem>
+        {YEAR_LEVELS.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
   const approvedCount = (schId: string, ay = currentAY) => applications.filter((a) => a.scholarship_id === schId && a.status === "Approved" && a.academic_year === ay).length;
   // Money committed to a program: approved awards for the year (the program amount where none was set, once per semester or month).
   const committedFor = (sch: Tables<"scholarships">, ay = currentAY) =>
@@ -759,8 +860,12 @@ function AdminDashboard() {
   const bulkTerms: PaymentTerm[] = [...termsFor("semester"), ...termsFor("monthly", 12)];
   // Scholars in the current academic year whose program pays by this kind of term and who still need its payment.
   const bulkCandidates = (term: PaymentTerm) => applications
-    .filter((a) => a.status === "Approved" && a.academic_year === currentAY && scheduleOf(a) === (isMonthTerm(term) ? "monthly" : "semester") && openTermsOf(a).includes(term))
-    .map((a) => ({ app: a, amount: Number(termDefaultAmount(a) || 0), warning: gradeWarningFor(a, term) }))
+    .filter((a) => a.status === "Approved" && a.academic_year === currentAY && scheduleOf(a) === (isMonthTerm(term) ? "monthly" : "semester") && openTermsOf(a).includes(term) && !profiles.find((x) => x.id === a.user_id)?.archived_at)
+    .map((a) => ({
+      app: a, amount: Number(termDefaultAmount(a) || 0),
+      // Flagged rows start unticked: an inactive account, or a grade that doesn't qualify.
+      warning: [profiles.find((x) => x.id === a.user_id)?.is_active === false ? "Account is inactive" : null, gradeWarningFor(a, term)].filter(Boolean).join(" · ") || null,
+    }))
     .filter((c) => c.amount > 0);
   const scheduleBulk = async () => {
     const picked = bulkCandidates(bulkTerm).filter((c) => bulkPicked.has(c.app.id));
@@ -777,7 +882,9 @@ function AdminDashboard() {
     toast.success(`Scheduled ${rows.length} ${bulkTerm} payment${rows.length === 1 ? "" : "s"}`);
     setBulkOpen(false); loadData();
   };
-  const applicantCount = (schId: string) => applications.filter((a) => a.scholarship_id === schId).length;
+  const applicantCount = (schId: string) => applications.filter((a) => a.scholarship_id === schId && inYear(appAY(a))).length;
+  // Slots and budgets are per school year: the picked one, or the current one under "All school years".
+  const schYear = yearView === "all" ? currentAY : yearView;
   const filteredScholarships = scholarships.filter((sch) => {
     const q = schSearch.trim().toLowerCase();
     if (q && !`${sch.name} ${sch.eligibility || ""}`.toLowerCase().includes(q)) return false;
@@ -902,7 +1009,13 @@ function AdminDashboard() {
     const prof = profiles.find((x) => x.id === p.user_id);
     return prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() || prof.email || "Unknown" : "Unknown";
   };
-  const payProgram = (p: Tables<"payments">) => applications.find((a) => a.id === p.application_id)?.scholarships?.name || "—";
+  // A program's name and, for staff who see every office (the Mayor Office), the office it comes from.
+  const programOfficeOf = (id: string | null | undefined) => programOffice(allScholarships.find((sch) => sch.id === id)?.office);
+  const programWithOffice = (a: { scholarship_id: string | null; scholarships: { name: string } | null } | null | undefined) => {
+    const name = a?.scholarships?.name || "—";
+    return myOffice || !a?.scholarship_id ? name : `${name} · ${programOfficeOf(a.scholarship_id)}`;
+  };
+  const payProgram = (p: Tables<"payments">) => programWithOffice(applications.find((a) => a.id === p.application_id));
   // Scheduled and not yet received. ("Processing" is from before; it's treated like scheduled.)
   const isOpenPayment = (p: Tables<"payments">) => p.status === "Pending" || p.status === "Processing";
   // Latest first by the date that matters: when it was received, else when it's scheduled.
@@ -987,9 +1100,7 @@ function AdminDashboard() {
     if (!path) { toast.error(missingMsg); return; }
     const { data, error } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
     if (error || !data?.signedUrl) { toast.error("Could not open the file", { description: error?.message ?? "The file wasn't found in storage." }); return; }
-    const ext = path.split(".").pop()?.toLowerCase() ?? "";
-    const kind = ["jpg", "jpeg", "png", "gif", "webp"].includes(ext) ? "image" : ext === "pdf" ? "pdf" : "other";
-    setFileView({ title, url: data.signedUrl, kind, fileName: path.split("/").pop() });
+    setFileView({ title, url: data.signedUrl, name: path.split("/").pop() });
   };
   const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment", `Disbursement receipt · ${payStudent(p)}`);
 
@@ -1030,6 +1141,12 @@ function AdminDashboard() {
   const openIssueFor = (paymentId: string) => payIssues.find((i) => i.payment_id === paymentId && i.status === "Open");
 
   const disbPay = payments.find((pm) => pm.id === disbPaymentId);
+  // Deactivated scholars (Scholars page) can still be paid, but only after staff confirm.
+  const inactiveName = (userId: string | null | undefined) => {
+    const prof = userId ? profiles.find((x) => x.id === userId) : undefined;
+    return prof && prof.is_active === false ? (`${prof.first_name || ""} ${prof.last_name || ""}`.trim() || prof.email || "This scholar") : null;
+  };
+  useEffect(() => { setInactiveOk(false); }, [payDialog, payAppId, disbDialog, disbPaymentId, batchReceive]);
   const disbLocked = !!disbPay?.preferred_method; // student chose the method; it is final
 
   // Marks payments received (released to the scholar): one from the dialog, with the method and number set
@@ -1116,6 +1233,9 @@ function AdminDashboard() {
 
   // A scholar's approved applications (newest first) and the award for each (for the year: every semester or month).
   const approvedApps = (userId: string) => applications.filter((a) => a.user_id === userId && a.status === "Approved");
+  const discontinuedApps = (userId: string) => applications.filter((a) => a.user_id === userId && a.status === "Discontinued");
+  // What an archived scholar held: approved or discontinued scholarships.
+  const pastApps = (userId: string) => applications.filter((a) => a.user_id === userId && (a.status === "Approved" || a.status === "Discontinued"));
   const appAward = (a: typeof applications[0]) => {
     const sch = scholarships.find((x) => x.id === a.scholarship_id);
     return yearlyAward(Number(a.amount_approved ?? sch?.amount ?? 0), sch?.release_schedule, sch?.release_months);
@@ -1126,15 +1246,118 @@ function AdminDashboard() {
 
   const scholars = useMemo(() => {
     const ids = new Set(applications.filter((a) => a.status === "Approved").map((a) => a.user_id));
-    return profiles.filter((p) => ids.has(p.id));
+    return profiles.filter((p) => ids.has(p.id) && !p.archived_at);
   }, [profiles, applications]);
+  // Archived scholars (graduated, discontinued, long inactive): out of the lists, counts and payouts.
+  const archivedScholars = useMemo(() => profiles.filter((p) => !!p.archived_at), [profiles]);
+  const isArchived = (userId: string) => !!profiles.find((p) => p.id === userId)?.archived_at;
+  const ARCHIVE_REASONS: Record<string, string> = { graduated: "Graduated", discontinued: "Discontinued", inactive: "Long inactive", other: "Other" };
+  const archiveLabel = (p: Tables<"profiles">) =>
+    `Archived · ${ARCHIVE_REASONS[p.archive_reason ?? "other"] ?? "Other"}${p.archive_reason === "graduated" && p.graduated_level ? ` (${p.graduated_level})` : ""}`;
+  // Suggested graduates: 4th Year scholars approved in an earlier school year, with no application this
+  // school year and nothing scheduled. Grade 12 isn't suggested: they move on to college.
+  const gradCandidates = useMemo(() => profiles.filter((p) => {
+    if (p.archived_at || p.year_level !== "4th Year") return false;
+    const mine = applications.filter((a) => a.user_id === p.id);
+    const ayOf = (a: { academic_year: string | null; created_at: string }) => a.academic_year || academicYearOf(new Date(a.created_at));
+    if (!mine.some((a) => (a.status === "Approved" || a.status === "Discontinued") && ayStart(ayOf(a)) < ayStart(currentAY))) return false;
+    if (mine.some((a) => a.status !== "Withdrawn" && ayOf(a) === currentAY)) return false;
+    return !payments.some((x) => x.user_id === p.id && (x.status === "Pending" || x.status === "Processing"));
+  }), [profiles, applications, payments, currentAY]);
+  const openArchive = (ids: string[], reason: string) => { setArchiveReason(reason); setArchiveNote(""); setArchiveFor(ids); };
+  const runArchive = async (ids: string[], reason: string, note: string) => {
+    setArchiving(true);
+    const { data, error } = await supabase.rpc("archive_scholars", { _users: ids, _reason: reason, _note: note || null });
+    setArchiving(false);
+    if (error) {
+      toast.error("Couldn't archive", { description: /schema cache|does not exist/i.test(error.message) ? "Run migration 091_scholar_archive.sql in Supabase first." : error.message });
+      return false;
+    }
+    const res = data as unknown as { archived: number; skipped: string[] };
+    if (res.archived) toast.success(`${res.archived} scholar${res.archived === 1 ? "" : "s"} archived${reason === "graduated" ? " as graduated" : ""}`);
+    if (res.skipped?.length) toast.error(`${res.skipped.length} not archived`, { description: res.skipped.slice(0, 5).join("\n") + (res.skipped.length > 5 ? `\n…and ${res.skipped.length - 5} more` : "") });
+    setPickedScholars(new Set()); loadData(true);
+    return true;
+  };
+  // ── Archive page ──
+  const ARCHIVE_PAGE_SIZE = 15;
+  // Each archived person with what they held: their latest scholarship, its school year, and the total paid.
+  const archiveRows = useMemo(() => archivedScholars.map((p) => {
+    const held = applications.filter((a) => a.user_id === p.id && (a.status === "Approved" || a.status === "Discontinued"))
+      .sort((x, y) => (y.academic_year ?? "").localeCompare(x.academic_year ?? "") || y.created_at.localeCompare(x.created_at));
+    const paid = payments.filter((x) => x.user_id === p.id && x.status === "Disbursed").reduce((t, x) => t + Number(x.amount || 0), 0);
+    const years = [...new Set(held.map((a) => a.academic_year || academicYearOf(new Date(a.created_at))))];
+    return { p, last: held[0] ?? null, years, paid };
+  }).sort((x, y) => (y.p.archived_at ?? "").localeCompare(x.p.archived_at ?? "")), [archivedScholars, applications, payments]);
+  const archiveCounts = useMemo(() => {
+    const c: Record<string, number> = { all: archiveRows.length };
+    archiveRows.forEach((r) => { const k = r.p.archive_reason ?? "other"; c[k] = (c[k] ?? 0) + 1; });
+    return c;
+  }, [archiveRows]);
+  const filteredArchive = archiveRows.filter((r) => {
+    if (archiveTab !== "all" && (r.p.archive_reason ?? "other") !== archiveTab) return false;
+    // School year: one they held a scholarship in, or the one they were archived in.
+    if (yearView !== "all" && !r.years.includes(yearView) && academicYearOf(new Date(r.p.archived_at!)) !== yearView) return false;
+    if (levelView !== "all" && (r.p.graduated_level ?? r.p.year_level) !== levelView) return false;
+    const q = archiveSearch.trim().toLowerCase();
+    return !q || [personName(r.p), r.p.email, r.p.school_name, r.p.course, r.last?.scholarships?.name, r.p.archive_note]
+      .some((f) => (f || "").toLowerCase().includes(q));
+  });
+  const archivePages = Math.max(1, Math.ceil(filteredArchive.length / ARCHIVE_PAGE_SIZE));
+  const currentArchivePage = Math.min(archivePage, archivePages);
+  const pagedArchive = filteredArchive.slice((currentArchivePage - 1) * ARCHIVE_PAGE_SIZE, currentArchivePage * ARCHIVE_PAGE_SIZE);
+  const exportArchive = async () => {
+    const XLSX = await import("xlsx");
+    const date = (v?: string | null) => (v ? new Date(v).toLocaleDateString("en-PH") : "—");
+    const rows = filteredArchive.map((r) => ({
+      Name: personName(r.p), Email: r.p.email || "—", School: r.p.school_name || "—", Course: r.p.course || "—",
+      Reason: ARCHIVE_REASONS[r.p.archive_reason ?? "other"] ?? "Other",
+      "Level when archived": r.p.graduated_level ?? r.p.year_level ?? "—",
+      Archived: date(r.p.archived_at), "Archived by": r.p.archived_by ? staff.find((m) => m.id === r.p.archived_by)?.name ?? "Former staff" : "—",
+      Note: r.p.archive_note || "—",
+      "Last scholarship": r.last ? programWithOffice(r.last) : "—", "School years": r.years.join(", ") || "—",
+      "Total disbursed (PHP)": r.paid, Account: r.p.is_active ? "Active" : "Inactive",
+    }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Archive");
+    XLSX.writeFile(wb, `archive${archiveTab === "all" ? "" : `-${archiveTab}`}${yearView === "all" ? "" : `-${yearView}`}${fileOffice}.xlsx`);
+  };
+  const restoreScholar = async (p: Tables<"profiles">) => {
+    setArchiving(true);
+    const { error } = await supabase.rpc("restore_scholar", { _user: p.id });
+    setArchiving(false);
+    if (error) { toast.error("Couldn't restore", { description: error.message }); return false; }
+    toast.success(`${personName(p)} restored from the archive`);
+    loadData(true);
+    return true;
+  };
+  // Former scholars whose scholarship was discontinued (and who hold no other approved one).
+  const discontinuedScholars = useMemo(() => {
+    const ids = new Set(applications.filter((a) => a.status === "Discontinued").map((a) => a.user_id));
+    return profiles.filter((p) => ids.has(p.id) && !scholars.includes(p) && !p.archived_at);
+  }, [profiles, applications, scholars]);
+  // When an inactive account was deactivated (migration 089), or before 089 its profile's last change.
+  const inactiveSince = (p: Tables<"profiles">) => (p.is_active ? null : new Date(p.deactivated_at ?? p.updated_at).getTime());
+  const inactiveFor = (p: Tables<"profiles">) => {
+    const t = inactiveSince(p);
+    if (t === null) return null;
+    const days = Math.floor((Date.now() - t) / 86400000);
+    return days >= 365 ? `${Math.floor(days / 365)}+ year${days >= 730 ? "s" : ""}` : days >= 30 ? `${Math.floor(days / 30)} month${days >= 60 ? "s" : ""}` : `${Math.max(days, 0)} day${days === 1 ? "" : "s"}`;
+  };
   const filteredStudents = useMemo(() => {
     const q = studentSearch.trim().toLowerCase();
-    const list = scholars.filter((p) => {
+    // "Discontinued" lists former scholars, matched on their discontinued scholarships.
+    const showDiscontinued = studentFilter === "discontinued";
+    const showArchived = studentFilter.startsWith("archived");
+    const appsOf = showDiscontinued ? discontinuedApps : showArchived ? pastApps : approvedApps;
+    const list = (showDiscontinued ? discontinuedScholars : showArchived ? archivedScholars : scholars).filter((p) => {
+      if (studentFilter.startsWith("archived_") && p.archive_reason !== studentFilter.slice(9)) return false;
       if (studentFilter === "active" && !p.is_active) return false;
       if (studentFilter === "inactive" && p.is_active) return false;
-      if (studentProgram !== "all" && !approvedApps(p.id).some((a) => a.scholarship_id === studentProgram)) return false;
-      if (yearView !== "all" && !approvedApps(p.id).some((a) => appAY(a) === yearView)) return false;
+      if (studentFilter === "inactive_1y" && !(inactiveSince(p) && inactiveSince(p)! <= Date.now() - 365 * 86400000)) return false;
+      if (studentProgram !== "all" && !appsOf(p.id).some((a) => a.scholarship_id === studentProgram)) return false;
+      if (yearView !== "all" && !appsOf(p.id).some((a) => appAY(a) === yearView)) return false;
+      if (levelView !== "all" && p.year_level !== levelView) return false;
       if (studentDisb !== "all") {
         const pay = currentPayment(p.id);
         if (studentDisb === "none" ? !!pay : pay?.status !== studentDisb) return false;
@@ -1147,7 +1370,7 @@ function AdminDashboard() {
       ? (y.average_grade ?? -1) - (x.average_grade ?? -1)
       : `${x.last_name} ${x.first_name}`.localeCompare(`${y.last_name} ${y.first_name}`));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scholars, studentSearch, studentFilter, studentSort, studentProgram, studentDisb, payments, yearView]);
+  }, [scholars, discontinuedScholars, archivedScholars, studentSearch, studentFilter, studentSort, studentProgram, studentDisb, payments, yearView, levelView]);
   const studentPages = Math.max(1, Math.ceil(filteredStudents.length / STUDENT_PAGE_SIZE));
   const pagedStudents = filteredStudents.slice((studentPage - 1) * STUDENT_PAGE_SIZE, studentPage * STUDENT_PAGE_SIZE);
 
@@ -1161,7 +1384,8 @@ function AdminDashboard() {
     const body = await res?.json().catch(() => null);
     if (!res?.ok) { toast.error((body?.error as string) ?? "Request failed"); if (res) loadData(); return; }
     toast.success(`${p.first_name || "Scholar"} ${next ? "activated" : "deactivated"}`);
-    setViewStudent((cur) => (cur && cur.id === p.id ? { ...cur, is_active: next } : cur));
+    const now = new Date().toISOString();
+    setViewStudent((cur) => (cur && cur.id === p.id ? { ...cur, is_active: next, deactivated_at: next ? null : now, updated_at: now } : cur));
     loadData();
   };
 
@@ -1217,7 +1441,7 @@ function AdminDashboard() {
         Course: p.course || "—",
         "Year Level": p.year_level || "—",
         Grade: p.average_grade ?? "—",
-        Program: apps.map((a) => a.scholarships?.name || "—").join(", ") || "—",
+        Program: apps.map((a) => programWithOffice(a)).join(", ") || "—",
         "Award (PHP)": apps.reduce((t, a) => t + appAward(a), 0),
         "Reference No.": pay?.reference || "—",
         "Disbursement Status": pay?.status || "No payment",
@@ -1534,7 +1758,7 @@ function AdminDashboard() {
   const notApplied = useMemo(() => {
     if (viewingOffice) return [];
     const applied = new Set(allApplications.map((a) => a.user_id));
-    return profiles.filter((p) => !applied.has(p.id));
+    return profiles.filter((p) => !applied.has(p.id) && !p.archived_at);
   }, [profiles, allApplications, viewingOffice]);
   // Required documents uploaded (and not disapproved) by a student who hasn't applied yet.
   const docsReady = (userId: string) => {
@@ -1601,6 +1825,7 @@ function AdminDashboard() {
     ...((statusFilter === "all" || statusFilter === "not_applied") && appProgram === "all"
       ? notApplied
           .filter((p) => inYear(regAY(p)))
+          .filter((p) => levelView === "all" || p.year_level === levelView)
           .filter((p) => !q || personText(p).includes(q))
           .map((p): ApplicantRow => ({ kind: "none", profile: p, at: p.created_at }))
       : []),
@@ -1608,6 +1833,7 @@ function AdminDashboard() {
       .filter((a) => inYear(appAY(a)))
       .filter((a) => statusMatches(a.status))
       .filter((a) => appProgram === "all" || a.scholarship_id === appProgram)
+      .filter((a) => levelView === "all" || (a.year_level ?? a.profiles?.year_level) === levelView)
       .filter((a) => !q || personText(a.profiles).includes(q) || (a.scholarships?.name || "").toLowerCase().includes(q) || a.id.startsWith(q))
       .map((a): ApplicantRow => ({ kind: "app", app: a, at: a.created_at })),
   ].sort((x, y) => y.at.localeCompare(x.at));
@@ -1723,14 +1949,14 @@ function AdminDashboard() {
         const p = r.profile;
         return {
           Name: personName(p), Email: p.email || "—", School: p.school_name || "—",
-          Scholarship: "—", Type: "—", Term: "—", "Grade when applied": "—", "Current grade": p.average_grade ?? "—",
+          Scholarship: "—", Office: "—", Type: "—", Term: "—", "Grade when applied": "—", "Current grade": p.average_grade ?? "—",
           Status: "Not yet applied", "Applied / Registered": date(p.created_at), Decided: "—", "Award (PHP)": "—", "Message to student": "—",
         };
       }
       const a = r.app;
       return {
         Name: personName(a.profiles), Email: a.profiles?.email || "—",
-        School: a.profiles?.school_name || "—", Scholarship: a.scholarships?.name || "—",
+        School: a.profiles?.school_name || "—", Scholarship: a.scholarships?.name || "—", Office: a.scholarship_id ? programOfficeOf(a.scholarship_id) : "—",
         Type: a.is_renewal ? "Renewal" : "New", Term: [a.academic_year, a.semester].filter(Boolean).join(" · ") || "—",
         "Grade when applied": a.average_grade ?? "—", "Current grade": a.profiles?.average_grade ?? "—",
         Status: a.status, "Applied / Registered": date(a.created_at), Decided: date(a.decided_at),
@@ -1793,7 +2019,7 @@ function AdminDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payments, applications, scholarships, fundPeriod, fromDate, toDate, yearView]);
   // Approved applications with a term that has no payment yet (a per-semester award has two).
-  const awaitingPayment = applications.filter((a) => a.status === "Approved" && openTermsOf(a).length > 0);
+  const awaitingPayment = applications.filter((a) => a.status === "Approved" && openTermsOf(a).length > 0 && !isArchived(a.user_id));
 
   if (loading) {
     return <DashboardSkeleton variant="admin" />;
@@ -1801,7 +2027,7 @@ function AdminDashboard() {
 
   return (
     <div className="flex min-h-screen bg-background">
-      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-card border-r flex flex-col transform transition-transform lg:relative lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
+      <aside className={`fixed inset-y-0 left-0 z-40 w-64 shrink-0 bg-card border-r flex flex-col transform transition-transform lg:sticky lg:top-0 lg:h-dvh lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex items-center gap-3 p-4 border-b">
           <Image src={officeLogo(myOffice)} alt={myOffice ? `${OFFICE_FULL_NAME[myOffice]} seal` : "Municipality of San Jose seal"} width={32} height={32} className="h-8 w-8" />
           <div className="flex-1 min-w-0">
@@ -1817,21 +2043,20 @@ function AdminDashboard() {
               <SelectContent>
                 <SelectItem value="all">All offices</SelectItem>
                 {STAFF_OFFICES.map((o) => <SelectItem key={o} value={o}>{OFFICE_LABEL[o]}</SelectItem>)}
-                <SelectItem value="municipal">Mayor Office programs</SelectItem>
               </SelectContent>
             </Select>
             {officeView !== "all" && <p className="mt-1 px-1 text-[11px] text-muted-foreground">Every page shows only this office&apos;s programs, applicants and payments.</p>}
           </div>
         )}
-        <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
+        <nav className="px-3 py-2 space-y-0.5 flex-1 overflow-y-auto overscroll-contain">
           {sidebarItems.filter((item) => canSee(item.key)).map((item, i, items) => {
             const unread = item.key === "notifications" ? unreadTotal : 0;
             const startsGroup = item.group && item.group !== items[i - 1]?.group;
             return (
               <Fragment key={item.key}>
-              {startsGroup && <p className="px-3 pt-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{item.group}</p>}
+              {startsGroup && <p className="px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{item.group}</p>}
               <button onClick={() => { setActiveSection(item.key); setSidebarOpen(false); }}
-                className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeSection === item.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+                className={`flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors ${activeSection === item.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
                 <item.icon className="h-4 w-4 shrink-0" /><span className="truncate">{item.label}</span>
                 {unread > 0 && (
                   <span className={`ml-auto text-xs font-bold rounded-full h-5 min-w-5 flex items-center justify-center px-1 ${activeSection === item.key ? "bg-white/25 text-primary-foreground" : "bg-primary text-primary-foreground"}`}>
@@ -1844,7 +2069,7 @@ function AdminDashboard() {
           })}
         </nav>
         <div className="p-3 border-t">
-          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-muted mb-2">
+          <div className="flex items-center gap-3 pl-3 pr-1 py-2 rounded-xl bg-muted">
             <div className="h-8 w-8 rounded-xl overflow-hidden shrink-0">
               <ProfileImage value={adminProfile?.profile_picture_url} className="h-full w-full object-cover"
                 fallback={<div className="h-full w-full bg-primary flex items-center justify-center"><User className="h-4 w-4 text-primary-foreground" /></div>} />
@@ -1853,11 +2078,11 @@ function AdminDashboard() {
               <p className="text-xs font-semibold truncate">{adminProfile?.first_name ? `${adminProfile.first_name} ${adminProfile.last_name || ""}`.trim() : "Admin"}</p>
               <p className="text-xs text-muted-foreground truncate">{adminEmail}</p>
             </div>
+            <button onClick={handleLogout} aria-label="Sign out" title="Sign out"
+              className="shrink-0 h-9 w-9 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-card transition-colors cursor-pointer">
+              <LogOut className="h-4 w-4" />
+            </button>
           </div>
-          <button onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer">
-            <LogOut className="h-4 w-4" /> Sign out
-          </button>
         </div>
       </aside>
 
@@ -1887,8 +2112,11 @@ function AdminDashboard() {
               onViewApp={setViewApp}
               deletionRequests={can.super ? pendingDeletions.length : 0}
               officeBreakdown={officeView === "all" ? officeBreakdown : []}
+              showOffice={!myOffice}
               onViewOffice={setOfficeView}
               currentYear={currentAY}
+              year={yearView}
+              onYearChange={(v) => { setYearView(v); setAppPage(1); setStudentPage(1); setPayPage(1); setPayPicked(new Set()); }}
               onNavigate={(section, opts) => {
                 setActiveSection(section);
                 if (opts?.status !== undefined) { setStatusFilter(opts.status); setAppPage(1); }
@@ -1898,20 +2126,7 @@ function AdminDashboard() {
 
           {/* APPLICATIONS */}
           {activeSection === "visits" && mapAccess && (
-            <HomeVisitsPanel applications={applications} scholarships={scholarships} onOpen={(a) => setViewApp(a)} />
-          )}
-
-          {activeSection === "doc-checks" && (
-            <DocumentChecksPanel
-              applications={applications} profiles={profiles} currentAY={currentAY}
-              documentTypes={[...new Set([
-                ...parseSettings(systemSettings).required_documents,
-                ...Object.values(OFFICE_REQUIREMENTS).flatMap((o) => [...(o?.documents ?? []), ...(o?.followUps ?? [])]),
-                LETTER_OF_INTENT, MOA,
-              ])]}
-              canReview={can.review} canManage={can.manage}
-              onOpenApp={(id) => { const a = applications.find((x) => x.id === id); if (a) setViewApp(a); else toast.error("That application isn't in your list"); }}
-              onBarredChange={loadBarredIds} />
+            <HomeVisitsPanel applications={applications.filter((a) => inYear(appAY(a)))} scholarships={scholarships} onOpen={(a) => setViewApp(a)} yearFilter={yearSelect} />
           )}
 
           {activeSection === "applications" && (
@@ -1935,13 +2150,15 @@ function AdminDashboard() {
                       <SelectItem value="approved">Approved</SelectItem>
                       <SelectItem value="disapproved">Disapproved</SelectItem>
                       <SelectItem value="withdrawn">Withdrawn</SelectItem>
+                      <SelectItem value="discontinued">Discontinued</SelectItem>
                     </SelectContent>
                   </Select>
+                  {levelSelect}
                   <Select value={appProgram} onValueChange={(v) => { setAppProgram(v); setAppPage(1); clearSelection(); }}>
                     <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All programs</SelectItem>
-                      {scholarships.map((sch) => <SelectItem key={sch.id} value={sch.id}>{sch.name}</SelectItem>)}
+                      {scholarships.map((sch) => <SelectItem key={sch.id} value={sch.id}>{sch.name} · {programOffice(sch.office)}</SelectItem>)}
                     </SelectContent>
                   </Select>
                   <Button variant="outline" onClick={exportApplicants} disabled={filteredApps.length === 0}>
@@ -2048,15 +2265,11 @@ function AdminDashboard() {
                             <p className="font-medium">{name}</p>
                             {a.profiles?.email && <p className="text-xs text-muted-foreground">{a.profiles.email}</p>}
                             <div className="mt-1 flex gap-1 flex-wrap empty:hidden">
-                              {(() => {
-                                const risk = applicationRisk(allDocs.filter((d) => d.application_id === a.id), barredIds.has(a.user_id));
-                                return risk === "high" || risk === "medium" ? <RiskBadge risk={risk} className="text-[10px]" /> : null;
-                              })()}
                               {gradeReviews.some((g) => g.user_id === a.user_id && g.status === "Pending") && <Badge variant="secondary" className="text-[10px]">Grade to review</Badge>}
                               {dataReqs.some((r) => r.user_id === a.user_id && r.status === "Pending") && <Badge variant="destructive" className="text-[10px]">Deletion requested</Badge>}
                             </div>
                           </TableCell>
-                          <TableCell>{a.scholarships?.name || "—"}</TableCell>
+                          <TableCell>{programWithOffice(a)}</TableCell>
                           <TableCell title="Grade when applied">
                             {a.average_grade ?? currentGrade ?? "—"}
                             {a.average_grade != null && currentGrade != null && Number(currentGrade) !== Number(a.average_grade) && (
@@ -2126,7 +2339,7 @@ function AdminDashboard() {
                 return (
                   <AppDialog open={!!va} onOpenChange={(o) => !o && close()} size="lg"
                     title="Application Details"
-                    description={va ? <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">{personName(va.profiles)} · {va.scholarships?.name || "—"} {statusBadge(va.status)}</span> : undefined}
+                    description={va ? <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">{personName(va.profiles)} · {programWithOffice(va)} {statusBadge(va.status)}</span> : undefined}
                     footer={va && (!can.review ? <Button variant="outline" onClick={close}>Close</Button> : open ? <>
                       <Button variant="ghost" className="sm:mr-auto" onClick={() => { setChangesText(""); setChangesFor(va); }}>
                         <Pencil className="mr-1 h-4 w-4" /> Request changes
@@ -2149,6 +2362,22 @@ function AdminDashboard() {
                           onClick={() => { setRevokeNote(""); setRevokeApp(va); }}>
                           <Undo2 className="mr-1 h-4 w-4" /> Revoke approval
                         </Button>
+                      )}
+                      {va.status === "Approved" && (
+                        <Button variant="outline" className="text-destructive"
+                          title="The scholar stopped: scheduled payments are cancelled and the slot is freed. Past payments stay on record."
+                          onClick={() => { setDiscontinueNote(""); setDiscontinueApp(va); }}>
+                          <Power className="mr-1 h-4 w-4" /> Discontinue
+                        </Button>
+                      )}
+                      {va.status === "Discontinued" && (
+                        <Button variant="outline" className="sm:mr-auto" disabled={discontinuing} onClick={async () => {
+                          setDiscontinuing(true);
+                          const { error } = await supabase.rpc("reinstate_scholarship", { _application_id: va.id });
+                          setDiscontinuing(false);
+                          if (error) { toast.error("Couldn't reinstate", { description: error.message }); return; }
+                          toast.success("Scholarship reinstated — the scholar was notified"); close(); loadData(true);
+                        }}><RotateCcw className="mr-1 h-4 w-4" /> Reinstate</Button>
                       )}
                       {va.status === "Disapproved" && (
                         <Button variant="outline" className="sm:mr-auto" onClick={async () => {
@@ -2181,6 +2410,14 @@ function AdminDashboard() {
                         <Detail label="Year Level">{viewApp.profiles?.year_level || "—"}</Detail>
                         <Detail label="Current grade">{viewApp.profiles?.average_grade ?? "—"}</Detail>
                         <Detail label="Scholarship">{viewApp.scholarships?.name || "—"}</Detail>
+                        <Detail label="Office">{viewApp.scholarship_id ? programOfficeOf(viewApp.scholarship_id) : "—"}</Detail>
+                        {viewApp.status === "Discontinued" && (
+                          <Detail label="Discontinued">
+                            {viewApp.discontinued_at ? new Date(viewApp.discontinued_at).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                            {viewApp.discontinued_by && ` by ${staff.find((m) => m.id === viewApp.discontinued_by)?.name ?? "former staff"}`}
+                            {viewApp.discontinued_reason && <span className="block text-muted-foreground">Reason: {viewApp.discontinued_reason}</span>}
+                          </Detail>
+                        )}
                         <Detail label="Status">{statusBadge(viewApp.status)}</Detail>
                         <Detail label="Type">{viewApp.is_renewal ? "Renewal" : "New application"}</Detail>
                         <Detail label="Term">{[viewApp.academic_year, viewApp.semester].filter(Boolean).join(" · ") || "—"}</Detail>
@@ -2317,13 +2554,8 @@ function AdminDashboard() {
                         );
                       })()}
                       <div>
-                        <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                          <h3 className="text-sm font-semibold">Documents for this application</h3>
-                          {!docsLoading && currentDocs.some((d) => d.row?.scanned_at || d.row?.flags?.length) && (
-                            <RiskBadge risk={applicationRisk(currentDocs.map((d) => ({ flags: d.row?.flags })), barredIds.has(viewApp.user_id))} />
-                          )}
-                          {scansLeft > 0 && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Checking documents ({scansLeft} left)</span>}
-                        </div>
+                        <h3 className="mb-1.5 text-sm font-semibold">Documents for this application</h3>
+                        {fabricatedBanner(viewDocs)}
                         {docList(currentDocs, docsLoading)}
                         {!docsLoading && olderDocs.length > 0 && (
                           <details className="mt-2 text-sm">
@@ -2334,10 +2566,6 @@ function AdminDashboard() {
                           </details>
                         )}
                       </div>
-
-                      <ApplicationVerification applicationId={viewApp.id} userId={viewApp.user_id} studentName={personName(viewApp.profiles)}
-                        canReview={can.review} canManage={can.manage} onBarredChange={loadBarredIds}
-                        staffName={(id) => staff.find((m) => m.id === id)?.name ?? (id === adminUserId ? "You" : "Staff")} />
 
                       {viewApp.status === "Approved" && (
                         <div>
@@ -2436,8 +2664,12 @@ function AdminDashboard() {
           {activeSection === "scholarships" && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex items-center justify-between flex-wrap gap-3">
-                <h2 className="text-xl font-display font-bold">Scholarship Programs</h2>
+                <div>
+                  <h2 className="text-xl font-display font-bold">Scholarship Programs</h2>
+                  <p className="text-xs text-muted-foreground">Slots, budget used and applicants are for S.Y. {schYear}.</p>
+                </div>
                 <div className="flex gap-2 flex-wrap">
+                  {yearSelect}
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input placeholder="Search programs..." value={schSearch} onChange={(e) => setSchSearch(e.target.value)} className="pl-9 w-52" />
@@ -2515,13 +2747,13 @@ function AdminDashboard() {
                   <TableBody>
                     {filteredScholarships.length === 0 && <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No scholarship programs found</TableCell></TableRow>}
                     {filteredScholarships.map((sch) => {
-                      const approved = approvedCount(sch.id);
+                      const approved = approvedCount(sch.id, schYear);
                       const full = sch.slots > 0 && approved >= sch.slots;
                       return (
                         <TableRow key={sch.id}>
                           <TableCell className="max-w-[260px]">
                             <p className="font-medium">{sch.name}</p>
-                            {!myOffice && isOffice(sch.office) && <Badge variant="outline" className="my-0.5 text-[10px]">{OFFICE_LABEL[sch.office]}</Badge>}
+                            {!myOffice && <Badge variant="outline" className="my-0.5 text-[10px]">{programOffice(sch.office)}</Badge>}
                             {sch.eligibility && <p className="text-xs text-muted-foreground line-clamp-2" title={sch.eligibility}>{sch.eligibility}</p>}
                           </TableCell>
                           <TableCell className="text-sm">
@@ -2532,7 +2764,7 @@ function AdminDashboard() {
                               : sch.release_schedule === "one_time" ? "One-time, no renewal"
                               : "Once a year"}</p>
                             {Number(sch.total_budget) > 0 && (() => {
-                              const committed = committedFor(sch);
+                              const committed = committedFor(sch, schYear);
                               const pct = Math.min(100, Math.round((committed / Number(sch.total_budget)) * 100));
                               return (
                                 <p className={`text-xs ${committed >= Number(sch.total_budget) ? "text-destructive font-medium" : "text-muted-foreground"}`}>
@@ -2582,18 +2814,21 @@ function AdminDashboard() {
                     <Input placeholder="Name, email, school, course, ID..." value={studentSearch} onChange={(e) => { setStudentSearch(e.target.value); setStudentPage(1); }} className="pl-9 w-64" />
                   </div>
                   <Select value={studentFilter} onValueChange={(v) => { setStudentFilter(v); setStudentPage(1); }}>
-                    <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All scholars</SelectItem>
                       <SelectItem value="active">Active</SelectItem>
                       <SelectItem value="inactive">Inactive</SelectItem>
+                      <SelectItem value="inactive_1y">Inactive 1+ year</SelectItem>
+                      <SelectItem value="discontinued">Discontinued</SelectItem>
                     </SelectContent>
                   </Select>
+                  {levelSelect}
                   <Select value={studentProgram} onValueChange={(v) => { setStudentProgram(v); setStudentPage(1); }}>
                     <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All programs</SelectItem>
-                      {scholarships.map((sch) => <SelectItem key={sch.id} value={sch.id}>{sch.name}</SelectItem>)}
+                      {scholarships.map((sch) => <SelectItem key={sch.id} value={sch.id}>{sch.name} · {programOffice(sch.office)}</SelectItem>)}
                     </SelectContent>
                   </Select>
                   <Select value={studentDisb} onValueChange={(v) => { setStudentDisb(v); setStudentPage(1); }}>
@@ -2642,10 +2877,27 @@ function AdminDashboard() {
                   </Table>
                 </Card>
               )}
+              {can.manage && gradCandidates.length > 0 && !studentFilter.startsWith("archived") && (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                  <span className="flex items-start gap-2">
+                    <GraduationCap className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      <strong>{gradCandidates.length} 4th-year scholar{gradCandidates.length === 1 ? "" : "s"} may have graduated.</strong>{" "}
+                      They were in 4th Year in an earlier school year and haven&apos;t applied for S.Y. {currentAY}. Grade 12 scholars aren&apos;t listed: they move on to college.
+                    </span>
+                  </span>
+                  <Button size="sm" variant="outline" className="bg-white" onClick={() => { setGradPicked(new Set(gradCandidates.map((p) => p.id))); setGradReviewOpen(true); }}>Review</Button>
+                </div>
+              )}
               {pickedScholars.size > 0 && (
                 <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-accent px-3 py-2 text-sm">
                   <span className="font-medium">{pickedScholars.size} scholar{pickedScholars.size === 1 ? "" : "s"} selected</span>
                   <Button size="sm" disabled={messaging} onClick={() => openMessage([...pickedScholars])}><Send className="mr-1 h-4 w-4" /> Message</Button>
+                  {can.manage && !studentFilter.startsWith("archived") && (
+                    <Button size="sm" variant="outline" onClick={() => openArchive([...pickedScholars], studentFilter === "discontinued" ? "discontinued" : studentFilter.startsWith("inactive") ? "inactive" : "graduated")}>
+                      <Archive className="mr-1 h-4 w-4" /> Archive
+                    </Button>
+                  )}
                   {filteredStudents.length > pickedScholars.size && (
                     <Button size="sm" variant="outline" onClick={() => setPickedScholars(new Set(filteredStudents.map((x) => x.id)))}>Select all {filteredStudents.length} shown</Button>
                   )}
@@ -2664,7 +2916,7 @@ function AdminDashboard() {
                   </TableRow></TableHeader>
                   <TableBody>
                     {pagedStudents.length === 0 && <TableRow><TableCell colSpan={11} className="text-center py-8 text-muted-foreground">{scholars.length === 0 ? "No scholars yet. Applicants appear here once approved." : "No scholars match your search"}</TableCell></TableRow>}
-                    {pagedStudents.map((p) => { const pay = currentPayment(p.id); const apps = approvedApps(p.id); return (
+                    {pagedStudents.map((p) => { const pay = currentPayment(p.id); const apps = studentFilter === "discontinued" ? discontinuedApps(p.id) : p.archived_at ? pastApps(p.id) : approvedApps(p.id); return (
                       <TableRow key={p.id}>
                         <TableCell>
                           <Checkbox aria-label={`Select ${p.first_name} ${p.last_name}`} checked={pickedScholars.has(p.id)}
@@ -2673,6 +2925,8 @@ function AdminDashboard() {
                         <TableCell>
                           <p className="font-medium">{p.first_name} {p.last_name}</p><p className="text-xs text-muted-foreground">{p.email}</p>
                           <div className="mt-1 flex gap-1 flex-wrap">
+                            {p.archived_at && <Badge variant="outline" className="text-[10px]" title={p.archive_note ?? undefined}>{archiveLabel(p)}</Badge>}
+                            {studentFilter === "discontinued" && <Badge variant="outline" className="border-orange-200 bg-orange-50 text-[10px] text-orange-800" title={apps[0]?.discontinued_reason ?? undefined}>Discontinued</Badge>}
                             {gradeReviews.some((g) => g.user_id === p.id && g.status === "Pending") && <Badge variant="secondary" className="text-[10px]">Grade to review</Badge>}
                             {dataReqs.some((r) => r.user_id === p.id && r.status === "Pending") && <Badge variant="destructive" className="text-[10px]">Deletion requested</Badge>}
                           </div>
@@ -2683,13 +2937,16 @@ function AdminDashboard() {
                         <TableCell>{apps.length} / {applications.filter((a) => a.user_id === p.id).length}</TableCell>
                         <TableCell className="text-xs">
                           {apps.length === 0 ? "—" : (<>
-                            <p className="font-medium">{apps[0].scholarships?.name || "—"}{apps.length > 1 && <span className="text-muted-foreground font-normal"> +{apps.length - 1} more</span>}</p>
+                            <p className="font-medium">{programWithOffice(apps[0])}{apps.length > 1 && <span className="text-muted-foreground font-normal"> +{apps.length - 1} more</span>}</p>
                             <p className="text-muted-foreground">{formatPHP(apps.reduce((t, a) => t + appAward(a), 0))}{disbursedTotal(p.id) > 0 && ` · ${formatPHP(disbursedTotal(p.id))} paid`}</p>
                           </>)}
                         </TableCell>
                         <TableCell className="font-mono text-xs">{pay?.reference || "—"}</TableCell>
                         <TableCell>{pay ? disbStatusBadge(pay.status) : <span className="text-xs text-muted-foreground">No payment</span>}</TableCell>
-                        <TableCell><Badge variant={p.is_active ? "default" : "secondary"}>{p.is_active ? "Active" : "Inactive"}</Badge></TableCell>
+                        <TableCell>
+                          <Badge variant={p.is_active ? "default" : "secondary"}>{p.is_active ? "Active" : "Inactive"}</Badge>
+                          {!p.is_active && <p className="mt-0.5 text-[11px] text-muted-foreground">for {inactiveFor(p)}</p>}
+                        </TableCell>
                         <TableCell className="text-right space-x-1">
                           <Button size="icon" variant="ghost" title="View" onClick={() => setViewStudent(p)}><Eye className="h-4 w-4" /></Button>
                           {can.finance && <Button size="icon" variant="ghost" title="Edit payment status" onClick={() => openEditDisb(p)}><Pencil className="h-4 w-4" /></Button>}
@@ -2712,6 +2969,94 @@ function AdminDashboard() {
                   <Button size="sm" variant="outline" disabled={studentPage >= studentPages} onClick={() => setStudentPage((n) => n + 1)}><ChevronRight className="h-4 w-4" /></Button>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ARCHIVE */}
+          {activeSection === "archive" && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="flex items-start justify-between flex-wrap gap-3">
+                <div>
+                  <h2 className="text-xl font-display font-bold">Archive</h2>
+                  <p className="text-sm text-muted-foreground">Former scholars: graduated, discontinued or long inactive. Kept on record, out of the everyday lists, counts and payouts.</p>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {yearSelect}
+                  {levelSelect}
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input placeholder="Name, school, program, note..." value={archiveSearch} onChange={(e) => { setArchiveSearch(e.target.value); setArchivePage(1); }} className="pl-9 w-60" />
+                  </div>
+                  <Button variant="outline" onClick={exportArchive} disabled={filteredArchive.length === 0}><FileDown className="mr-1 h-4 w-4" /> Export</Button>
+                </div>
+              </div>
+
+              <div role="tablist" aria-label="Archive reason" className="inline-flex flex-wrap gap-1 rounded-lg bg-muted p-1">
+                {[["all", "All"], ["graduated", "Graduated"], ["discontinued", "Discontinued"], ["inactive", "Long inactive"], ["other", "Other"]].map(([k, label]) => (
+                  (k !== "other" || archiveCounts.other) && (
+                    <button key={k} type="button" role="tab" aria-selected={archiveTab === k} onClick={() => { setArchiveTab(k); setArchivePage(1); }}
+                      className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer ${archiveTab === k ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                      {label} <span className="ml-1 text-xs tabular-nums text-muted-foreground">{archiveCounts[k] ?? 0}</span>
+                    </button>
+                  )
+                ))}
+              </div>
+
+              <Card>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
+                      <TableHead>Former scholar</TableHead><TableHead>Reason</TableHead><TableHead>Archived</TableHead>
+                      <TableHead>Last scholarship</TableHead><TableHead className="text-right">Total paid</TableHead><TableHead className="text-right">Actions</TableHead>
+                    </TableRow></TableHeader>
+                    <TableBody>
+                      {filteredArchive.length === 0 && (
+                        <TableRow><TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                          {archiveRows.length === 0 ? "No one is archived yet. Archive graduates and former scholars from the Scholars page." : "No archived scholars match these filters."}
+                        </TableCell></TableRow>
+                      )}
+                      {pagedArchive.map(({ p, last, years, paid }) => (
+                        <TableRow key={p.id}>
+                          <TableCell>
+                            <p className="font-medium">{personName(p)}</p>
+                            <p className="text-xs text-muted-foreground">{[p.course, p.school_name].filter(Boolean).join(" · ") || p.email}</p>
+                            {!p.is_active && <Badge variant="secondary" className="mt-1 text-[10px]">Account inactive</Badge>}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className={p.archive_reason === "graduated" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : p.archive_reason === "discontinued" ? "border-orange-200 bg-orange-50 text-orange-800" : ""}>
+                              {p.archive_reason === "graduated" && <GraduationCap className="mr-1 h-3 w-3" />}{ARCHIVE_REASONS[p.archive_reason ?? "other"] ?? "Other"}
+                            </Badge>
+                            {(p.graduated_level ?? null) && <p className="mt-0.5 text-[11px] text-muted-foreground">{p.graduated_level}</p>}
+                            {p.archive_note && <p className="mt-0.5 max-w-[220px] text-[11px] text-muted-foreground line-clamp-2" title={p.archive_note}>{p.archive_note}</p>}
+                          </TableCell>
+                          <TableCell className="text-sm whitespace-nowrap">
+                            {new Date(p.archived_at!).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}
+                            <p className="text-xs text-muted-foreground">{p.archived_by ? `by ${staff.find((m) => m.id === p.archived_by)?.name ?? "former staff"}` : ""}</p>
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {last ? <>
+                              <p>{programWithOffice(last)}</p>
+                              <p className="text-xs text-muted-foreground">{years.length ? `S.Y. ${years.join(", ")}` : ""}{last.status === "Discontinued" ? " · discontinued" : ""}</p>
+                            </> : <span className="text-muted-foreground">—</span>}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{paid ? formatPHP(paid) : "—"}</TableCell>
+                          <TableCell className="text-right whitespace-nowrap space-x-1">
+                            <Button size="sm" variant="ghost" onClick={() => setViewStudent(p)}><Eye className="mr-1 h-4 w-4" /> View</Button>
+                            {can.manage && <Button size="sm" variant="outline" disabled={archiving} onClick={() => restoreScholar(p)}><RotateCcw className="mr-1 h-4 w-4" /> Restore</Button>}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </Card>
+              {archivePages > 1 && (
+                <div className="flex items-center justify-end gap-2 text-sm text-muted-foreground">
+                  <Button size="sm" variant="outline" disabled={currentArchivePage <= 1} onClick={() => setArchivePage(currentArchivePage - 1)}><ChevronLeft className="h-4 w-4" /></Button>
+                  <span>Page {currentArchivePage} of {archivePages}</span>
+                  <Button size="sm" variant="outline" disabled={currentArchivePage >= archivePages} onClick={() => setArchivePage(currentArchivePage + 1)}><ChevronRight className="h-4 w-4" /></Button>
+                </div>
+              )}
             </div>
           )}
 
@@ -2807,7 +3152,7 @@ function AdminDashboard() {
                       {awaitingPayment.length === 0 && <TableRow><TableCell className="text-center py-6 text-muted-foreground">Every approved award is fully scheduled</TableCell></TableRow>}
                       {awaitingPayment.map((a) => (
                         <TableRow key={a.id}>
-                          <TableCell><p className="font-medium">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"}</p><p className="text-xs text-muted-foreground">{a.scholarships?.name || "—"}{scheduleOf(a) === "semester" && ` · ${openTermsOf(a).join(", ")}`}{scheduleOf(a) === "monthly" && openTermsOf(a).length > 0 && ` · next ${openTermsOf(a)[0]} (${openTermsOf(a).length} of ${monthsOf(a)} left)`}</p></TableCell>
+                          <TableCell><p className="font-medium">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"}</p><p className="text-xs text-muted-foreground">{programWithOffice(a)}{scheduleOf(a) === "semester" && ` · ${openTermsOf(a).join(", ")}`}{scheduleOf(a) === "monthly" && openTermsOf(a).length > 0 && ` · next ${openTermsOf(a)[0]} (${openTermsOf(a).length} of ${monthsOf(a)} left)`}</p></TableCell>
                           <TableCell className="text-right">{can.finance && <Button size="sm" variant="outline" onClick={() => { openNewPayment(a.id); setActiveSection("disbursement"); }}>Schedule payment</Button>}</TableCell>
                         </TableRow>
                       ))}
@@ -2978,7 +3323,7 @@ function AdminDashboard() {
                               {open && <Checkbox aria-label={`Select ${payStudent(p)}`} checked={payPicked.has(p.id)} onCheckedChange={(v) => toggle(p.id, !!v)} />}
                             </TableCell>
                           )}
-                          <TableCell><p className="font-medium">{payStudent(p)}</p><p className="text-xs text-muted-foreground">{payProgram(p)}{termLabel(p.term, p.academic_year) && ` · ${termLabel(p.term, p.academic_year)}`}</p></TableCell>
+                          <TableCell><p className="font-medium">{payStudent(p)}{inactiveName(p.user_id) && <Badge variant="destructive" className="ml-2 text-[10px]">Inactive</Badge>}</p><p className="text-xs text-muted-foreground">{payProgram(p)}{termLabel(p.term, p.academic_year) && ` · ${termLabel(p.term, p.academic_year)}`}</p></TableCell>
                           <TableCell className="font-medium">{formatPHP(p.amount)}</TableCell>
                           <TableCell>
                             <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
@@ -3033,6 +3378,7 @@ function AdminDashboard() {
                 const payApp = applications.find((a) => a.id === (cur ? cur.application_id : payAppId));
                 const payWarning = payApp ? gradeWarningFor(payApp, payTerm) : null;
                 const noOpenTerm = !cur && !!payApp && openTermsOf(payApp).length === 0;
+                const payInactive = !cur && payApp ? inactiveName(payApp.user_id) : null;
                 return (
                   <AppDialog open={payDialog !== null} onOpenChange={(o) => !o && setPayDialog(null)} size="md"
                     title={cur ? "Edit Payment" : "Schedule Payment"}
@@ -3040,7 +3386,7 @@ function AdminDashboard() {
                     onSubmit={savePayment} formKey={cur?.id ?? `new-${payAppId}`}
                     footer={<>
                       <Button type="button" variant="outline" onClick={() => setPayDialog(null)}>Cancel</Button>
-                      <Button type="submit" className="bg-gradient-primary" disabled={savingPay || (!cur && (!payAppId || noOpenTerm))}>{cur ? "Save Changes" : "Schedule Payment"}</Button>
+                      <Button type="submit" className="bg-gradient-primary" disabled={savingPay || (!cur && (!payAppId || noOpenTerm)) || (!!payInactive && !inactiveOk)}>{cur ? "Save Changes" : "Schedule Payment"}</Button>
                     </>}>
                     {!cur && (
                       <DialogField label="Scholar">
@@ -3049,7 +3395,7 @@ function AdminDashboard() {
                           <SelectContent>
                             {awaitingPayment.map((a) => (
                               <SelectItem key={a.id} value={a.id}>
-                                {a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"} — {a.scholarships?.name || "—"}
+                                {a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "Unknown"} — {programWithOffice(a)}{inactiveName(a.user_id) ? " (inactive account)" : ""}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -3071,6 +3417,7 @@ function AdminDashboard() {
                         <p className="text-sm font-medium">{termLabel(payTerm, payApp.academic_year) || "—"}</p>
                       </DialogField>
                     ))}
+                    <InactiveScholarWarning names={payInactive ? [payInactive] : []} ok={inactiveOk} onOk={setInactiveOk} action="Schedule this payment anyway" />
                     {payWarning && (
                       <DialogNote tone="warning" icon={<AlertTriangle className="h-3.5 w-3.5" />}>{payWarning}. You can still schedule this payment if the office approves it.</DialogNote>
                     )}
@@ -3157,7 +3504,7 @@ function AdminDashboard() {
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium">
                                 {c.app.profiles ? `${c.app.profiles.first_name || ""} ${c.app.profiles.last_name || ""}`.trim() : "Unknown"}
-                                <span className="text-xs font-normal text-muted-foreground"> · {c.app.scholarships?.name || "—"}</span>
+                                <span className="text-xs font-normal text-muted-foreground"> · {programWithOffice(c.app)}</span>
                               </p>
                               {c.warning
                                 ? <p className="flex items-center gap-1 text-xs text-amber-700"><AlertTriangle className="h-3 w-3" /> {c.warning}</p>
@@ -3192,6 +3539,7 @@ function AdminDashboard() {
               settings={parseSettings(systemSettings)} adminEmail={adminEmail}
               period={fundPeriod} setPeriod={setFundPeriod} fromDate={fromDate} setFromDate={setFromDate} toDate={toDate} setToDate={setToDate}
               office={myOffice ? OFFICE_LABEL[myOffice] : viewingOffice ? (isOffice(officeView) ? OFFICE_LABEL[officeView] : "Mayor Office programs") : null}
+              academicYear={yearView} setAcademicYear={(v) => { setYearView(v); setAppPage(1); setStudentPage(1); setPayPage(1); setPayPicked(new Set()); }}
             />
           )}
 
@@ -3442,7 +3790,7 @@ function AdminDashboard() {
         description={disbPay ? `${payStudent(disbPay)} · ${formatPHP(Number(disbPay.amount))}${disbPay.term ? ` · ${termLabel(disbPay.term, disbPay.academic_year)}` : ""}` : undefined}
         footer={<>
           <Button variant="outline" onClick={() => setDisbDialog(false)}>Cancel</Button>
-          <Button className="bg-gradient-primary" disabled={disbLoading || !disbPay || (disbMethod === "Cheque" && !disbRef.trim())}
+          <Button className="bg-gradient-primary" disabled={disbLoading || !disbPay || (disbMethod === "Cheque" && !disbRef.trim()) || (!!inactiveName(disbPay?.user_id) && !inactiveOk)}
             onClick={async () => { if (disbPay && await markReceived([disbPay], { method: disbMethod, reference: disbRef })) setDisbDialog(false); }}>
             {disbLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Mark received
           </Button>
@@ -3464,6 +3812,7 @@ function AdminDashboard() {
             <Input id="disb-ref" placeholder="e.g. CHK-2026-001" value={disbRef} onChange={(e) => setDisbRef(e.target.value)} />
           </DialogField>
         )}
+        <InactiveScholarWarning names={disbPay && inactiveName(disbPay.user_id) ? [inactiveName(disbPay.user_id)!] : []} ok={inactiveOk} onOk={setInactiveOk} action="Mark it received anyway" />
         <DialogNote icon={<Lock className="h-3.5 w-3.5" />}>Once marked received, the payment is locked and the scholar is notified.</DialogNote>
       </AppDialog>
 
@@ -3509,7 +3858,7 @@ function AdminDashboard() {
         description={batchReceive ? `${formatPHP(batchReceive.reduce((t, p) => t + Number(p.amount || 0), 0))} in all` : undefined}
         footer={<>
           <Button variant="outline" onClick={() => setBatchReceive(null)}>Cancel</Button>
-          <Button className="bg-gradient-primary" disabled={disbLoading || !batchReceive?.length}
+          <Button className="bg-gradient-primary" disabled={disbLoading || !batchReceive?.length || (!!batchReceive?.some((p) => inactiveName(p.user_id)) && !inactiveOk)}
             onClick={async () => { if (batchReceive) { await markReceived(batchReceive); setBatchReceive(null); } }}>
             {disbLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Mark received
           </Button>
@@ -3517,11 +3866,12 @@ function AdminDashboard() {
         <ul className="max-h-64 divide-y overflow-auto rounded-md border text-sm">
           {batchReceive?.map((p) => (
             <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-1.5">
-              <span className="min-w-0 truncate">{payStudent(p)} <span className="text-xs text-muted-foreground">· {payProgram(p)} · {p.method}</span></span>
+              <span className="min-w-0 truncate">{payStudent(p)} <span className="text-xs text-muted-foreground">· {payProgram(p)} · {p.method}</span>{inactiveName(p.user_id) && <Badge variant="destructive" className="ml-2 text-[10px]">Inactive</Badge>}</span>
               <span className="shrink-0 tabular-nums font-medium">{formatPHP(Number(p.amount))}</span>
             </li>
           ))}
         </ul>
+        <InactiveScholarWarning names={[...new Set((batchReceive ?? []).map((p) => inactiveName(p.user_id)).filter((n): n is string => !!n))]} ok={inactiveOk} onOk={setInactiveOk} action="Mark them received anyway" />
         <DialogNote icon={<Lock className="h-3.5 w-3.5" />}>Payments still waiting for a verified MOA are skipped. Received payments are locked and the scholars are notified.</DialogNote>
       </AppDialog>
 
@@ -3534,6 +3884,15 @@ function AdminDashboard() {
               <Button variant={viewStudent.is_active ? "outline" : "default"} className={viewStudent.is_active ? "text-destructive" : ""} onClick={() => toggleStudentActive(viewStudent)}>
                 <Power className="mr-1 h-4 w-4" /> {viewStudent.is_active ? "Deactivate account" : "Activate account"}
               </Button>
+              {viewStudent.archived_at ? (
+                <Button variant="outline" disabled={archiving || !can.manage} onClick={async () => {
+                  if (await restoreScholar(viewStudent)) setViewStudent({ ...viewStudent, archived_at: null, archive_reason: null, archive_note: null, graduated_level: null });
+                }}><RotateCcw className="mr-1 h-4 w-4" /> Restore</Button>
+              ) : (
+                <Button variant="outline" onClick={() => openArchive([viewStudent.id], !viewStudent.is_active ? "inactive" : discontinuedApps(viewStudent.id).length && !approvedApps(viewStudent.id).length ? "discontinued" : "graduated")}>
+                  <Archive className="mr-1 h-4 w-4" /> Archive
+                </Button>
+              )}
               <StudentAccountActions
                 student={{ id: viewStudent.id, name: `${viewStudent.first_name || ""} ${viewStudent.last_name || ""}`.trim() || viewStudent.email || "this scholar", email: viewStudent.email }}
                 canDelete={can.super}
@@ -3545,42 +3904,123 @@ function AdminDashboard() {
           <Button variant="outline" onClick={() => setViewStudent(null)}>Close</Button>
         </>}>
           {viewStudent && (() => {
-            const stuApps = applications.filter((a) => a.user_id === viewStudent.id);
-            const field = (label: string, value: React.ReactNode) => <Detail label={label}>{value || "—"}</Detail>;
+            // Every application, newest first (all school years and statuses).
+            const stuApps = applications.filter((a) => a.user_id === viewStudent.id)
+              .sort((x, y) => y.created_at.localeCompare(x.created_at));
+            const latest = stuApps[0];
+            const fmtD = (d?: string | null) => (d ? new Date(d).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : null);
+            const field = (label: string, value: React.ReactNode, wide = false) => <Detail label={label} wide={wide}>{value || "—"}</Detail>;
+            const age = (() => {
+              if (!viewStudent.dob) return null;
+              const b = new Date(`${viewStudent.dob.slice(0, 10)}T00:00:00`), n = new Date();
+              return n.getFullYear() - b.getFullYear() - (n.getMonth() < b.getMonth() || (n.getMonth() === b.getMonth() && n.getDate() < b.getDate()) ? 1 : 0);
+            })();
+            const statusCounts = ["Approved", "Pending", "Waitlisted", "Disapproved", "Discontinued", "Withdrawn"]
+              .map((st) => [st, stuApps.filter((a) => a.status === st).length] as const).filter(([, n]) => n > 0);
             return (
               <div className="space-y-5">
-                <DetailGrid>
-                  {field("Name", `${viewStudent.first_name || ""} ${viewStudent.middle_name || ""} ${viewStudent.last_name || ""}`.replace(/\s+/g, " ").trim())}
-                  {field("Email", viewStudent.email)}
-                  {field("Phone", viewStudent.phone)}
-                  {field("Sex · Civil status", [viewStudent.sex, viewStudent.civil_status].filter(Boolean).join(" · "))}
-                  {field("Date of birth", viewStudent.dob)}
-                  {field("Nationality", viewStudent.nationality)}
-                  {field("Address", [viewStudent.street_address, viewStudent.barangay, viewStudent.municipality, viewStudent.province, viewStudent.zip_code].filter(Boolean).join(", "))}
-                  {field("Guardian", [viewStudent.guardian_name, viewStudent.guardian_relationship && `(${viewStudent.guardian_relationship})`].filter(Boolean).join(" "))}
-                  {field("Guardian phone", viewStudent.guardian_phone)}
-                  {field("School", viewStudent.school_name)}
-                  {field("Course", viewStudent.course)}
-                  {field("Year Level", viewStudent.year_level)}
-                  {field("Average Grade", viewStudent.average_grade != null ? (
-                    <span className="inline-flex items-center gap-2">{viewStudent.average_grade}
-                      <Badge variant={viewStudent.grade_verified_at ? "default" : "secondary"}>{viewStudent.grade_verified_at ? `Verified${viewStudent.grade_term ? ` · ${viewStudent.grade_term}` : ""}` : "Self-declared"}</Badge>
-                    </span>) : null)}
-                  {field("Account", <Badge variant={viewStudent.is_active ? "default" : "secondary"}>{viewStudent.is_active ? "Active" : "Inactive"}</Badge>)}
-                </DetailGrid>
-                <div>
-                  <h3 className="mb-1.5 text-sm font-semibold">Applications ({stuApps.length})</h3>
-                  {stuApps.length === 0 ? <p className="text-sm text-muted-foreground">No applications</p> : (
-                    <ul className="space-y-1.5">
-                      {stuApps.map((a) => (
-                        <li key={a.id} className="flex items-center justify-between rounded-md border px-3 py-1.5 text-sm">
-                          <span>{a.scholarships?.name || "—"} <span className="text-xs text-muted-foreground">· {new Date(a.created_at).toLocaleDateString()}</span></span>
-                          {statusBadge(a.status)}
-                        </li>
-                      ))}
+                {/* Who */}
+                <div className="flex items-center gap-4">
+                  <ProfileImage value={viewStudent.profile_picture_url} alt="Profile photo" className="h-16 w-16 shrink-0 rounded-2xl object-cover"
+                    fallback={<div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-accent"><User className="h-7 w-7 text-accent-foreground" /></div>} />
+                  <div className="min-w-0">
+                    <p className="text-lg font-display font-bold leading-tight">{`${viewStudent.first_name || ""} ${viewStudent.middle_name || ""} ${viewStudent.last_name || ""}`.replace(/\s+/g, " ").trim() || viewStudent.email}</p>
+                    <p className="text-sm text-muted-foreground">{[viewStudent.course, viewStudent.year_level, viewStudent.school_name].filter(Boolean).join(" · ") || "No school details yet"}</p>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      <Badge variant={viewStudent.is_active ? "default" : "secondary"}>{viewStudent.is_active ? "Active" : "Inactive"}</Badge>
+                      {viewStudent.archived_at && <Badge variant="outline">{archiveLabel(viewStudent)}</Badge>}
+                      {approvedApps(viewStudent.id).length > 0 && <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">Scholar</Badge>}
+                    </div>
+                  </div>
+                </div>
+
+                <DialogSection title="Personal">
+                  <DetailGrid>
+                    {field("Full name", `${viewStudent.first_name || ""} ${viewStudent.middle_name || ""} ${viewStudent.last_name || ""}`.replace(/\s+/g, " ").trim())}
+                    {field("Date of birth", viewStudent.dob ? `${fmtD(viewStudent.dob)}${age !== null ? ` (${age} years old)` : ""}` : null)}
+                    {field("Sex", viewStudent.sex)}
+                    {field("Civil status", viewStudent.civil_status)}
+                    {field("Nationality", viewStudent.nationality)}
+                  </DetailGrid>
+                </DialogSection>
+
+                <DialogSection title="Contact & address">
+                  <DetailGrid>
+                    {field("Email", viewStudent.email)}
+                    {field("Phone", viewStudent.phone)}
+                    {field("Address", [viewStudent.street_address, viewStudent.barangay, viewStudent.municipality, viewStudent.province, viewStudent.zip_code].filter(Boolean).join(", "), true)}
+                    {mapAccess && field("House pin", viewStudent.home_lat != null && viewStudent.home_lng != null
+                      ? <span>{viewStudent.home_landmark || "Pinned"}{viewStudent.home_located_at && <span className="text-xs text-muted-foreground"> · {fmtD(viewStudent.home_located_at)}</span>}</span> : "Not pinned", true)}
+                  </DetailGrid>
+                </DialogSection>
+
+                <DialogSection title="Family">
+                  <DetailGrid>
+                    {field("Guardian", [viewStudent.guardian_name, viewStudent.guardian_relationship && `(${viewStudent.guardian_relationship})`].filter(Boolean).join(" "))}
+                    {field("Guardian phone", viewStudent.guardian_phone)}
+                    {field("Monthly household income", latest?.household_income != null ? formatPHP(Number(latest.household_income)) : null)}
+                    {field("Household size", latest?.household_size != null ? `${latest.household_size} people` : null)}
+                  </DetailGrid>
+                  {latest && (latest.household_income != null || latest.household_size != null) && <p className="text-xs text-muted-foreground">Household details as given on their latest application ({fmtD(latest.created_at)}).</p>}
+                </DialogSection>
+
+                <DialogSection title="School">
+                  <DetailGrid>
+                    {field("School", viewStudent.school_name, true)}
+                    {field("Course / strand", viewStudent.course)}
+                    {field("Year level", viewStudent.year_level)}
+                    {field("Average grade", viewStudent.average_grade != null ? (
+                      <span className="inline-flex items-center gap-2">{viewStudent.average_grade}
+                        <Badge variant={viewStudent.grade_verified_at ? "default" : "secondary"}>{viewStudent.grade_verified_at ? `Verified${viewStudent.grade_term ? ` · ${viewStudent.grade_term}` : ""}` : "Self-declared"}</Badge>
+                      </span>) : null)}
+                    {field("Grade verified", fmtD(viewStudent.grade_verified_at))}
+                  </DetailGrid>
+                </DialogSection>
+
+                <DialogSection title="Account">
+                  <DetailGrid>
+                    {field("Status", <span className="inline-flex flex-wrap items-center gap-2"><Badge variant={viewStudent.is_active ? "default" : "secondary"}>{viewStudent.is_active ? "Active" : "Inactive"}</Badge>{!viewStudent.is_active && <span className="text-xs text-muted-foreground">since {new Date(inactiveSince(viewStudent)!).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })} ({inactiveFor(viewStudent)})</span>}</span>)}
+                    {field("Registered", fmtD(viewStudent.created_at))}
+                    {field("Terms accepted", fmtD(viewStudent.terms_accepted_at))}
+                    {field("Profile last updated", fmtD(viewStudent.updated_at))}
+                    {viewStudent.archived_at && field("Archive", <span>{archiveLabel(viewStudent)} · {fmtD(viewStudent.archived_at)}{viewStudent.archived_by && ` by ${staff.find((m) => m.id === viewStudent.archived_by)?.name ?? "former staff"}`}{viewStudent.archive_note && <span className="block text-xs text-muted-foreground">{viewStudent.archive_note}</span>}</span>, true)}
+                  </DetailGrid>
+                </DialogSection>
+
+                <DialogSection title={`Applications (${stuApps.length})`}
+                  action={statusCounts.length > 0 && <span className="flex flex-wrap justify-end gap-1">{statusCounts.map(([st, n]) => <span key={st} className="text-xs text-muted-foreground">{n} {st.toLowerCase()}</span>).reduce<React.ReactNode[]>((acc, el, i) => (i ? [...acc, <span key={`d${i}`} className="text-xs text-muted-foreground">·</span>, el] : [el]), [])}</span>}>
+                  {stuApps.length === 0 ? <p className="text-sm text-muted-foreground">No applications yet.</p> : (
+                    <ul className="space-y-2">
+                      {stuApps.map((a) => {
+                        const reason = a.status === "Disapproved" ? a.notes : a.status === "Discontinued" ? a.discontinued_reason : null;
+                        return (
+                          <li key={a.id} className="rounded-lg border px-3 py-2.5 text-sm">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="font-medium">{programWithOffice(a)}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {[a.academic_year && `S.Y. ${a.academic_year}`, a.semester, a.is_renewal ? "Renewal" : "New", a.year_level].filter(Boolean).join(" · ")}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  Applied {fmtD(a.created_at)}
+                                  {a.decided_at && a.status !== "Pending" && a.status !== "Waitlisted" && ` · Decided ${fmtD(a.decided_at)}`}
+                                  {a.status === "Discontinued" && a.discontinued_at && ` · Discontinued ${fmtD(a.discontinued_at)}`}
+                                  {a.average_grade != null && ` · Grade ${a.average_grade}`}
+                                  {(a.status === "Approved" || a.status === "Discontinued") && ` · Award ${formatPHP(appAward(a))}`}
+                                </p>
+                                {reason && <p className={`mt-1 text-xs ${a.status === "Disapproved" ? "text-destructive" : "text-orange-800"}`}>Reason: {reason}</p>}
+                              </div>
+                              <div className="flex shrink-0 flex-col items-end gap-1.5">
+                                {statusBadge(a.status)}
+                                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setViewStudent(null); setViewApp(a); }}>Open <ArrowRight className="ml-1 h-3 w-3" /></Button>
+                              </div>
+                            </div>
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
-                </div>
+                </DialogSection>
                 {(() => {
                   const pays = studentPayments(viewStudent.id);
                   return (
@@ -3677,6 +4117,7 @@ function AdminDashboard() {
                 })()}
                 <div>
                   <h3 className="mb-1.5 text-sm font-semibold">Documents</h3>
+                  {fabricatedBanner(studentDocs)}
                   {docList(studentDocs, studentDocsLoading)}
                 </div>
               </div>
@@ -3702,25 +4143,8 @@ function AdminDashboard() {
         confirmVariant="default"
         onConfirm={respondToRequest} />
 
-      {/* Stored file viewer (receipts, grade reports) */}
-      <AppDialog open={!!fileView} onOpenChange={(o) => !o && setFileView(null)} size="xl" title={fileView?.title ?? "Receipt"}
-        footer={fileView && <>
-          <Button variant="outline" onClick={async () => {
-            // Cross-site links ignore the download attribute, so save it through a local copy.
-            try {
-              const blob = await (await fetch(fileView.url)).blob();
-              const a = document.createElement("a");
-              a.href = URL.createObjectURL(blob); a.download = fileView.fileName || fileView.title; a.click();
-              setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
-            } catch { toast.error("Could not download the file"); }
-          }}><Download className="mr-1 h-4 w-4" /> Download</Button>
-          <Button onClick={() => setFileView(null)}>Close</Button>
-        </>}>
-        {fileView && (
-          <FileView url={fileView.url} title={fileView.title} fileName={fileView.fileName}
-            mime={fileView.mime ?? (fileView.kind === "image" ? "image/jpeg" : fileView.kind === "pdf" ? "application/pdf" : null)} />
-        )}
-      </AppDialog>
+      {/* Stored file viewer (documents, receipts, grade reports) */}
+      <FileViewerDialog file={fileView} onClose={() => setFileView(null)} />
 
       <AppDialog open={!!issueDialog} onOpenChange={(o) => { if (!o) setIssueDialog(null); }} size="md"
         title="Payment problem reports"
@@ -3751,7 +4175,7 @@ function AdminDashboard() {
 
       <ReasonDialog open={!!disapproveApp} onClose={() => setDisapproveApp(null)}
         title="Disapprove application"
-        description={disapproveApp ? `${personName(disapproveApp.profiles)} · ${disapproveApp.scholarships?.name || "—"}` : undefined}
+        description={disapproveApp ? `${personName(disapproveApp.profiles)} · ${programWithOffice(disapproveApp)}` : undefined}
         hint="Shown to the scholar."
         placeholder="e.g. Your average grade is below the program's minimum."
         value={disapproveAppNote} onChange={setDisapproveAppNote} busy={disapprovingApp}
@@ -3778,6 +4202,107 @@ function AdminDashboard() {
           setRevokingApp(false);
           if (ok) { toast.success("Approval revoked — the scholar was notified"); setRevokeApp(null); loadData(true); }
         }} />
+
+      <ReasonDialog open={!!discontinueApp} onClose={() => setDiscontinueApp(null)}
+        title="Discontinue scholarship"
+        description={discontinueApp ? (() => {
+          const open = payments.filter((p) => p.application_id === discontinueApp.id && (p.status === "Pending" || p.status === "Processing"));
+          const paid = payments.filter((p) => p.application_id === discontinueApp.id && p.status === "Disbursed");
+          return `${personName(discontinueApp.profiles)} stops receiving ${discontinueApp.scholarships?.name || "this scholarship"}. ${open.length ? `${open.length} scheduled payment${open.length === 1 ? " is" : "s are"} cancelled. ` : ""}${paid.length ? `${paid.length} released payment${paid.length === 1 ? " stays" : "s stay"} on record. ` : ""}The slot is freed. You can reinstate it later.`;
+        })() : undefined}
+        hint="Shown to the scholar and kept on record."
+        placeholder="e.g. Stopped attending classes in the 2nd semester."
+        value={discontinueNote} onChange={setDiscontinueNote} busy={discontinuing}
+        confirmLabel="Discontinue"
+        onConfirm={async () => {
+          if (!discontinueApp) return;
+          setDiscontinuing(true);
+          const { data, error } = await supabase.rpc("discontinue_scholarship", { _application_id: discontinueApp.id, _reason: discontinueNote });
+          setDiscontinuing(false);
+          if (error) {
+            toast.error("Couldn't discontinue", { description: /schema cache|does not exist/i.test(error.message) ? "Run migration 090_discontinued_scholars.sql in Supabase first." : error.message });
+            return;
+          }
+          toast.success(`Scholarship discontinued${data ? ` · ${data} scheduled payment${data === 1 ? "" : "s"} cancelled` : ""} — the scholar was notified`);
+          setDiscontinueApp(null); setViewApp(null); loadData(true);
+        }} />
+
+      <ReasonDialog open={!!seenDoc} onClose={() => setSeenDoc(null)}
+        title={`Original ${seenDoc?.type ?? "document"} seen`}
+        description="You saw the original paper document in person and it matches this upload."
+        label="Where" required={false} confirmVariant="default"
+        placeholder="e.g. At the home visit, or at the cash payout"
+        value={seenNote} onChange={setSeenNote} busy={reviewingDoc}
+        confirmLabel="Record"
+        onConfirm={async () => { if (seenDoc && await setOriginalSeen(seenDoc, true, seenNote.trim())) setSeenDoc(null); }} />
+      <ReasonDialog open={!!fabricateDoc} onClose={() => setFabricateDoc(null)}
+        title={`Mark ${fabricateDoc?.type ?? "document"} as fabricated`}
+        description="Use this only when you're sure the document was faked or altered (for example the original paper differs, or the issuing office says it didn't issue it). The document is disapproved, the scholar is told why, and it stays on their record."
+        hint="Shown to the scholar."
+        placeholder="e.g. The registrar confirmed this COR was not issued by the school."
+        value={fabricateNote} onChange={setFabricateNote} busy={reviewingDoc}
+        confirmLabel="Mark fabricated"
+        onConfirm={async () => {
+          if (!fabricateDoc) return;
+          setReviewingDoc(true);
+          const { error } = await supabase.rpc("mark_document_fabricated", { _id: fabricateDoc.id, _note: fabricateNote });
+          setReviewingDoc(false);
+          if (error) { toast.error("Couldn't save", { description: needs093(error.message) }); return; }
+          patchDoc(fabricateDoc.id, { status: "Disapproved", note: `Fabricated or altered document: ${fabricateNote.trim()}`, fabricatedAt: new Date().toISOString(), fabricatedNote: fabricateNote.trim() });
+          toast.success("Marked fabricated — the scholar was notified");
+          setFabricateDoc(null); loadData(true);
+        }} />
+
+      {/* Archive scholars */}
+      <AppDialog open={!!archiveFor} onOpenChange={(o) => !o && !archiving && setArchiveFor(null)} size="md"
+        title={archiveFor && archiveFor.length === 1 ? `Archive ${personName(profiles.find((p) => p.id === archiveFor[0]))}` : `Archive ${archiveFor?.length ?? 0} scholars`}
+        description="Archived scholars leave the scholar lists, counts and payouts, and get no reminders. Their records, payments and reports are kept, and you can restore them any time."
+        footer={<>
+          <Button variant="outline" disabled={archiving} onClick={() => setArchiveFor(null)}>Cancel</Button>
+          <Button disabled={archiving || !archiveFor?.length} onClick={async () => { if (archiveFor && await runArchive(archiveFor, archiveReason, archiveNote)) setArchiveFor(null); }}>
+            {archiving && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Archive
+          </Button>
+        </>}>
+        <DialogField label="Why">
+          <Select value={archiveReason} onValueChange={setArchiveReason}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>{Object.entries(ARCHIVE_REASONS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+          </Select>
+        </DialogField>
+        <DialogField label="Note" htmlFor="archive-note" hint="Optional. Staff only.">
+          <Textarea id="archive-note" rows={2} value={archiveNote} onChange={(e) => setArchiveNote(e.target.value)} placeholder={archiveReason === "graduated" ? "e.g. BSIT, graduated June 2027" : "e.g. No response since 2025"} />
+        </DialogField>
+        {archiveReason === "graduated" && <DialogNote icon={<GraduationCap className="h-3.5 w-3.5" />}>Graduates are congratulated by notification, and can still sign in to see their records.</DialogNote>}
+        <DialogNote icon={<Info className="h-3.5 w-3.5" />}>Scholars with a scheduled payment or an application in review are skipped.</DialogNote>
+      </AppDialog>
+
+      {/* Suggested graduates */}
+      <AppDialog open={gradReviewOpen} onOpenChange={(o) => !archiving && setGradReviewOpen(o)} size="lg"
+        title="Suggested graduates"
+        description={`4th-year scholars from an earlier school year who haven't applied for S.Y. ${currentAY}. Untick anyone still studying (for example a 5-year course), then mark the rest graduated.`}
+        footer={<>
+          <Button variant="outline" disabled={archiving} onClick={() => setGradReviewOpen(false)}>Cancel</Button>
+          <Button disabled={archiving || gradPicked.size === 0} onClick={async () => {
+            if (await runArchive([...gradPicked], "graduated", `Finished 4th Year; no application for S.Y. ${currentAY}`)) setGradReviewOpen(false);
+          }}>{archiving && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}<GraduationCap className="mr-1 h-4 w-4" /> Mark {gradPicked.size} graduated</Button>
+        </>}>
+        <div className="max-h-96 divide-y overflow-y-auto rounded-lg border">
+          {gradCandidates.map((p) => {
+            const last = pastApps(p.id).sort((x, y) => (y.academic_year ?? "").localeCompare(x.academic_year ?? ""))[0];
+            return (
+              <label key={p.id} className="flex cursor-pointer items-start gap-3 p-3 hover:bg-muted/40">
+                <Checkbox className="mt-0.5 rounded-[4px]" checked={gradPicked.has(p.id)}
+                  onCheckedChange={(v) => setGradPicked((prev) => { const n = new Set(prev); if (v) n.add(p.id); else n.delete(p.id); return n; })} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">{personName(p)}</p>
+                  <p className="text-xs text-muted-foreground">{[p.course, p.school_name].filter(Boolean).join(" · ") || "—"}</p>
+                  {last && <p className="text-xs text-muted-foreground">Last scholarship: {programWithOffice(last)}{last.academic_year ? ` · S.Y. ${last.academic_year}` : ""}</p>}
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </AppDialog>
 
       {/* Batch message */}
       <AppDialog open={!!msgFor} onOpenChange={(o) => !o && setMsgFor(null)} size="md"
@@ -3834,15 +4359,9 @@ function AdminDashboard() {
         description="The scholar is notified and can upload a replacement."
         hint="Shown to the scholar."
         placeholder="e.g. The photo is blurry. Please upload a clear copy."
-        value={disapproveNote} onChange={setDisapproveNote} busy={reviewingDoc} presets={DISAPPROVAL_REASONS}
+        value={disapproveNote} onChange={setDisapproveNote} busy={reviewingDoc}
         confirmLabel="Disapprove document"
         onConfirm={async () => { if (disapproveDoc && await reviewDocument(disapproveDoc, "Disapproved", disapproveNote)) setDisapproveDoc(null); }} />
-
-      <DocumentViewer
-        doc={viewerDoc ? { row: viewerDoc.row, url: viewerDoc.url, studentName: personName(profiles.find((p) => p.id === viewerDoc.row.user_id)) } : null}
-        profile={viewerDoc ? profiles.find((p) => p.id === viewerDoc.row.user_id) ?? null : null}
-        academicYear={viewerDoc ? scanContext(viewerDoc.row).academicYear : null}
-        canReview={can.review} onClose={() => setViewerDoc(null)} onUpdated={onDocChecked} />
     </div>
   );
 }

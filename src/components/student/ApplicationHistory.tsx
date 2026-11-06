@@ -17,8 +17,22 @@ export function ContactOffice({ onContact }: { onContact?: () => void }) {
   );
 }
 
-/** Why an application was disapproved, and when. Renders nothing for any other status. */
+/** Why an application was disapproved, or a scholarship discontinued, and when. Nothing for any other status. */
 export function DisapprovalReason({ app, compact = false, onContact }: { app: Tables<"applications">; compact?: boolean; onContact?: () => void }) {
+  if (app.status === "Discontinued") {
+    return (
+      <div className={`rounded-xl border border-orange-200 bg-orange-50 text-orange-900 ${compact ? "px-3 py-2 text-xs" : "px-4 py-3 text-sm"}`}>
+        <p className="font-semibold flex items-center gap-1.5">
+          <XCircle className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} /> Scholarship discontinued · {formatDate(app.discontinued_at ?? app.updated_at)}
+        </p>
+        <p className="mt-1 whitespace-pre-wrap">
+          <span className="font-semibold">Reason: </span>
+          {app.discontinued_reason?.trim() || "The scholarship office did not give a reason."}
+        </p>
+        <p className="mt-1">Payments already released to you stay on record. No further payments will be made. <ContactOffice onContact={onContact} /> if you have questions.</p>
+      </div>
+    );
+  }
   if (app.status !== "Disapproved") return null;
   return (
     <div className={`rounded-xl border border-red-200 bg-red-50 text-red-800 ${compact ? "px-3 py-2 text-xs" : "px-4 py-3 text-sm"}`}>

@@ -132,43 +132,35 @@ export default function LoginPage() {
       return;
     }
 
-    // Lockout: 3 wrong passwords, then a 10-minute wait (/api/auth/login). If the check can't be reached,
-    // the login goes ahead.
-    const lockout = (body: Record<string, string>, token?: string) => fetch("/api/auth/login", {
-      method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify(body),
-    }).then(async (r) => ({ locked: r.status === 429, ...((await r.json().catch(() => ({}))) as { error?: string; attemptsLeft?: number; lockMinutes?: number }) }))
-      .catch(() => ({ locked: false } as { locked: boolean; error?: string; attemptsLeft?: number; lockMinutes?: number }));
-    const lock = await lockout({ action: "check", email });
-    if (lock.locked) {
-      toast.error("Too many failed attempts", { description: lock.error });
+    // Signed in on the server (/api/auth/login), which enforces the limits: 3 wrong passwords lock the
+    // account for 10 minutes, and one device gets at most 30 tries per 10 minutes. It sets the session
+    // cookies, which the browser client below reads.
+    type LoginReply = { ok?: boolean; error?: string; code?: string; attemptsLeft?: number; lockMinutes?: number };
+    const res = await fetch("/api/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, captchaToken }),
+    }).catch(() => null);
+    const reply = (await res?.json().catch(() => ({}))) as LoginReply ?? {};
+    // Captcha tokens are single-use.
+    if (captchaEnabled) setCaptchaKey((k) => k + 1);
+
+    if (!res?.ok) {
+      const locked = res?.status === 429;
+      const notConfirmed = reply.code === "email_not_confirmed" || /not confirmed/i.test(reply.error ?? "");
+      setUnconfirmed(notConfirmed);
+      toast.error(locked ? "Too many failed attempts" : "Login failed", {
+        description: !res ? "Couldn't reach the server. Check your connection and try again."
+          : notConfirmed ? "Your email isn't verified yet. Open the link we emailed you, or resend it below."
+          : reply.code === "user_banned" ? DEACTIVATED
+          : locked ? reply.error
+          : reply.attemptsLeft ? `${reply.error}. ${reply.attemptsLeft} attempt${reply.attemptsLeft === 1 ? "" : "s"} left before a ${reply.lockMinutes}-minute wait.`
+          : reply.error ?? "Something went wrong. Please try again.",
+      });
       setLoading(false);
       return;
     }
 
     const supabase = createClient();
-    const { data: signedIn, error } = await supabase.auth.signInWithPassword({
-      email, password, options: { captchaToken: captchaToken ?? undefined },
-    });
-    // Captcha tokens are single-use.
-    if (captchaEnabled) setCaptchaKey((k) => k + 1);
-
-    if (error) {
-      const notConfirmed = error.code === "email_not_confirmed" || /not confirmed/i.test(error.message);
-      setUnconfirmed(notConfirmed);
-      // Only a wrong email or password counts toward the lockout.
-      const failed = error.code === "invalid_credentials" ? await lockout({ action: "failed", email }) : null;
-      toast.error(failed?.locked ? "Too many failed attempts" : "Login failed", {
-        description: notConfirmed ? "Your email isn't verified yet. Open the link we emailed you, or resend it below."
-          : error.code === "user_banned" ? DEACTIVATED
-          : failed?.locked ? failed.error
-          : failed?.attemptsLeft ? `${error.message}. ${failed.attemptsLeft} attempt${failed.attemptsLeft === 1 ? "" : "s"} left before a ${failed.lockMinutes}-minute wait.`
-          : error.message,
-      });
-      setLoading(false);
-      return;
-    }
-    void lockout({ action: "success" }, signedIn.session?.access_token);
 
     // Staff sign in through Admin Login and students through Student Login, never the other way.
     const { data: { user } } = await supabase.auth.getUser();

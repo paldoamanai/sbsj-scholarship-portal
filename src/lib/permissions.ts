@@ -69,6 +69,8 @@ export const officeLogo = (office: string | null | undefined) => (isOffice(offic
 export const isOffice = (o: string | null | undefined): o is StaffOffice => (STAFF_OFFICES as readonly string[]).includes(o ?? "");
 /** The Mayor Office works across every office, so it can't belong to one. */
 export const roleCanHaveOffice = (role: string) => role === "admin" || role === "reviewer" || role === "finance_admin";
+/** The office a program comes from. Programs with no office are the Mayor Office's own. */
+export const programOffice = (office: string | null | undefined) => (isOffice(office) ? OFFICE_LABEL[office] : "Mayor Office");
 export const officeLabel = (office: string | null | undefined) => (isOffice(office) ? OFFICE_LABEL[office] : "All offices");
 
 /** The name to show for a staff account, e.g. "MSWDO · Reviewer". */

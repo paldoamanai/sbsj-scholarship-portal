@@ -20,6 +20,8 @@ import { formatDate } from "@/lib/format";
 import { gradeSubmissionSchema, studentProfileSchema, type StudentProfileForm } from "@/validations/profile";
 import { useSystemSettings } from "@/hooks/use-system-settings";
 import type { Tables } from "@/integrations/supabase/types";
+import CameraCapture from "@/components/CameraCapture";
+import { useUploadCheck } from "@/components/UploadCheckDialog";
 
 const toForm = (p: Tables<"profiles"> | null): StudentProfileForm => ({
   first_name: p?.first_name ?? "", middle_name: p?.middle_name ?? "", last_name: p?.last_name ?? "",
@@ -186,6 +188,8 @@ export default function ProfileSection({ profile, userId, userEmail, locked, gra
   const [grade, setGrade] = useState("");
   const [term, setTerm] = useState(`${settings.current_semester} ${settings.academic_year}`);
   const [gradeFile, setGradeFile] = useState<File | null>(null);
+  // Photo quality is checked before it's attached (lib/doc-checks).
+  const [checkFile, checkDialog] = useUploadCheck();
   const [gradeBusy, setGradeBusy] = useState(false);
   const [gradeErr, setGradeErr] = useState("");
 
@@ -193,9 +197,12 @@ export default function ProfileSection({ profile, userId, userEmail, locked, gra
     const input = e.target;
     const file = input.files?.[0] ?? null;
     input.value = "";
-    if (!file) return;
+    if (file) takeGradeFile(file);
+  };
+  const takeGradeFile = async (file: File) => {
     if (!DOC_MIME.includes(file.type)) { toast.error("Upload a PDF, JPG or PNG file."); return; }
     if (file.size > settings.max_upload_mb * 1024 * 1024) { toast.error(`File is too large (max ${settings.max_upload_mb} MB).`); return; }
+    if (!(await checkFile(file))) return;
     setGradeFile(file);
   };
 
@@ -225,6 +232,7 @@ export default function ProfileSection({ profile, userId, userEmail, locked, gra
 
   return (
     <div className="space-y-5">
+      {checkDialog}
       {locked && (
         <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
           <Lock className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
@@ -235,6 +243,7 @@ export default function ProfileSection({ profile, userId, userEmail, locked, gra
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="space-y-5 lg:self-start min-w-0">
         {/* Avatar + completeness */}
         <Panel className="p-4 sm:p-6 text-center flex flex-col items-center">
           <div className="relative mb-4">
@@ -264,6 +273,79 @@ export default function ProfileSection({ profile, userId, userEmail, locked, gra
             )}
           </div>
         </Panel>
+
+        {/* Academic standing */}
+        <Panel>
+          <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Academic Standing</SectionTitle></div>
+          <div className="p-4 sm:p-6 space-y-5">
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="rounded-xl bg-muted border border-muted px-5 py-3">
+                <p className="text-xs text-muted-foreground">Average grade</p>
+                <p className="text-2xl font-bold text-black">{profile?.average_grade ?? "—"}</p>
+              </div>
+              {profile?.average_grade != null && (
+                profile.grade_verified_at ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1">
+                    <CheckCircle className="h-3.5 w-3.5" /> Verified{profile.grade_term ? ` · ${profile.grade_term}` : ""} · {formatDate(profile.grade_verified_at)}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
+                    <AlertTriangle className="h-3.5 w-3.5" /> Self-declared at registration. Submit your grade report to get it verified.
+                  </span>
+                )
+              )}
+            </div>
+
+            {pendingGrade ? (
+              <p className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+                Your grade of <strong>{pendingGrade.grade}</strong> for {pendingGrade.term} is waiting for the office to verify ({formatDate(pendingGrade.created_at)}).
+              </p>
+            ) : (
+              <div className="space-y-3 max-w-xl">
+                <p className="text-sm text-muted-foreground">
+                  Your grade can only be changed by submitting your latest grade report. The office verifies it, then it replaces your current grade. This is what programs and renewals check.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
+                  <Field label="New average grade"><Input className={inputCls} type="number" inputMode="decimal" min={0} max={100} step="0.01" value={grade} onChange={(e) => { setGrade(e.target.value); setGradeErr(""); }} placeholder="e.g. 91.5" /></Field>
+                  <Field label="Term"><Input className={inputCls} value={term} maxLength={60} onChange={(e) => { setTerm(e.target.value); setGradeErr(""); }} /></Field>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <label className="cursor-pointer inline-flex items-center gap-1.5 text-xs text-muted-foreground border border-border rounded-xl px-3 py-2 hover:bg-muted transition-colors min-w-0">
+                    <Upload className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate max-w-[180px]">{gradeFile ? gradeFile.name : "Attach grade report (PDF, JPG, PNG)"}</span>
+                    <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={pickGradeFile} />
+                  </label>
+                  <CameraCapture label="Scan" title="Photo of your grade report" className="py-2" onCapture={takeGradeFile} />
+                  <Button className="bg-primary hover:bg-primary text-white rounded-xl" disabled={gradeBusy} onClick={submitGrade}>
+                    {gradeBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Submit for verification
+                  </Button>
+                </div>
+                {gradeErr && <p className="text-xs text-destructive">{gradeErr}</p>}
+              </div>
+            )}
+
+            {gradeUpdates.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground mb-2">Your submissions</p>
+                <ul className="space-y-1.5">
+                  {gradeUpdates.map((g) => (
+                    <li key={g.id} className="rounded-lg border border-border px-3 py-2 text-sm">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span><strong>{g.grade}</strong> · {g.term} · {formatDate(g.created_at)}</span>
+                        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                          g.status === "Verified" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : g.status === "Disapproved" ? "bg-red-50 text-red-700 border-red-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
+                          {g.status === "Pending" ? "Pending review" : g.status}
+                        </span>
+                      </div>
+                      {g.status === "Disapproved" && g.review_note && <p className="text-xs text-red-700 mt-1">Reason: {g.review_note}</p>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </Panel>
+        </div>
 
         <div className="lg:col-span-2 space-y-5">
           {/* Personal */}
@@ -358,76 +440,6 @@ export default function ProfileSection({ profile, userId, userEmail, locked, gra
         </div>
       </div>
 
-      {/* Academic standing */}
-      <Panel>
-        <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-muted"><SectionTitle>Academic Standing</SectionTitle></div>
-        <div className="p-4 sm:p-6 space-y-5">
-          <div className="flex items-center gap-4 flex-wrap">
-            <div className="rounded-xl bg-muted border border-muted px-5 py-3">
-              <p className="text-xs text-muted-foreground">Average grade</p>
-              <p className="text-2xl font-bold text-black">{profile?.average_grade ?? "—"}</p>
-            </div>
-            {profile?.average_grade != null && (
-              profile.grade_verified_at ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1">
-                  <CheckCircle className="h-3.5 w-3.5" /> Verified{profile.grade_term ? ` · ${profile.grade_term}` : ""} · {formatDate(profile.grade_verified_at)}
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
-                  <AlertTriangle className="h-3.5 w-3.5" /> Self-declared at registration. Submit your grade report to get it verified.
-                </span>
-              )
-            )}
-          </div>
-
-          {pendingGrade ? (
-            <p className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
-              Your grade of <strong>{pendingGrade.grade}</strong> for {pendingGrade.term} is waiting for the office to verify ({formatDate(pendingGrade.created_at)}).
-            </p>
-          ) : (
-            <div className="space-y-3 max-w-xl">
-              <p className="text-sm text-muted-foreground">
-                Your grade can only be changed by submitting your latest grade report. The office verifies it, then it replaces your current grade. This is what programs and renewals check.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="New average grade"><Input className={inputCls} type="number" inputMode="decimal" min={0} max={100} step="0.01" value={grade} onChange={(e) => { setGrade(e.target.value); setGradeErr(""); }} placeholder="e.g. 91.5" /></Field>
-                <Field label="Term"><Input className={inputCls} value={term} maxLength={60} onChange={(e) => { setTerm(e.target.value); setGradeErr(""); }} /></Field>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <label className="cursor-pointer inline-flex items-center gap-1.5 text-xs text-muted-foreground border border-border rounded-xl px-3 py-2 hover:bg-muted transition-colors min-w-0">
-                  <Upload className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate max-w-[220px]">{gradeFile ? gradeFile.name : "Attach grade report (PDF, JPG, PNG)"}</span>
-                  <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={pickGradeFile} />
-                </label>
-                <Button className="bg-primary hover:bg-primary text-white rounded-xl" disabled={gradeBusy} onClick={submitGrade}>
-                  {gradeBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Submit for verification
-                </Button>
-              </div>
-              {gradeErr && <p className="text-xs text-destructive">{gradeErr}</p>}
-            </div>
-          )}
-
-          {gradeUpdates.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground mb-2">Your submissions</p>
-              <ul className="space-y-1.5">
-                {gradeUpdates.map((g) => (
-                  <li key={g.id} className="rounded-lg border border-border px-3 py-2 text-sm">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <span><strong>{g.grade}</strong> · {g.term} · {formatDate(g.created_at)}</span>
-                      <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
-                        g.status === "Verified" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : g.status === "Disapproved" ? "bg-red-50 text-red-700 border-red-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
-                        {g.status === "Pending" ? "Pending review" : g.status}
-                      </span>
-                    </div>
-                    {g.status === "Disapproved" && g.review_note && <p className="text-xs text-red-700 mt-1">Reason: {g.review_note}</p>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      </Panel>
 
     </div>
   );

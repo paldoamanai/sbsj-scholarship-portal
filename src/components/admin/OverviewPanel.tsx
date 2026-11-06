@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import {
   FileText, CheckCircle, XCircle, Clock, Users, Banknote, Plus, Bell, ArrowRight, GraduationCap,
@@ -15,6 +15,7 @@ import type { Tables } from "@/integrations/supabase/types";
 import { pesoCompact, pesoFixed as formatPHP } from "@/lib/format";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { academicYearOf, ayStart } from "@/lib/settings";
+import { programOffice } from "@/lib/permissions";
 
 export type OverviewApp = Tables<"applications"> & { scholarships: { name: string } | null; profiles?: Tables<"profiles"> | null };
 
@@ -40,11 +41,29 @@ type Props = {
   onViewOffice?: (office: string) => void;
   /** The academic year in the settings; budgets are per academic year. */
   currentYear?: string;
+  /** Name each program's office (for staff who see every office). */
+  showOffice?: boolean;
+  /** The school year shown, shared with the other admin pages (local when not given). */
+  year?: string;
+  onYearChange?: (year: string) => void;
 };
 
 export type OfficeRow = {
   key: string; name: string; programs: number; applications: number; pending: number; approved: number; budget: number; disbursed: number;
 };
+
+/** A titled group of dashboard cards. */
+function DashSection({ title, hint, children }: { title: string; hint?: ReactNode; children: ReactNode }) {
+  return (
+    <section aria-label={title} className="space-y-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b pb-1.5">
+        <h3 className="text-base font-semibold font-display">{title}</h3>
+        {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
+      </div>
+      {children}
+    </section>
+  );
+}
 
 const initials = (first?: string | null, last?: string | null) => `${(first || "?")[0] || ""}${(last || "")[0] || ""}`.toUpperCase();
 const DAY = 86400000;
@@ -173,10 +192,17 @@ function Trend({ current, previous }: { current: number; previous: number | null
 export default function OverviewPanel({
   applications, scholarships, profiles, notApplied = [], payments, auditLogs,
   firstName, refreshing, lastUpdated, loadError, onRefresh, onNavigate, onViewApp,
-  deletionRequests = 0, officeBreakdown = [], onViewOffice, currentYear = academicYearOf(new Date()),
+  deletionRequests = 0, officeBreakdown = [], onViewOffice, currentYear = academicYearOf(new Date()), showOffice = false, year: sharedYear, onYearChange,
 }: Props) {
   const [period, setPeriod] = useState("all");
-  const [year, setYear] = useState("all");
+  // "Educational Assistance · MSWDO" for staff who see every office; just the name otherwise.
+  const progLabel = (id: string, name?: string | null) => {
+    const n = name || scholarships.find((x) => x.id === id)?.name || "—";
+    return showOffice ? `${n} · ${programOffice(scholarships.find((x) => x.id === id)?.office)}` : n;
+  };
+  const [localYear, setLocalYear] = useState("all");
+  const year = sharedYear ?? localYear;
+  const setYear = onYearChange ?? setLocalYear;
 
   // School year of each record: the application's (and its payments'), or for a student, the year they registered.
   const appYear = (a: OverviewApp) => a.academic_year || academicYearOf(new Date(a.created_at));
@@ -248,7 +274,7 @@ export default function OverviewPanel({
     const dist = new Map<string, { name: string; value: number }>();
     curApps.forEach((a) => {
       const key = a.scholarship_id ?? "none";
-      const e = dist.get(key) ?? { name: a.scholarships?.name || "Unassigned", value: 0 };
+      const e = dist.get(key) ?? { name: a.scholarship_id ? progLabel(a.scholarship_id, a.scholarships?.name) : "Unassigned", value: 0 };
       e.value += 1; dist.set(key, e);
     });
 
@@ -293,7 +319,8 @@ export default function OverviewPanel({
       disapprovalRate: total ? Math.round((disapproved / total) * 100) : 0,
       activeStudents: profiles.filter((p) => p.is_active).length,
     };
-  }, [applications, scholarships, profiles, notApplied, payments, period, year, years, currentYear]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- progLabel only reads scholarships and showOffice
+  }, [applications, scholarships, profiles, notApplied, payments, period, year, years, currentYear, showOffice]);
   const scope = [year !== "all" && `S.Y. ${year}`, period !== "all" && PERIODS[period]].filter(Boolean).join(" · ") || "All time";
 
   const pendingApps = useMemo(() => applications.filter((a) => a.status === "Pending").slice(0, 5), [applications]);
@@ -314,9 +341,9 @@ export default function OverviewPanel({
     { show: data.awaiting.length > 0, icon: Wallet, tone: "text-warning", text: `${data.awaiting.length} approved application${data.awaiting.length === 1 ? "" : "s"} with no payment`, cta: "Disburse", go: () => onNavigate("disbursement") },
     { show: data.queuedCount > 0, icon: Banknote, tone: "text-primary", text: `${data.queuedCount} payment${data.queuedCount === 1 ? "" : "s"} pending or processing (${formatPHP(data.queued)})`, cta: "Open", go: () => onNavigate("disbursement") },
     { show: data.pendingAll > 0, icon: Clock, tone: "text-warning", text: `${data.pendingAll} application${data.pendingAll === 1 ? "" : "s"} waiting for review`, cta: "Review", go: () => onNavigate("applications", { status: "pending" }) },
-    ...data.closingSoon.map((s) => ({ show: true, icon: CalendarClock, tone: "text-warning", text: `${s.name} closes ${new Date(`${s.deadline}T00:00:00`).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}`, cta: "View", go: () => onNavigate("scholarships") })),
-    ...data.pastDeadline.map((s) => ({ show: true, icon: AlertTriangle, tone: "text-destructive", text: `${s.name} is active but past its deadline`, cta: "Fix", go: () => onNavigate("scholarships") })),
-    ...data.fullPrograms.map((s) => ({ show: true, icon: GraduationCap, tone: "text-warning", text: `${s.name} has filled all ${s.slots} slots`, cta: "View", go: () => onNavigate("scholarships") })),
+    ...data.closingSoon.map((s) => ({ show: true, icon: CalendarClock, tone: "text-warning", text: `${progLabel(s.id, s.name)} closes ${new Date(`${s.deadline}T00:00:00`).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}`, cta: "View", go: () => onNavigate("scholarships") })),
+    ...data.pastDeadline.map((s) => ({ show: true, icon: AlertTriangle, tone: "text-destructive", text: `${progLabel(s.id, s.name)} is active but past its deadline`, cta: "Fix", go: () => onNavigate("scholarships") })),
+    ...data.fullPrograms.map((s) => ({ show: true, icon: GraduationCap, tone: "text-warning", text: `${progLabel(s.id, s.name)} has filled all ${s.slots} slots`, cta: "View", go: () => onNavigate("scholarships") })),
     { show: deletionRequests > 0, icon: UserX, tone: "text-destructive", text: `${deletionRequests} account deletion request${deletionRequests === 1 ? "" : "s"} waiting`, cta: "Handle", go: () => onNavigate("students") },
   ].filter((x) => x.show);
 
@@ -380,223 +407,225 @@ export default function OverviewPanel({
         </div>
       </div>
 
-      {/* Stat cards, in applicant pipeline order */}
-      <section aria-label="Applicant pipeline" className="space-y-2">
-      <div className="flex items-baseline justify-between gap-2">
-        <h3 className="text-sm font-semibold">Applicant pipeline</h3>
-        <span className="text-xs text-muted-foreground">registered → applied → decided → scholar → paid</span>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
-        {stats.map((stat) => (
-          <Card key={stat.label} className="hover-lift cursor-pointer min-w-0" role="button" tabIndex={0} onClick={stat.go} title={"title" in stat ? stat.title : undefined}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") stat.go(); }}>
-            <CardContent className="py-4">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-medium text-muted-foreground truncate">{stat.label}</p>
-                <div className="h-8 w-8 rounded-lg bg-accent flex items-center justify-center shrink-0"><stat.icon className={`h-4 w-4 ${stat.color}`} /></div>
-              </div>
-              <p className="mt-2 text-3xl font-bold font-display tabular-nums leading-none truncate">{stat.value}</p>
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <p className="text-xs text-muted-foreground truncate">{stat.sub}</p>
-                {stat.trend}
-              </div>
+
+      {/* 1. Where applicants are (the filters above set these numbers) */}
+      <DashSection title="Applicant pipeline" hint="registered → applied → decided → scholar → paid">
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
+          {stats.map((stat) => (
+            <Card key={stat.label} className="hover-lift cursor-pointer min-w-0" role="button" tabIndex={0} onClick={stat.go} title={"title" in stat ? stat.title : undefined}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") stat.go(); }}>
+              <CardContent className="py-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-muted-foreground truncate">{stat.label}</p>
+                  <div className="h-8 w-8 rounded-lg bg-accent flex items-center justify-center shrink-0"><stat.icon className={`h-4 w-4 ${stat.color}`} /></div>
+                </div>
+                <p className="mt-2 text-3xl font-bold font-display tabular-nums leading-none truncate">{stat.value}</p>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground truncate">{stat.sub}</p>
+                  {stat.trend}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        {period !== "all" ? <p className="text-xs text-muted-foreground">Trend arrows compare with the previous equal-length period.</p>
+          : year !== "all" && <p className="text-xs text-muted-foreground">Trend arrows compare with S.Y. {prevYearOf(year)}.</p>}
+      </DashSection>
+
+      {/* 2. What needs doing now */}
+      <DashSection title="To do" hint="Items waiting on staff">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <Card className="lg:col-span-2">
+            <CardHeader><CardTitle className="text-base flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-warning" />Needs Attention</CardTitle></CardHeader>
+            <CardContent>
+              {attention.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-6 text-center">All clear — nothing needs action right now.</p>
+              ) : (
+                <ul className="divide-y">
+                  {attention.map((a, i) => (
+                    <li key={i} className="flex items-center gap-3 py-2.5">
+                      <a.icon className={`h-4 w-4 shrink-0 ${a.tone}`} />
+                      <span className="text-sm flex-1 min-w-0">{a.text}</span>
+                      <Button size="sm" variant="secondary" className="cursor-pointer shrink-0" onClick={a.go}>{a.cta}</Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </CardContent>
           </Card>
-        ))}
-      </div>
-      </section>
-      {period !== "all" ? <p className="-mt-3 text-xs text-muted-foreground">Trend arrows compare with the previous equal-length period.</p>
-        : year !== "all" && <p className="-mt-3 text-xs text-muted-foreground">Trend arrows compare with S.Y. {prevYearOf(year)}.</p>}
 
-      {/* Needs attention + Funds */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="lg:col-span-2">
-          <CardHeader><CardTitle className="text-base flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-warning" />Needs Attention</CardTitle></CardHeader>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="text-base">Pending Review</CardTitle>
+              <button type="button" onClick={() => onNavigate("applications", { status: "pending" })} className="text-xs font-medium text-primary hover:underline cursor-pointer">View All</button>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {pendingApps.length === 0 && <p className="text-sm text-muted-foreground py-6 text-center">Nothing pending review.</p>}
+              {pendingApps.map((a) => (
+                <button key={a.id} type="button" onClick={() => onViewApp(a)} className="w-full flex items-center gap-3 text-left rounded-lg p-2 hover:bg-muted/40 transition-colors cursor-pointer">
+                  <div className="h-9 w-9 rounded-full bg-accent text-accent-foreground text-xs font-semibold flex items-center justify-center shrink-0">{initials(a.profiles?.first_name, a.profiles?.last_name)}</div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "—"}</p>
+                    <p className="text-xs text-muted-foreground truncate">{a.scholarship_id ? progLabel(a.scholarship_id, a.scholarships?.name) : "—"}</p>
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                </button>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      </DashSection>
+
+      {/* 3. Applications over time */}
+      <DashSection title="Applications" hint={scope}>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <ChartCard className="lg:col-span-2" title="Applications per Month"
+            subtitle={`${data.monthTotal} ${year !== "all" ? `in S.Y. ${year}` : `in the last ${data.months} months`} · peak ${data.monthPeak.month} (${data.monthPeak.count}) · avg ${data.monthAvg.toFixed(1)}/mo`}
+            table={{ head: ["Month", "Applications"], rows: data.perMonth.map((m) => [m.month, m.count]) }} empty={data.monthTotal === 0}>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={data.perMonth} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+                <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+                <Tooltip content={<MonthTooltip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.6 }} />
+                <ReferenceLine y={data.monthAvg} stroke="hsl(var(--muted-foreground))" strokeDasharray="4 4" strokeOpacity={0.6} />
+                <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={28} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard title="Application Status" subtitle={`${data.total} application${data.total === 1 ? "" : "s"} · ${scope}`}
+            table={{ head: ["Status", "Count", "Share"], rows: data.statusPie.map((d) => [d.name, d.value, `${data.total ? Math.round((d.value / data.total) * 100) : 0}%`]) }} empty={data.statusPie.length === 0}>
+            <div className="pt-2">
+              <p className="mb-3 text-3xl font-bold font-display tabular-nums">{data.approvalRate}%<span className="ml-2 text-sm font-normal text-muted-foreground">approved</span></p>
+              <SegmentedBar total={data.total} ariaLabel={`Application status: ${data.statusPie.map((d) => `${d.value} ${d.name}`).join(", ")}`}
+                segments={["Approved", "Pending", "Waitlisted", "Disapproved"].map((n) => ({ name: n, value: data.statusPie.find((d) => d.name === n)?.value ?? 0, color: STATUS_COLOR[n] }))} />
+            </div>
+          </ChartCard>
+        </div>
+      </DashSection>
+
+      {/* 4. Programs and money */}
+      <DashSection title="Programs & funds">
+        {officeBreakdown.length > 0 && (
+          <Card>
+            <CardHeader><CardTitle className="text-base">By Office</CardTitle></CardHeader>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
+                  <TableHead>Office</TableHead><TableHead className="text-right">Programs</TableHead><TableHead className="text-right">Applications</TableHead>
+                  <TableHead className="text-right">Pending</TableHead><TableHead className="text-right">Approved</TableHead>
+                  <TableHead className="text-right">Budget</TableHead><TableHead className="text-right">Disbursed</TableHead><TableHead />
+                </TableRow></TableHeader>
+                <TableBody>
+                  {officeBreakdown.map((r) => (
+                    <TableRow key={r.key}>
+                      <TableCell className="font-medium">{r.name}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.programs}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.applications}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.pending}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.approved}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.budget ? formatPHP(r.budget) : "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatPHP(r.disbursed)}</TableCell>
+                      <TableCell className="text-right">
+                        {onViewOffice && r.key !== "municipal" && <Button size="sm" variant="ghost" onClick={() => onViewOffice(r.key)}>View <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        )}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <Card className="lg:col-span-2">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="text-base">Active Scholarships</CardTitle>
+              <button type="button" onClick={() => onNavigate("scholarships")} className="text-xs font-medium text-primary hover:underline cursor-pointer">View All</button>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {data.active.length === 0 && <p className="text-sm text-muted-foreground py-6 text-center">No active scholarships yet.</p>}
+              {data.active.slice(0, 4).map((s) => {
+                const filled = data.approvedBy(s.id);
+                const pct = s.slots > 0 ? Math.min(100, Math.round((filled / s.slots) * 100)) : 0;
+                return (
+                  <div key={s.id} className="rounded-lg border border-border p-3 hover:bg-muted/40 transition-colors">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium truncate">{s.name}</p>
+                        {showOffice && <p className="text-xs text-muted-foreground">{programOffice(s.office)}</p>}
+                        <p className="text-xs text-muted-foreground mt-0.5">Deadline: {s.deadline || "—"}</p>
+                        <p className="text-xs text-muted-foreground mt-1 flex items-center gap-3">
+                          <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {data.applicantsBy(s.id)} applicants</span>
+                          <span className="flex items-center gap-1"><GraduationCap className="h-3 w-3" /> {filled}/{s.slots} slots filled · {Math.max(0, s.slots - filled)} left</span>
+                        </p>
+                        <Progress value={pct} className="mt-2 h-1.5" />
+                      </div>
+                      <Button size="sm" variant="secondary" className="shrink-0 cursor-pointer" onClick={() => onNavigate("scholarships")}>View</Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="text-base">Funds</CardTitle>
+              <button type="button" onClick={() => onNavigate("funds")} className="text-xs font-medium text-primary hover:underline cursor-pointer">Details</button>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div><p className="text-xs text-muted-foreground">{year === "all" ? "Budget (all school years)" : `Budget (S.Y. ${year})`}</p><p className="text-lg font-bold font-display">{formatPHP(data.budget)}</p></div>
+              <Progress value={data.budget ? Math.min(100, ((data.disbursedAll + data.queued) / data.budget) * 100) : 0} className="h-2" />
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div><p className="text-muted-foreground">Disbursed</p><p className="font-semibold text-success">{formatPHP(data.disbursedAll)}</p></div>
+                <div><p className="text-muted-foreground">Queued</p><p className="font-semibold text-warning">{formatPHP(data.queued)}</p></div>
+                <div><p className="text-muted-foreground">Remaining</p><p className={`font-semibold ${data.remaining < 0 ? "text-destructive" : ""}`}>{formatPHP(data.remaining)}</p></div>
+              </div>
+              {data.remaining < 0 && <p className="text-xs text-destructive">Committed payments exceed the budget.</p>}
+            </CardContent>
+          </Card>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <ChartCard className="lg:col-span-2" title="Applications by Scholarship" subtitle={`Top programs · ${scope}`}
+            table={{ head: ["Scholarship", "Applications"], rows: data.distribution.map((d) => [d.name, d.value]) }} empty={data.distribution.length === 0}>
+            <RankedBars rows={data.distribution} unit="applications" />
+          </ChartCard>
+
+          <ChartCard title="Scholars" subtitle="Active vs inactive accounts"
+            table={{ head: ["Group", "Scholars"], rows: [["Active", data.activeStudents], ["Inactive", profiles.length - data.activeStudents]] }} empty={profiles.length === 0}>
+            <div className="pt-2">
+              <p className="mb-3 text-3xl font-bold font-display tabular-nums">{profiles.length ? Math.round((data.activeStudents / profiles.length) * 100) : 0}%<span className="ml-2 text-sm font-normal text-muted-foreground">active</span></p>
+              <SegmentedBar total={profiles.length} ariaLabel={`${data.activeStudents} active and ${profiles.length - data.activeStudents} inactive scholars`}
+                segments={[{ name: "Active", value: data.activeStudents, color: "hsl(var(--success))" }, { name: "Inactive", value: profiles.length - data.activeStudents, color: "hsl(var(--muted-foreground))" }]} />
+            </div>
+          </ChartCard>
+        </div>
+      </DashSection>
+
+      {/* 5. Latest changes */}
+      <DashSection title="Recent activity">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2"><ScrollText className="h-4 w-4" />Recent Activity</CardTitle>
+            <button type="button" onClick={() => onNavigate("audit-logs")} className="text-xs font-medium text-primary hover:underline cursor-pointer">View audit log</button>
+          </CardHeader>
           <CardContent>
-            {attention.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-6 text-center">All clear — nothing needs action right now.</p>
+            {recent.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">No activity recorded yet.</p>
             ) : (
               <ul className="divide-y">
-                {attention.map((a, i) => (
-                  <li key={i} className="flex items-center gap-3 py-2.5">
-                    <a.icon className={`h-4 w-4 shrink-0 ${a.tone}`} />
-                    <span className="text-sm flex-1 min-w-0">{a.text}</span>
-                    <Button size="sm" variant="secondary" className="cursor-pointer shrink-0" onClick={a.go}>{a.cta}</Button>
+                {recent.map((l) => (
+                  <li key={l.id} className="py-2 flex items-center justify-between gap-3 text-sm">
+                    <span className="min-w-0 truncate"><span className="font-medium">{l.action.replace(/_/g, " ")}</span> <span className="text-muted-foreground">· {l.entity_type}{l.user_email ? ` · ${l.user_email}` : ""}</span></span>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">{new Date(l.created_at).toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
                   </li>
                 ))}
               </ul>
             )}
           </CardContent>
         </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base">Funds</CardTitle>
-            <button type="button" onClick={() => onNavigate("funds")} className="text-xs font-medium text-primary hover:underline cursor-pointer">Details</button>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div><p className="text-xs text-muted-foreground">{year === "all" ? "Budget (all school years)" : `Budget (S.Y. ${year})`}</p><p className="text-lg font-bold font-display">{formatPHP(data.budget)}</p></div>
-            <Progress value={data.budget ? Math.min(100, ((data.disbursedAll + data.queued) / data.budget) * 100) : 0} className="h-2" />
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <div><p className="text-muted-foreground">Disbursed</p><p className="font-semibold text-success">{formatPHP(data.disbursedAll)}</p></div>
-              <div><p className="text-muted-foreground">Queued</p><p className="font-semibold text-warning">{formatPHP(data.queued)}</p></div>
-              <div><p className="text-muted-foreground">Remaining</p><p className={`font-semibold ${data.remaining < 0 ? "text-destructive" : ""}`}>{formatPHP(data.remaining)}</p></div>
-            </div>
-            {data.remaining < 0 && <p className="text-xs text-destructive">Committed payments exceed the budget.</p>}
-          </CardContent>
-        </Card>
-      </div>
-
-      {officeBreakdown.length > 0 && (
-        <Card>
-          <CardHeader><CardTitle className="text-base">By Office</CardTitle></CardHeader>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader><TableRow className="bg-muted/60 hover:bg-muted/60">
-                <TableHead>Office</TableHead><TableHead className="text-right">Programs</TableHead><TableHead className="text-right">Applications</TableHead>
-                <TableHead className="text-right">Pending</TableHead><TableHead className="text-right">Approved</TableHead>
-                <TableHead className="text-right">Budget</TableHead><TableHead className="text-right">Disbursed</TableHead><TableHead />
-              </TableRow></TableHeader>
-              <TableBody>
-                {officeBreakdown.map((r) => (
-                  <TableRow key={r.key}>
-                    <TableCell className="font-medium">{r.name}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.programs}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.applications}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.pending}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.approved}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.budget ? formatPHP(r.budget) : "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatPHP(r.disbursed)}</TableCell>
-                    <TableCell className="text-right">
-                      {onViewOffice && <Button size="sm" variant="ghost" onClick={() => onViewOffice(r.key)}>View <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button>}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </Card>
-      )}
-
-      {/* Trends + status */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <ChartCard className="lg:col-span-2" title="Applications per Month"
-          subtitle={`${data.monthTotal} ${year !== "all" ? `in S.Y. ${year}` : `in the last ${data.months} months`} · peak ${data.monthPeak.month} (${data.monthPeak.count}) · avg ${data.monthAvg.toFixed(1)}/mo`}
-          table={{ head: ["Month", "Applications"], rows: data.perMonth.map((m) => [m.month, m.count]) }} empty={data.monthTotal === 0}>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={data.perMonth} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
-              <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
-              <Tooltip content={<MonthTooltip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.6 }} />
-              <ReferenceLine y={data.monthAvg} stroke="hsl(var(--muted-foreground))" strokeDasharray="4 4" strokeOpacity={0.6} />
-              <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={28} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
-
-        <ChartCard title="Application Status" subtitle={`${data.total} application${data.total === 1 ? "" : "s"} · ${scope}`}
-          table={{ head: ["Status", "Count", "Share"], rows: data.statusPie.map((d) => [d.name, d.value, `${data.total ? Math.round((d.value / data.total) * 100) : 0}%`]) }} empty={data.statusPie.length === 0}>
-          <div className="pt-2">
-            <p className="mb-3 text-3xl font-bold font-display tabular-nums">{data.approvalRate}%<span className="ml-2 text-sm font-normal text-muted-foreground">approved</span></p>
-            <SegmentedBar total={data.total} ariaLabel={`Application status: ${data.statusPie.map((d) => `${d.value} ${d.name}`).join(", ")}`}
-              segments={["Approved", "Pending", "Waitlisted", "Disapproved"].map((n) => ({ name: n, value: data.statusPie.find((d) => d.name === n)?.value ?? 0, color: STATUS_COLOR[n] }))} />
-          </div>
-        </ChartCard>
-      </div>
-
-      {/* Active scholarships + Pending review */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base">Active Scholarships</CardTitle>
-            <button type="button" onClick={() => onNavigate("scholarships")} className="text-xs font-medium text-primary hover:underline cursor-pointer">View All</button>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {data.active.length === 0 && <p className="text-sm text-muted-foreground py-6 text-center">No active scholarships yet.</p>}
-            {data.active.slice(0, 4).map((s) => {
-              const filled = data.approvedBy(s.id);
-              const pct = s.slots > 0 ? Math.min(100, Math.round((filled / s.slots) * 100)) : 0;
-              return (
-                <div key={s.id} className="rounded-lg border border-border p-3 hover:bg-muted/40 transition-colors">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium truncate">{s.name}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">Deadline: {s.deadline || "—"}</p>
-                      <p className="text-xs text-muted-foreground mt-1 flex items-center gap-3">
-                        <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {data.applicantsBy(s.id)} applicants</span>
-                        <span className="flex items-center gap-1"><GraduationCap className="h-3 w-3" /> {filled}/{s.slots} slots filled · {Math.max(0, s.slots - filled)} left</span>
-                      </p>
-                      <Progress value={pct} className="mt-2 h-1.5" />
-                    </div>
-                    <Button size="sm" variant="secondary" className="shrink-0 cursor-pointer" onClick={() => onNavigate("scholarships")}>View</Button>
-                  </div>
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base">Pending Review</CardTitle>
-            <button type="button" onClick={() => onNavigate("applications", { status: "pending" })} className="text-xs font-medium text-primary hover:underline cursor-pointer">View All</button>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {pendingApps.length === 0 && <p className="text-sm text-muted-foreground py-6 text-center">Nothing pending review.</p>}
-            {pendingApps.map((a) => (
-              <button key={a.id} type="button" onClick={() => onViewApp(a)} className="w-full flex items-center gap-3 text-left rounded-lg p-2 hover:bg-muted/40 transition-colors cursor-pointer">
-                <div className="h-9 w-9 rounded-full bg-accent text-accent-foreground text-xs font-semibold flex items-center justify-center shrink-0">{initials(a.profiles?.first_name, a.profiles?.last_name)}</div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate">{a.profiles ? `${a.profiles.first_name || ""} ${a.profiles.last_name || ""}`.trim() : "—"}</p>
-                  <p className="text-xs text-muted-foreground truncate">{a.scholarships?.name || "—"}</p>
-                </div>
-                <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
-              </button>
-            ))}
-          </CardContent>
-        </Card>
-      </div>
-
-
-      {/* Distribution + students */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <ChartCard className="lg:col-span-2" title="Applications by Scholarship" subtitle={`Top programs · ${scope}`}
-          table={{ head: ["Scholarship", "Applications"], rows: data.distribution.map((d) => [d.name, d.value]) }} empty={data.distribution.length === 0}>
-          <RankedBars rows={data.distribution} unit="applications" />
-        </ChartCard>
-
-        <ChartCard title="Scholars" subtitle="Active vs inactive accounts"
-          table={{ head: ["Group", "Scholars"], rows: [["Active", data.activeStudents], ["Inactive", profiles.length - data.activeStudents]] }} empty={profiles.length === 0}>
-          <div className="pt-2">
-            <p className="mb-3 text-3xl font-bold font-display tabular-nums">{profiles.length ? Math.round((data.activeStudents / profiles.length) * 100) : 0}%<span className="ml-2 text-sm font-normal text-muted-foreground">active</span></p>
-            <SegmentedBar total={profiles.length} ariaLabel={`${data.activeStudents} active and ${profiles.length - data.activeStudents} inactive scholars`}
-              segments={[{ name: "Active", value: data.activeStudents, color: "hsl(var(--success))" }, { name: "Inactive", value: profiles.length - data.activeStudents, color: "hsl(var(--muted-foreground))" }]} />
-          </div>
-        </ChartCard>
-      </div>
-
-      {/* Recent activity */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2"><ScrollText className="h-4 w-4" />Recent Activity</CardTitle>
-          <button type="button" onClick={() => onNavigate("audit-logs")} className="text-xs font-medium text-primary hover:underline cursor-pointer">View audit log</button>
-        </CardHeader>
-        <CardContent>
-          {recent.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">No activity recorded yet.</p>
-          ) : (
-            <ul className="divide-y">
-              {recent.map((l) => (
-                <li key={l.id} className="py-2 flex items-center justify-between gap-3 text-sm">
-                  <span className="min-w-0 truncate"><span className="font-medium">{l.action.replace(/_/g, " ")}</span> <span className="text-muted-foreground">· {l.entity_type}{l.user_email ? ` · ${l.user_email}` : ""}</span></span>
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">{new Date(l.created_at).toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      </DashSection>
     </div>
   );
 }

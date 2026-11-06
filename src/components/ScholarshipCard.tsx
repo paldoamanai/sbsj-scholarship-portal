@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AppDialog, DialogSection } from "@/components/AppDialog";
 import { useState } from "react";
+import { programOffice } from "@/lib/permissions";
 import { availabilityInfo, deadlineLabel, peso, requirementLines, slotsLabel, textLines, type PublicScholarship } from "@/lib/scholarships";
 
 interface ScholarshipCardProps {
@@ -37,7 +38,10 @@ const ScholarshipCard = ({ program, globalMinGrade = 0, onApply, hideAmount = fa
             </span>
           )}
           <div className="flex items-start justify-between gap-2">
-            <CardTitle className="text-lg font-display">{name}</CardTitle>
+            <div className="min-w-0">
+              <CardTitle className="text-lg font-display">{name}</CardTitle>
+              <p className="mt-1 text-xs font-medium text-muted-foreground">Offered by {programOffice(program.office)}</p>
+            </div>
             <Badge variant="secondary" className="shrink-0">
               <Calendar className="mr-1 h-3 w-3" />
               {deadline}

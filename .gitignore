@@ -35,6 +35,3 @@ supabase/.temp/
 
 # Claude Code local settings
 .claude/settings.local.json
-
-# pdf.js worker, copied from node_modules by scripts/copy-pdf-worker.mjs
-public/pdf.worker.min.mjs

@@ -1,7 +1,7 @@
 "use client";
 
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import SearchableSelect from "@/components/SearchableSelect";
 import { BARANGAYS, isHomeMunicipality } from "@/lib/barangays";
 
 /**
@@ -19,12 +19,10 @@ export default function BarangayField({ value, onChange, municipality, className
   }
   const legacy = value && !(BARANGAYS as readonly string[]).includes(value) ? value : null;
   return (
-    <Select value={value || undefined} onValueChange={onChange}>
-      <SelectTrigger className={className}><SelectValue placeholder="Select barangay" /></SelectTrigger>
-      <SelectContent>
-        {legacy && <SelectItem value={legacy}>{legacy} (not on the list, pick again)</SelectItem>}
-        {BARANGAYS.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-      </SelectContent>
-    </Select>
+    <SearchableSelect className={className} value={value} onChange={onChange} placeholder="Select barangay" searchPlaceholder="Search barangay…"
+      options={[
+        ...(legacy ? [{ value: legacy, label: `${legacy} (not on the list, pick again)` }] : []),
+        ...BARANGAYS.map((b) => ({ value: b, label: b })),
+      ]} />
   );
 }
