@@ -15,7 +15,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { AlertTriangle, CheckCircle, ExternalLink, Loader2, Minus, Plus, RefreshCw, ShieldCheck } from "@/components/icons";
+import { AlertTriangle, CheckCircle, Loader2, RefreshCw, ShieldCheck } from "@/components/icons";
+import { FileView } from "@/components/FilePreview";
 import {
   FLAG_INFO, HIGH_FLAGS, RISK_LABEL, RISK_TONE, SEVERITY_TONE, documentRisk, flagInfo, scanDocument,
   detectorImage, type Risk, type Sample, type ScanResult, type Signatory, type UploadChecks,
@@ -167,24 +168,7 @@ const fmtKind: Record<string, string> = {
 };
 
 function Zoomable({ url, mime, label }: { url: string; mime: string | null; label: string }) {
-  const [zoom, setZoom] = useState(1);
-  if (mime === "application/pdf") {
-    return <iframe title={label} src={url} className="h-[60vh] w-full rounded-lg border bg-white" />;
-  }
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-end gap-1">
-        <Button type="button" size="icon" variant="outline" className="h-7 w-7" aria-label="Zoom out" onClick={() => setZoom((z) => Math.max(1, z - 0.5))}><Minus className="h-3.5 w-3.5" /></Button>
-        <span className="w-10 text-center text-xs tabular-nums text-muted-foreground">{Math.round(zoom * 100)}%</span>
-        <Button type="button" size="icon" variant="outline" className="h-7 w-7" aria-label="Zoom in" onClick={() => setZoom((z) => Math.min(5, z + 0.5))}><Plus className="h-3.5 w-3.5" /></Button>
-        <a href={url} target="_blank" rel="noopener noreferrer" className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-md border" aria-label="Open in a new tab"><ExternalLink className="h-3.5 w-3.5" /></a>
-      </div>
-      <div className="h-[60vh] overflow-auto rounded-lg border bg-muted/30">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={url} alt={label} style={{ width: `${zoom * 100}%`, maxWidth: "none" }} className="block" />
-      </div>
-    </div>
-  );
+  return <FileView url={url} mime={mime} title={label} height="h-[60vh]" />;
 }
 
 export function DocumentViewer({

@@ -21,6 +21,7 @@ import { BARANGAYS } from "@/lib/barangays";
 import { safeFileName } from "@/lib/documents";
 import { documentRisk, sampleSignature } from "@/lib/doc-checks";
 import { FlagBadges, RiskBadge, loadCheckRefs } from "@/components/admin/DocumentChecks";
+import { FilePreviewDialog, type PreviewFile } from "@/components/FilePreview";
 
 type App = { id: string; user_id: string; academic_year: string | null; status: string; scholarships?: { name: string } | null };
 type Profile = Pick<Tables<"profiles">, "id" | "first_name" | "last_name" | "email">;
@@ -116,6 +117,7 @@ export default function DocumentChecksPanel({
   const [samples, setSamples] = useState<(Tables<"document_samples"> & { url?: string })[]>([]);
   const [sample, setSample] = useState<{ document_type: string; place: string; label: string; file: File | null }>({ document_type: documentTypes[0] ?? "", place: "", label: "", file: null });
   const [savingSample, setSavingSample] = useState(false);
+  const [previewSample, setPreviewSample] = useState<PreviewFile | null>(null);
   const loadSamples = async () => {
     const { data } = await supabase.from("document_samples").select("*").order("document_type").order("created_at", { ascending: false });
     const rows = await Promise.all((data ?? []).map(async (s) => {
@@ -343,12 +345,13 @@ export default function DocumentChecksPanel({
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   {samples.map((s) => (
                     <div key={s.id} className="overflow-hidden rounded-lg border">
-                      <a href={s.url} target="_blank" rel="noopener noreferrer" className="block h-40 bg-muted/40">
+                      <button type="button" className="block h-40 w-full bg-muted/40" disabled={!s.url}
+                        onClick={() => s.url && setPreviewSample({ title: `Sample · ${s.document_type}`, url: s.url, mime: s.mime_type, description: [s.place, s.label].filter(Boolean).join(" · ") || undefined })}>
                         {s.mime_type === "application/pdf" || !s.url
                           ? <div className="flex h-full items-center justify-center text-muted-foreground"><FileText className="h-8 w-8" /></div>
                           // eslint-disable-next-line @next/next/no-img-element
                           : <img src={s.url} alt={s.document_type} className="h-full w-full object-contain" />}
-                      </a>
+                      </button>
                       <div className="flex items-start justify-between gap-2 p-2 text-xs">
                         <div className="min-w-0"><p className="truncate font-medium">{s.document_type}</p><p className="truncate text-muted-foreground">{[s.place, s.label].filter(Boolean).join(" · ") || "Any place"}</p></div>
                         {canReview && <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" aria-label="Delete sample" onClick={() => removeSample(s)}><Trash2 className="h-3.5 w-3.5" /></Button>}
@@ -400,6 +403,8 @@ export default function DocumentChecksPanel({
           </Card>
         </TabsContent>
       </Tabs>
+
+      <FilePreviewDialog file={previewSample} onClose={() => setPreviewSample(null)} />
 
       <ReasonDialog open={!!barTarget} onClose={() => setBarTarget(null)} title={`Bar ${personName(barTarget ?? undefined)} from applying?`}
         description="They won't be able to submit new applications. Current applications aren't changed. This is recorded in the audit log."

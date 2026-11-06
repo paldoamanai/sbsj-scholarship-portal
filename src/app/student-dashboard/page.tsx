@@ -35,6 +35,7 @@ import { useSystemSettings } from "@/hooks/use-system-settings";
 import { academicYearOf, applicationsBlockedReason, ayStart } from "@/lib/settings";
 import { APPLICATION_DOCS, DOC_MIME, LETTER_OF_INTENT, MOA, PHOTO_MIME, documentPath, shrinkPhoto, uploadLetterPhoto, uploadUserDocument, type UploadExtras } from "@/lib/documents";
 import { checkUpload, fingerprint, type UploadChecks } from "@/lib/doc-checks";
+import { FilePreviewDialog, type PreviewFile } from "@/components/FilePreview";
 import { uploadPendingDocuments } from "@/lib/pending-documents";
 import { HOUSE_PHOTO, approvalDocuments, asksLetter, documentNote, followUpDocuments, needsHomeVisit, needsHousePin, needsMoa, photosOnly, programDocuments } from "@/lib/office-requirements";
 import HouseLocationDialog from "@/components/student/HouseLocationDialog";
@@ -328,6 +329,8 @@ export default function StudentDashboardPage() {
   const [applyLetter, setApplyLetter]               = useState<{ file: File; url: string; checks: UploadChecks | null } | null>(null);
   // A picked photo with quality problems: the student retakes it or uploads it anyway.
   const [qualityPrompt, setQualityPrompt]           = useState<{ docType: string; warnings: string[]; resolve: (ok: boolean) => void } | null>(null);
+  // The document being viewed, shown over the page.
+  const [previewFile, setPreviewFile]               = useState<PreviewFile | null>(null);
   // Barred from applying after fake documents (migration 087).
   const [barred, setBarred]                         = useState(false);
   const [replacingLetter, setReplacingLetter]       = useState(false);
@@ -729,10 +732,9 @@ export default function StudentDashboardPage() {
   const openDocument = async (doc: Tables<"documents">) => {
     const path = documentPath(doc);
     if (!path) { toast.error("Could not open document"); return; }
-    const win = window.open("", "_blank");
     const { data, error } = await supabase.storage.from("documents").createSignedUrl(path, 3600);
-    if (error || !data?.signedUrl) { win?.close(); toast.error("Could not open document"); return; }
-    if (win) win.location.href = data.signedUrl; else window.location.href = data.signedUrl;
+    if (error || !data?.signedUrl) { toast.error("Could not open document"); return; }
+    setPreviewFile({ title: doc.document_type, url: data.signedUrl, mime: doc.mime_type, fileName: doc.file_name, description: doc.file_name });
   };
 
   // ── Loading ────────────────────────────────────────────────────────────────
@@ -1595,6 +1597,8 @@ export default function StudentDashboardPage() {
           <span className="font-semibold text-foreground">{removeDoc?.document_type}</span> ({removeDoc?.file_name}) will be deleted. You will need to upload it again before you can apply.
         </p>
       </AppDialog>
+
+      <FilePreviewDialog file={previewFile} onClose={() => setPreviewFile(null)} />
 
       <AppDialog open={!!qualityPrompt} onOpenChange={(o) => { if (!o) qualityPrompt?.resolve(false); }} size="sm" className="rounded-2xl"
         title="Check your photo"

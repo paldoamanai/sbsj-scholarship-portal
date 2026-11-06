@@ -18,7 +18,7 @@ import {
   Plus, Pencil, Trash2, CheckCircle, XCircle, Clock, Eye,
   Menu, X, Search, LogOut, Wallet, Banknote, BarChart3,
   Bell, ScrollText, Settings as SettingsIcon, Lock,
-  FileDown, Receipt, Loader2, User, ArrowRight,
+  FileDown, Receipt, Loader2, User, ArrowRight, Download,
    ChevronRight, ChevronLeft, ExternalLink, Power, Hourglass, RotateCcw, Copy, AlertTriangle, ShieldCheck, Undo2, MapPin, CalendarClock, Send, ClipboardCheck,
 } from "@/components/icons";
 import { createClient } from "@/lib/supabase/client";
@@ -54,6 +54,7 @@ import { directionsLink, distanceKm, earthLink, fmtDistance, googleMapsLink, str
 import HomeVisitsPanel from "@/components/admin/HomeVisitsPanel";
 import DocumentChecksPanel from "@/components/admin/DocumentChecksPanel";
 import ApplicationVerification from "@/components/admin/ApplicationVerification";
+import { FileView } from "@/components/FilePreview";
 import { DocCheckLine, DocumentViewer, RiskBadge, useAutoScan } from "@/components/admin/DocumentChecks";
 import { DISAPPROVAL_REASONS, applicationRisk } from "@/lib/doc-checks/flags";
 import { OFFICE_REQUIREMENTS } from "@/lib/office-requirements";
@@ -365,7 +366,7 @@ function AdminDashboard() {
   const [batchDate, setBatchDate] = useState("");
   const [payView, setPayView] = useState<"list" | "schedule">("list");
   // A stored receipt being viewed: its signed link and whether it's an image or a PDF (shown in the page).
-  const [fileView, setFileView] = useState<{ title: string; url: string; kind: "image" | "pdf" | "other" } | null>(null);
+  const [fileView, setFileView] = useState<{ title: string; url: string; kind: "image" | "pdf" | "other"; mime?: string | null; fileName?: string | null } | null>(null);
   const [disbLoading, setDisbLoading] = useState(false);
 
   useEffect(() => { loadData(); }, []);
@@ -612,10 +613,11 @@ function AdminDashboard() {
         {docs.map((d) => (
           <li key={d.id} className="rounded-md border px-3 py-2 text-sm">
             <div className="flex items-center justify-between gap-2">
-              <a href={d.url} target="_blank" rel="noopener noreferrer" className="flex min-w-0 items-center gap-2 hover:underline">
+              <button type="button" className="flex min-w-0 items-center gap-2 text-left hover:underline"
+                onClick={() => setFileView({ title: `${d.type} · ${personName(profiles.find((p) => p.id === d.row?.user_id))}`, url: d.url, kind: "other", mime: d.row?.mime_type, fileName: d.name })}>
                 <span className="truncate"><span className="font-medium">{d.type}</span> · {d.name}</span>
-                <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              </a>
+                <Eye className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              </button>
               <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${tone(d.status)}`}>{d.status}</span>
             </div>
             <div className="mt-1 flex items-center justify-between gap-2">
@@ -987,7 +989,7 @@ function AdminDashboard() {
     if (error || !data?.signedUrl) { toast.error("Could not open the file", { description: error?.message ?? "The file wasn't found in storage." }); return; }
     const ext = path.split(".").pop()?.toLowerCase() ?? "";
     const kind = ["jpg", "jpeg", "png", "gif", "webp"].includes(ext) ? "image" : ext === "pdf" ? "pdf" : "other";
-    setFileView({ title, url: data.signedUrl, kind });
+    setFileView({ title, url: data.signedUrl, kind, fileName: path.split("/").pop() });
   };
   const viewReceipt = (p: Tables<"payments">) => openStoredFile(p.receipt_path, "No receipt on file for this payment", `Disbursement receipt · ${payStudent(p)}`);
 
@@ -3701,19 +3703,23 @@ function AdminDashboard() {
         onConfirm={respondToRequest} />
 
       {/* Stored file viewer (receipts, grade reports) */}
-      <AppDialog open={!!fileView} onOpenChange={(o) => !o && setFileView(null)} size="lg" title={fileView?.title ?? "Receipt"}
+      <AppDialog open={!!fileView} onOpenChange={(o) => !o && setFileView(null)} size="xl" title={fileView?.title ?? "Receipt"}
         footer={fileView && <>
-          <Button variant="outline" asChild>
-            <a href={fileView.url} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-1 h-4 w-4" /> Open in new tab</a>
-          </Button>
+          <Button variant="outline" onClick={async () => {
+            // Cross-site links ignore the download attribute, so save it through a local copy.
+            try {
+              const blob = await (await fetch(fileView.url)).blob();
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(blob); a.download = fileView.fileName || fileView.title; a.click();
+              setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+            } catch { toast.error("Could not download the file"); }
+          }}><Download className="mr-1 h-4 w-4" /> Download</Button>
           <Button onClick={() => setFileView(null)}>Close</Button>
         </>}>
-        {fileView?.kind === "image" && (
-          // eslint-disable-next-line @next/next/no-img-element -- a short-lived signed link, not an optimisable asset
-          <img src={fileView.url} alt={fileView.title} className="mx-auto max-h-[70vh] w-auto rounded-lg border object-contain" />
+        {fileView && (
+          <FileView url={fileView.url} title={fileView.title} fileName={fileView.fileName}
+            mime={fileView.mime ?? (fileView.kind === "image" ? "image/jpeg" : fileView.kind === "pdf" ? "application/pdf" : null)} />
         )}
-        {fileView?.kind === "pdf" && <iframe src={fileView.url} title={fileView.title} className="h-[70vh] w-full rounded-lg border" />}
-        {fileView?.kind === "other" && <p className="text-sm text-muted-foreground">This file can&apos;t be previewed here. Use <strong>Open in new tab</strong> to see or download it.</p>}
       </AppDialog>
 
       <AppDialog open={!!issueDialog} onOpenChange={(o) => { if (!o) setIssueDialog(null); }} size="md"
