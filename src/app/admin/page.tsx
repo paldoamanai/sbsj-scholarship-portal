@@ -87,11 +87,6 @@ const sidebarItems = [
   { icon: User, label: "Profile", key: "profile", group: "Administration" },
 ];
 
-// Sections each role doesn't need. Everything is still enforced by the database (migration 050).
-const hiddenSections: Record<string, string[]> = {
-  reviewer: ["disbursement", "funds", "audit-logs"],
-  finance_admin: ["applications", "visits", "audit-logs"],
-};
 
 
 // ── Status badge (pastel pill + icon, mirrors student-dashboard's pattern) ──────
@@ -334,8 +329,6 @@ function AdminDashboard() {
   const myOffice = roleCanHaveOffice(adminRole) && isOffice(adminOffice) ? adminOffice : null;
   // Programs carry an office once migration 061 has run; until then the program form doesn't offer one.
   const officesReady = allScholarships.some((sch) => "office" in sch);
-  // An Admin of an office manages that office's Reviewer and Finance staff (migration 065).
-  const managedOffice = adminRole === "admin" ? myOffice : null;
   // Staff without an office (the Mayor Office) can narrow every page to one office's programs, or to the
   // programs that belong to no office ("municipal"). Office staff only ever load their own office's data.
   const [officeView, setOfficeView] = useState<string>("all");
@@ -378,9 +371,7 @@ function AdminDashboard() {
   }, [myOffice, officesReady, allScholarships, allApplications, allPayments]);
   // Students' house pins and the Home Visits map are for MSWDO staff only.
   const mapAccess = myOffice === "mswdo";
-  const canSee = (key: string) => (key === "staff" ? can.super || !!managedOffice
-    : key === "visits" ? mapAccess
-    : !(hiddenSections[adminRole] ?? []).includes(key));
+  const canSee = (key: string) => (key === "staff" ? can.super : key === "visits" ? mapAccess : true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -1401,8 +1392,9 @@ function AdminDashboard() {
     const pm = payments.find((x) => x.id === editDisbPayId);
     if (!pm) return;
     const reference = editDisbRef.trim() || null;
-    // Marking received goes through the mark-received dialog.
-    if (editDisbStatus === "Disbursed") {
+    // Marking received goes through the mark-received dialog, and only an Admin does it.
+    if (editDisbStatus === "Disbursed" && pm.status !== "Disbursed") {
+      if (!can.receive) { toast.error("Only an Admin can mark a payment received"); return; }
       const moa = moaBlocker(pm.application_id);
       if (moa) { toast.error("Can't release this payment yet", { description: moa }); return; }
       setDisbPaymentId(pm.id);
@@ -3233,7 +3225,7 @@ function AdminDashboard() {
                     <span className="text-sm text-muted-foreground">{picked.length} selected · {formatPHP(picked.reduce((t, p) => t + Number(p.amount || 0), 0))}</span>
                     <Button size="sm" variant="ghost" onClick={() => setPayPicked(new Set())}>Clear</Button>
                     <Button size="sm" variant="outline" onClick={() => { setBatchDate(picked[0]?.scheduled_date ?? defaultScheduledDate); setBatchSchedule(picked); }}><CalendarClock className="mr-1 h-4 w-4" /> Schedule {picked.length}</Button>
-                    <Button size="sm" className="bg-gradient-primary" onClick={() => setBatchReceive(picked)}><CheckCircle className="mr-1 h-4 w-4" /> Mark {picked.length} received</Button>
+                    {can.receive && <Button size="sm" className="bg-gradient-primary" onClick={() => setBatchReceive(picked)}><CheckCircle className="mr-1 h-4 w-4" /> Mark {picked.length} received</Button>}
                   </div>
                 )}
               </div>
@@ -3275,7 +3267,7 @@ function AdminDashboard() {
                             {can.finance && (
                               <div className="flex shrink-0 gap-2">
                                 <Button size="sm" variant="ghost" onClick={() => { setBatchDate(date || defaultScheduledDate); setBatchSchedule(list); }}>Move date</Button>
-                                <Button size="sm" variant="outline" onClick={() => setBatchReceive(list)}>Mark all received</Button>
+                                {can.receive && <Button size="sm" variant="outline" onClick={() => setBatchReceive(list)}>Mark all received</Button>}
                               </div>
                             )}
                           </CardHeader>
@@ -3289,7 +3281,7 @@ function AdminDashboard() {
                                   </span>
                                   <span className="flex shrink-0 items-center gap-2">
                                     <span className="tabular-nums font-medium">{formatPHP(Number(p.amount))}</span>
-                                    {can.finance && <Button size="sm" variant="ghost" onClick={() => markOne(p)}>Received</Button>}
+                                    {can.receive && <Button size="sm" variant="ghost" onClick={() => markOne(p)}>Received</Button>}
                                   </span>
                                 </li>
                               ))}
@@ -3350,7 +3342,7 @@ function AdminDashboard() {
                             )}
                             {open && can.finance && (<>
                               <Button size="icon" variant="ghost" title="Edit schedule" onClick={() => { setPayMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash"); setPayTerm((p.term as PaymentTerm | null) ?? null); setPayDialog(p); }}><Pencil className="h-4 w-4" /></Button>
-                              <Button size="sm" onClick={() => markOne(p)}>Mark received</Button>
+                              {can.receive && <Button size="sm" onClick={() => markOne(p)}>Mark received</Button>}
                               <Button size="icon" variant="ghost" title="Cancel payment" onClick={() => { setCancelReason(""); setCancelPay(p); }}><XCircle className="h-4 w-4 text-destructive" /></Button>
                             </>)}
                           </TableCell>
@@ -3693,9 +3685,9 @@ function AdminDashboard() {
             />
           )}
 
-          {/* STAFF (the Mayor Office, or an office Admin for their own office) */}
-          {activeSection === "staff" && (canManageSettings || managedOffice) && (
-            <StaffPanel userId={adminUserId} onChanged={() => loadData(true)} managerOffice={canManageSettings ? null : managedOffice}
+          {/* STAFF (the Mayor Office) */}
+          {activeSection === "staff" && canManageSettings && (
+            <StaffPanel userId={adminUserId} onChanged={() => loadData(true)}
               onShowActivity={(id) => { setAuditUser(id); setAuditPage(1); setActiveSection("audit-logs"); }} />
           )}
 
@@ -3768,7 +3760,8 @@ function AdminDashboard() {
                   <SelectContent>
                     {pm?.status === "Pending" && <SelectItem value="Pending">Scheduled</SelectItem>}
                     {pm?.status === "Processing" && <SelectItem value="Processing">Processing</SelectItem>}
-                    <SelectItem value="Disbursed">Received</SelectItem>
+                    {/* Only an Admin marks a payment received (migration 094). */}
+                    {(can.receive || pm?.status === "Disbursed") && <SelectItem value="Disbursed">Received</SelectItem>}
                     <SelectItem value="Cancelled">Cancelled</SelectItem>
                   </SelectContent>
                 </Select>
