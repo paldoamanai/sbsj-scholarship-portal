@@ -1,7 +1,8 @@
-// What each staff role may do. Mirrors public.staff_may() (migration 050), which is what actually
+// What each staff role may do. Mirrors public.staff_may() (migrations 050 and 094), which is what actually
 // enforces it; this copy only decides which pages and buttons the admin panel shows.
+// There are two staff roles: the Reviewer and Finance roles were folded into Admin (migration 094).
 
-export const STAFF_ROLES = ["super_admin", "admin", "reviewer", "finance_admin"] as const;
+export const STAFF_ROLES = ["super_admin", "admin"] as const;
 export type StaffRole = (typeof STAFF_ROLES)[number];
 
 export const ROLE_LABEL: Record<string, string> = {
@@ -9,10 +10,8 @@ export const ROLE_LABEL: Record<string, string> = {
 };
 
 export const ROLE_DESCRIPTION: Record<StaffRole, string> = {
-  super_admin: "Oversight: sees every office, runs programs, staff, settings, scholar accounts and deletion requests, and schedules payments and marks them received. Applicant decisions are left to the other roles.",
-  admin: "Runs the office: programs, applicants, scholars, payments (scheduling and marking received) and announcements.",
-  reviewer: "Applicants only: documents, grades, approving or disapproving, notes and messages.",
-  finance_admin: "Money only: scheduling payments, marking them received (one at a time or in a batch) and payment problems.",
+  super_admin: "Oversight: sees every office, runs programs, staff, settings, scholar accounts and deletion requests, and schedules payments. Applicant decisions and marking payments received are left to Admins.",
+  admin: "Runs the office: programs, applicants (documents, grades, approving or disapproving, notes and messages), scholars, payments (scheduling, marking received, payment problems) and announcements.",
 };
 
 export const isStaffRole = (role: string | null | undefined): role is StaffRole =>
@@ -23,8 +22,10 @@ export type Permissions = {
   manage: boolean;
   /** Applicants: status changes, documents, grades, messages. Not the Mayor Office (oversight only). */
   review: boolean;
-  /** Payments (schedule, mark received, in batches) and payment problems. Every admin, the Mayor Office too. */
+  /** Payments (schedule, edit, cancel) and payment problems. Every admin, the Mayor Office too. */
   finance: boolean;
+  /** Marking payments received (confirming the scholar got the money). Admins only, not the Mayor Office. */
+  receive: boolean;
   /** Staff, settings, deleting programs, account deletion requests. */
   super: boolean;
 };
@@ -32,18 +33,19 @@ export type Permissions = {
 /** `canManageSettings` comes from can_manage_settings(): true for a super admin, or any admin while none exists. */
 export function permissionsFor(role: string | null | undefined, canManageSettings: boolean): Permissions {
   const admin = role === "super_admin" || role === "admin";
-  // The Mayor Office oversees: it sees everything but leaves applicant decisions to the Admin and Reviewer
-  // accounts (only its screens change; the database would still allow them). Payments it handles like
-  // every admin.
+  // The Mayor Office oversees: it sees everything but leaves applicant decisions to the Admins (only its
+  // screens change; the database would still allow them). It can schedule payments, but only an Admin
+  // marks one received (enforced by guard_payments, migration 094).
   return {
     manage: admin,
-    review: role === "admin" || role === "reviewer",
-    finance: admin || role === "finance_admin",
+    review: role === "admin",
+    finance: admin,
+    receive: role === "admin",
     super: canManageSettings,
   };
 }
 
-// Offices (migrations 060, 061 and 066): an Admin, Reviewer or Finance account can belong to Barangay
+// Offices (migrations 060, 061 and 066): an Admin account can belong to Barangay
 // Affairs, MSWDO or the Sangguniang Bayan Office. It keeps its role's permissions but only sees its office's programs and what's
 // filed under them. No office means municipality-wide, like the Mayor Office.
 export const STAFF_OFFICES = ["barangay_affairs", "mswdo", "sangguniang_bayan"] as const;
@@ -68,11 +70,11 @@ export const officeLogo = (office: string | null | undefined) => (isOffice(offic
 
 export const isOffice = (o: string | null | undefined): o is StaffOffice => (STAFF_OFFICES as readonly string[]).includes(o ?? "");
 /** The Mayor Office works across every office, so it can't belong to one. */
-export const roleCanHaveOffice = (role: string) => role === "admin" || role === "reviewer" || role === "finance_admin";
+export const roleCanHaveOffice = (role: string) => role === "admin";
 /** The office a program comes from. Programs with no office are the Mayor Office's own. */
 export const programOffice = (office: string | null | undefined) => (isOffice(office) ? OFFICE_LABEL[office] : "Mayor Office");
 export const officeLabel = (office: string | null | undefined) => (isOffice(office) ? OFFICE_LABEL[office] : "All offices");
 
-/** The name to show for a staff account, e.g. "MSWDO · Reviewer". */
+/** The name to show for a staff account, e.g. "MSWDO · Admin". */
 export const staffLabel = (role: string, office?: string | null): string =>
   isOffice(office) && roleCanHaveOffice(role) ? `${OFFICE_LABEL[office]} · ${ROLE_LABEL[role] ?? role}` : ROLE_LABEL[role] ?? role;
