@@ -95,7 +95,7 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
 
 
   return (
-    <div className="space-y-4 animate-fade-in max-w-2xl">
+    <div className="space-y-4 animate-fade-in">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-xl font-display font-bold">System Settings</h2>
         {!readOnly && <AlertDialog>
@@ -122,7 +122,8 @@ export default function SettingsPanel({ rows, onShowHistory, onSave, readOnly = 
         </div>
       )}
 
-      <fieldset disabled={readOnly} className="space-y-4 min-w-0">
+      {/* Cards side by side on wide screens, so the page uses the full width. */}
+      <fieldset disabled={readOnly} className="grid min-w-0 items-start gap-4 xl:grid-cols-2">
 
       <Card>
         <CardHeader><CardTitle className="text-base">Academic Year & Semester</CardTitle><CardDescription>New applications are stamped with these. Changing the academic year starts a new cycle: scholars can apply to every program again, earlier scholars apply as renewals, and program slots and budgets refill.</CardDescription></CardHeader>

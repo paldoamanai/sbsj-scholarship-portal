@@ -83,6 +83,6 @@ export const emailChangeSchema = z.object({
 });
 
 export const gradeSubmissionSchema = z.object({
-  grade: z.number({ invalid_type_error: "Enter your average grade" }).min(0, "Grade must be 0–100").max(100, "Grade must be 0–100"),
+  grade: z.number({ error: "Enter your average grade" }).min(0, "Grade must be 0–100").max(100, "Grade must be 0–100"),
   term: z.string().trim().min(3, "Enter the term, e.g. 1st Semester 2025-2026").max(60),
 });

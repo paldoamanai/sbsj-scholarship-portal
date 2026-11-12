@@ -448,8 +448,8 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
         },
         { name: "By Payment Method", head: ["Method", "Payments", "Amount", "Share %"], rows: [...methods.entries()].sort((x, y) => sum(y[1]) - sum(x[1])).map(([m, l]) => [m, l.length, sum(l), pct(sum(l), sum(paid))]), money: ["Amount"], totals: ["Payments", "Amount"] },
         {
-          name: "Cancelled Payments", head: ["Scholar", "Program", "Office", "Period", "Reference", "Created", "Cancelled On", "Cancelled By", "Amount", "Reason"],
-          rows: cancelled.map((p) => [payStudent(p), payProgram(p), payOffice(p), payPeriod(p), p.reference || "—", fmtDate(p.created_at), fmtDate(p.cancelled_at), staffName(p.cancelled_by), Number(p.amount), p.cancel_reason || "—"]),
+          name: "Cancelled Payments", head: ["Scholar", "Program", "Office", "Period", "Created", "Cancelled On", "Cancelled By", "Amount", "Reason"],
+          rows: cancelled.map((p) => [payStudent(p), payProgram(p), payOffice(p), payPeriod(p), fmtDate(p.created_at), fmtDate(p.cancelled_at), staffName(p.cancelled_by), Number(p.amount), p.cancel_reason || "—"]),
           money: ["Amount"], totals: ["Amount"],
         },
       ],
@@ -465,33 +465,27 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
     const programs = new Map<string, Tables<"payments">[]>();
     list.forEach((p) => { const k = s.payApp(p)?.scholarship_id ?? ""; programs.set(k, [...(programs.get(k) ?? []), p]); });
     const paid = list.filter((p) => p.status === "Disbursed");
-    const receiptText = (p: Tables<"payments">) => (p.student_receipt_ref ?? (p.student_receipt_path ? "Photo (before reference numbers)" : p.student_receipt_at ? "Confirmed, no number" : "Not yet submitted"));
-    const matches = (p: Tables<"payments">) => {
-      if (!p.student_receipt_ref || !p.reference) return "—";
-      const k = (r: string) => r.toUpperCase().replace(/[\s\-_./#]/g, "");
-      return k(p.student_receipt_ref) === k(p.reference) ? "Yes" : "No";
-    };
+    const receiptText = (p: Tables<"payments">) => (p.student_receipt_path ? "Photo" : p.student_receipt_at ? "Confirmed" : "Not yet submitted");
     return {
       title: "Disbursement Summary", filters, count: list.length, countLabel: "payments",
       notes: [
         "Payments fall in the period by disbursed date, else scheduled date, else the date created.",
-        "Receipt Ref. is the reference number the scholar typed from the receipt they signed. Matches compares it with the payment's own reference (cheque or voucher number).",
       ],
       sections: [
         {
           name: "Payments",
-          head: ["Scholar", "Barangay", "Program", "Office", "Period", "Type", "Reference", "Method", "Preferred", "Status", "Scheduled", "Disbursed", "Disbursed By", "Proof on File", "Notes", "Amount"],
+          head: ["Scholar", "Barangay", "Program", "Office", "Period", "Type", "Method", "Preferred", "Status", "Scheduled", "Disbursed", "Disbursed By", "Proof on File", "Notes", "Amount"],
           rows: list.map((p) => {
             const st = s.profById.get(p.user_id), a = s.payApp(p);
-            return [payStudent(p), st?.barangay || "—", payProgram(p), payOffice(p), payPeriod(p), a ? kind(a) : "—", p.reference || "—", p.method || "—", p.preferred_method || "—",
+            return [payStudent(p), st?.barangay || "—", payProgram(p), payOffice(p), payPeriod(p), a ? kind(a) : "—", p.method || "—", p.preferred_method || "—",
               p.status, fmtDate(p.scheduled_date), fmtDate(p.disbursed_at), staffName(p.disbursed_by), p.receipt_path ? "Yes" : "No", clip(p.notes, 80), Number(p.amount)];
           }),
           money: ["Amount"], totals: ["Amount"],
         },
         {
           name: "Scholar Receipt Confirmation",
-          head: ["Scholar", "Program", "Office", "Period", "Reference", "Disbursed", "Receipt Ref.", "Matches", "Submitted", "Review", "Reviewed By", "Reviewed On", "Review Note", "Amount"],
-          rows: paid.map((p) => [payStudent(p), payProgram(p), payOffice(p), payPeriod(p), p.reference || "—", fmtDate(p.disbursed_at), receiptText(p), matches(p), fmtDate(p.student_receipt_at),
+          head: ["Scholar", "Program", "Office", "Period", "Disbursed", "Receipt", "Submitted", "Review", "Reviewed By", "Reviewed On", "Review Note", "Amount"],
+          rows: paid.map((p) => [payStudent(p), payProgram(p), payOffice(p), payPeriod(p), fmtDate(p.disbursed_at), receiptText(p), fmtDate(p.student_receipt_at),
             p.student_receipt_at ? p.receipt_review_status : "—", staffName(p.receipt_reviewed_by), fmtDate(p.receipt_reviewed_at), clip(p.receipt_review_note, 80), Number(p.amount)]),
           money: ["Amount"], totals: ["Amount"],
         },
@@ -549,8 +543,8 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
         },
         {
           name: "Upcoming Payouts (Scheduled)",
-          head: ["Scheduled Date", "Scholar", "Program", "Office", "Period", "Method", "Status", "Reference", "Amount"],
-          rows: upcoming.map(({ r, p }) => [fmtDate(p.scheduled_date), listName(r.a.profiles), r.a.scholarships?.name || "—", appOffice(r.a), payPeriod(p), p.method || "—", p.status, p.reference || "—", Number(p.amount)]),
+          head: ["Scheduled Date", "Scholar", "Program", "Office", "Period", "Method", "Status", "Amount"],
+          rows: upcoming.map(({ r, p }) => [fmtDate(p.scheduled_date), listName(r.a.profiles), r.a.scholarships?.name || "—", appOffice(r.a), payPeriod(p), p.method || "—", p.status, Number(p.amount)]),
           money: ["Amount"], totals: ["Amount"],
         },
         {
@@ -673,9 +667,9 @@ export function buildReport(key: ReportKey, data: ReportData, f: ReportFilters):
           money: ["Award"],
         },
         {
-          name: "Payments", head: ["Created", "Program", "Office", "Period", "Reference", "Method", "Status", "Disbursed", "Receipt Ref.", "Receipt Review", "Amount"],
-          rows: pays.map((x) => [fmtDate(x.created_at), payProgram(x), payOffice(x), payPeriod(x), x.reference || "—", x.method || "—", x.status, fmtDate(x.disbursed_at),
-            x.student_receipt_ref ?? (x.student_receipt_path ? "Photo" : "—"), x.student_receipt_at ? x.receipt_review_status : "—", Number(x.amount)]),
+          name: "Payments", head: ["Created", "Program", "Office", "Period", "Method", "Status", "Disbursed", "Receipt", "Receipt Review", "Amount"],
+          rows: pays.map((x) => [fmtDate(x.created_at), payProgram(x), payOffice(x), payPeriod(x), x.method || "—", x.status, fmtDate(x.disbursed_at),
+            x.student_receipt_path ? "Photo" : x.student_receipt_at ? "Confirmed" : "—", x.student_receipt_at ? x.receipt_review_status : "—", Number(x.amount)]),
           money: ["Amount"],
         },
         { name: "Grade Submissions", head: ["Term", "Grade", "Status", "Submitted", "Reviewed"], rows: grades.map((g) => [g.term, Number(g.grade), g.status, fmtDate(g.created_at), fmtDate(g.reviewed_at)]) },

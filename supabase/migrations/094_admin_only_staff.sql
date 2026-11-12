@@ -64,7 +64,7 @@ $$;
 REVOKE ALL ON FUNCTION public.staff_may(UUID, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.staff_may(UUID, TEXT) TO authenticated;
 
--- ── 4. guard_payments (084) plus: only an Admin marks a payment received ──
+-- ── 4. guard_payments (091) plus: only an Admin marks a payment received ──
 CREATE OR REPLACE FUNCTION public.guard_payments()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -98,6 +98,10 @@ BEGIN
     IF app_status IS DISTINCT FROM 'Approved' THEN
       RAISE EXCEPTION 'Payments can only be created for approved applications';
     END IF;
+  END IF;
+
+  IF TG_OP = 'INSERT' AND EXISTS (SELECT 1 FROM public.profiles WHERE id = NEW.user_id AND archived_at IS NOT NULL) THEN
+    RAISE EXCEPTION 'This scholar is archived. Restore them before scheduling a payment';
   END IF;
 
   IF NEW.preferred_method IS NOT NULL AND NEW.status <> 'Cancelled' AND NEW.method IS DISTINCT FROM NEW.preferred_method THEN

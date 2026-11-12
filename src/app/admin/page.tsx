@@ -230,10 +230,9 @@ function AdminDashboard() {
   const [studentDisb, setStudentDisb] = useState("all");
   const [studentPage, setStudentPage] = useState(1);
   const [viewStudent, setViewStudent] = useState<Tables<"profiles"> | null>(null);
-  // Student Management: quick edit of a scholar's payment reference number and disbursement status.
+  // Student Management: quick edit of a scholar's disbursement status.
   const [editDisb, setEditDisb] = useState<Tables<"profiles"> | null>(null);
   const [editDisbPayId, setEditDisbPayId] = useState("");
-  const [editDisbRef, setEditDisbRef] = useState("");
   const [editDisbStatus, setEditDisbStatus] = useState("Pending");
   const [editDisbReason, setEditDisbReason] = useState("");
   const [studentDocs, setStudentDocs] = useState<AdminDoc[]>([]);
@@ -393,7 +392,6 @@ function AdminDashboard() {
   const [inactiveOk, setInactiveOk] = useState(false);
   const [disbPaymentId, setDisbPaymentId] = useState<string>("");
   const [disbMethod, setDisbMethod] = useState<"Cheque" | "Cash">("Cash");
-  const [disbRef, setDisbRef] = useState("");
   const [payPicked, setPayPicked] = useState<Set<string>>(new Set());
   const [batchReceive, setBatchReceive] = useState<Tables<"payments">[] | null>(null);
   // Payments picked to move to one new scheduled date, and that date.
@@ -1016,7 +1014,7 @@ function AdminDashboard() {
     else if (payFilter === "open") { if (!isOpenPayment(p)) return false; }
     else if (payFilter !== "all" && p.status !== payFilter) return false;
     const q = paySearch.trim().toLowerCase();
-    return !q || `${payStudent(p)} ${payProgram(p)} ${p.reference || ""}`.toLowerCase().includes(q);
+    return !q || `${payStudent(p)} ${payProgram(p)}`.toLowerCase().includes(q);
   }).sort((x, y) => (y.disbursed_at || y.scheduled_date || y.created_at).localeCompare(x.disbursed_at || x.scheduled_date || x.created_at));
   // The picked school year at a glance: scholars received and still scheduled.
   const payYearSummary = (() => {
@@ -1140,10 +1138,10 @@ function AdminDashboard() {
   useEffect(() => { setInactiveOk(false); }, [payDialog, payAppId, disbDialog, disbPaymentId, batchReceive]);
   const disbLocked = !!disbPay?.preferred_method; // student chose the method; it is final
 
-  // Marks payments received (released to the scholar): one from the dialog, with the method and number set
-  // there, or a batch, each with the method and number it was scheduled with. Payments that can't be
-  // released yet (MOA not verified, cheque without a number) are skipped and listed.
-  const markReceived = async (list: Tables<"payments">[], single?: { method: "Cash" | "Cheque"; reference: string | null }) => {
+  // Marks payments received (released to the scholar): one from the dialog, with the method set there, or a
+  // batch, each with the method it was scheduled with. No reference or cheque number is recorded (migration
+  // 095). Payments that can't be released yet (MOA not verified) are skipped and listed.
+  const markReceived = async (list: Tables<"payments">[], single?: { method: "Cash" | "Cheque" }) => {
     if (disbLoading) return false;
     setDisbLoading(true);
     let done = 0;
@@ -1151,12 +1149,10 @@ function AdminDashboard() {
     try {
       for (const p of list) {
         const method = single?.method ?? p.method;
-        const reference = (single ? single.reference : p.reference)?.trim() || null;
         const moa = moaBlocker(p.application_id);
         if (moa) { skipped.push(`${payStudent(p)}: ${moa}`); continue; }
-        if (method === "Cheque" && !reference) { skipped.push(`${payStudent(p)}: add the cheque number first (Edit)`); continue; }
         const { data: rows, error } = await supabase.from("payments")
-          .update({ status: "Disbursed", method, reference, disbursed_at: new Date().toISOString() })
+          .update({ status: "Disbursed", method, disbursed_at: new Date().toISOString() })
           .eq("id", p.id).in("status", ["Pending", "Processing"]).select("id");
         if (error) skipped.push(`${payStudent(p)}: ${error.message}`);
         else if (!rows?.length) skipped.push(`${payStudent(p)}: already received or changed elsewhere`);
@@ -1382,7 +1378,6 @@ function AdminDashboard() {
 
   const selectEditDisbPayment = (pm: Tables<"payments"> | undefined) => {
     setEditDisbPayId(pm?.id ?? "");
-    setEditDisbRef(pm?.reference ?? "");
     setEditDisbStatus(pm?.status ?? "Pending");
     setEditDisbReason("");
   };
@@ -1391,7 +1386,6 @@ function AdminDashboard() {
   const saveEditDisb = async () => {
     const pm = payments.find((x) => x.id === editDisbPayId);
     if (!pm) return;
-    const reference = editDisbRef.trim() || null;
     // Marking received goes through the mark-received dialog, and only an Admin does it.
     if (editDisbStatus === "Disbursed" && pm.status !== "Disbursed") {
       if (!can.receive) { toast.error("Only an Admin can mark a payment received"); return; }
@@ -1399,13 +1393,12 @@ function AdminDashboard() {
       if (moa) { toast.error("Can't release this payment yet", { description: moa }); return; }
       setDisbPaymentId(pm.id);
       setDisbMethod((pm.preferred_method ?? pm.method) === "Cheque" ? "Cheque" : "Cash");
-      setDisbRef(reference ?? "");
       setEditDisb(null);
       setDisbDialog(true);
       return;
     }
-    const update: Partial<Tables<"payments">> = { reference };
-    if (editDisbStatus !== pm.status) update.status = editDisbStatus;
+    if (editDisbStatus === pm.status) { setEditDisb(null); return; }
+    const update: Partial<Tables<"payments">> = { status: editDisbStatus };
     if (editDisbStatus === "Cancelled" && pm.status !== "Cancelled") update.cancel_reason = editDisbReason.trim() || null;
     setPayBusy(true);
     const { data: rows, error } = await supabase.from("payments").update(update).eq("id", pm.id).select("id");
@@ -1435,7 +1428,6 @@ function AdminDashboard() {
         Grade: p.average_grade ?? "—",
         Program: apps.map((a) => programWithOffice(a)).join(", ") || "—",
         "Award (PHP)": apps.reduce((t, a) => t + appAward(a), 0),
-        "Reference No.": pay?.reference || "—",
         "Disbursement Status": pay?.status || "No payment",
         "Total Disbursed (PHP)": disbursedTotal(p.id),
         "Approved / Total": `${apps.length} / ${applications.filter((a) => a.user_id === p.id).length}`,
@@ -2904,10 +2896,10 @@ function AdminDashboard() {
                         checked={pagedStudents.length > 0 && pagedStudents.every((x) => pickedScholars.has(x.id))}
                         onCheckedChange={(v) => setPickedScholars((prev) => { const n = new Set(prev); pagedStudents.forEach((x) => (v ? n.add(x.id) : n.delete(x.id))); return n; })} />
                     </TableHead>
-                    <TableHead>Name</TableHead><TableHead>School / Course</TableHead><TableHead>Year</TableHead><TableHead>Grade</TableHead><TableHead title="Approved applications / total applications">Approved / Total</TableHead><TableHead>Program / Award</TableHead><TableHead>Reference No.</TableHead><TableHead>Disbursement</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Name</TableHead><TableHead>School / Course</TableHead><TableHead>Year</TableHead><TableHead>Grade</TableHead><TableHead title="Approved applications / total applications">Approved / Total</TableHead><TableHead>Program / Award</TableHead><TableHead>Disbursement</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={11} className="text-center py-8 text-muted-foreground">{scholars.length === 0 ? "No scholars yet. Applicants appear here once approved." : "No scholars match your search"}</TableCell></TableRow>}
+                    {pagedStudents.length === 0 && <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">{scholars.length === 0 ? "No scholars yet. Applicants appear here once approved." : "No scholars match your search"}</TableCell></TableRow>}
                     {pagedStudents.map((p) => { const pay = currentPayment(p.id); const apps = studentFilter === "discontinued" ? discontinuedApps(p.id) : p.archived_at ? pastApps(p.id) : approvedApps(p.id); return (
                       <TableRow key={p.id}>
                         <TableCell>
@@ -2933,7 +2925,6 @@ function AdminDashboard() {
                             <p className="text-muted-foreground">{formatPHP(apps.reduce((t, a) => t + appAward(a), 0))}{disbursedTotal(p.id) > 0 && ` · ${formatPHP(disbursedTotal(p.id))} paid`}</p>
                           </>)}
                         </TableCell>
-                        <TableCell className="font-mono text-xs">{pay?.reference || "—"}</TableCell>
                         <TableCell>{pay ? disbStatusBadge(pay.status) : <span className="text-xs text-muted-foreground">No payment</span>}</TableCell>
                         <TableCell>
                           <Badge variant={p.is_active ? "default" : "secondary"}>{p.is_active ? "Active" : "Inactive"}</Badge>
@@ -3125,7 +3116,7 @@ function AdminDashboard() {
                         const prof = profiles.find((x) => x.id === p.user_id);
                         return (
                           <TableRow key={p.id}>
-                            <TableCell><p className="font-medium">{prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() : "Unknown"}</p><p className="text-xs text-muted-foreground">{p.method} · {p.reference || "no reference"}</p></TableCell>
+                            <TableCell><p className="font-medium">{prof ? `${prof.first_name || ""} ${prof.last_name || ""}`.trim() : "Unknown"}</p><p className="text-xs text-muted-foreground">{p.method}</p></TableCell>
                             <TableCell>{formatPHP(Number(p.amount))}</TableCell>
                             <TableCell className="text-right">{disbStatusBadge(p.status)}</TableCell>
                           </TableRow>
@@ -3164,7 +3155,7 @@ function AdminDashboard() {
                   {yearSelect}
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Scholar, program, reference..." value={paySearch} onChange={(e) => { setPaySearch(e.target.value); setPayPage(1); }} className="pl-9 w-60" />
+                    <Input placeholder="Scholar or program..." value={paySearch} onChange={(e) => { setPaySearch(e.target.value); setPayPage(1); }} className="pl-9 w-60" />
                   </div>
                   <Select value={payFilter} onValueChange={(v) => { setPayFilter(v); setPayPage(1); }}>
                     <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
@@ -3207,7 +3198,6 @@ function AdminDashboard() {
                 const markOne = (p: Tables<"payments">) => {
                   setDisbPaymentId(p.id);
                   setDisbMethod((p.preferred_method ?? p.method) === "Cheque" ? "Cheque" : "Cash");
-                  setDisbRef(p.reference || "");
                   setDisbDialog(true);
                 };
                 return (<>
@@ -3541,8 +3531,10 @@ function AdminDashboard() {
               <h2 className="text-xl font-display font-bold">Notifications</h2>
               <NotificationInbox notifications={notifications} setNotifications={setNotifications} onNavigate={goToLink}
                 userId={adminUserId} unreadTotal={unreadTotal} onUnreadChange={refreshAdminUnread} />
+              {/* Announcements and preferences side by side on wide screens, so the page uses the full width. */}
+              <div className="grid items-start gap-4 xl:grid-cols-2">
               {can.manage && <AnnouncementsPanel />}
-              <Card>
+              <Card className={can.manage ? undefined : "xl:col-span-2"}>
                 <CardHeader><CardTitle className="text-base">Notification Preferences</CardTitle><CardDescription>Choose what reaches you in the dashboard and by email.</CardDescription></CardHeader>
                 <CardContent>
                   <NotificationPreferences userId={adminUserId} email={adminEmail} categories={[
@@ -3551,6 +3543,7 @@ function AdminDashboard() {
                   ]} />
                 </CardContent>
               </Card>
+              </div>
             </div>
           )}
 
@@ -3702,7 +3695,7 @@ function AdminDashboard() {
         </main>
       </div>
 
-      {/* Student Management: edit reference number / disbursement status */}
+      {/* Student Management: edit disbursement status */}
       {(() => {
         const list = editDisb ? studentPayments(editDisb.id) : [];
         const pm = list.find((x) => x.id === editDisbPayId);
@@ -3722,7 +3715,7 @@ function AdminDashboard() {
             </>}>
             {editDisb && (list.length === 0 ? (
               <div className="space-y-3">
-                <p className="text-sm text-muted-foreground">This scholar has no payment yet. Schedule one first, then set its reference number and status.</p>
+                <p className="text-sm text-muted-foreground">This scholar has no payment yet. Schedule one first, then set its status.</p>
                 <Button variant="outline" onClick={() => {
                   const app = awaitingPayment.find((a) => a.user_id === editDisb.id);
                   setEditDisb(null); openNewPayment(app?.id ?? ""); setActiveSection("disbursement");
@@ -3747,11 +3740,6 @@ function AdminDashboard() {
                   <Detail label="Method">{pm.method || "—"}</Detail>
                   <Detail label="Period">{termLabel(pm.term, pm.academic_year) || "—"}</Detail>
                 </DetailGrid>
-              )}
-              {pm?.method === "Cheque" && (
-                <DialogField label="Cheque number" htmlFor="edit-disb-ref">
-                  <Input id="edit-disb-ref" value={editDisbRef} onChange={(e) => setEditDisbRef(e.target.value)} disabled={locked} placeholder="e.g. CHK-2026-001" />
-                </DialogField>
               )}
               <DialogField label="Disbursement status"
                 hint={!locked && editDisbStatus === "Disbursed" ? "Next, you'll confirm the scholar received it." : undefined}>
@@ -3783,8 +3771,8 @@ function AdminDashboard() {
         description={disbPay ? `${payStudent(disbPay)} · ${formatPHP(Number(disbPay.amount))}${disbPay.term ? ` · ${termLabel(disbPay.term, disbPay.academic_year)}` : ""}` : undefined}
         footer={<>
           <Button variant="outline" onClick={() => setDisbDialog(false)}>Cancel</Button>
-          <Button className="bg-gradient-primary" disabled={disbLoading || !disbPay || (disbMethod === "Cheque" && !disbRef.trim()) || (!!inactiveName(disbPay?.user_id) && !inactiveOk)}
-            onClick={async () => { if (disbPay && await markReceived([disbPay], { method: disbMethod, reference: disbRef })) setDisbDialog(false); }}>
+          <Button className="bg-gradient-primary" disabled={disbLoading || !disbPay || (!!inactiveName(disbPay?.user_id) && !inactiveOk)}
+            onClick={async () => { if (disbPay && await markReceived([disbPay], { method: disbMethod })) setDisbDialog(false); }}>
             {disbLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Mark received
           </Button>
         </>}>
@@ -3792,18 +3780,12 @@ function AdminDashboard() {
         <DialogField label="Payment method" hint={disbLocked ? `The scholar chose ${disbPay?.preferred_method} for this payment, so the method is fixed.` : undefined}>
           <div role="radiogroup" aria-label="Payment method" className="grid grid-cols-2 gap-3">
             {enabledMethods.map((m) => (
-              <ChoiceButton key={m} selected={disbMethod === m} disabled={disbLocked} onClick={() => { setDisbMethod(m); setDisbRef(""); }}>
+              <ChoiceButton key={m} selected={disbMethod === m} disabled={disbLocked} onClick={() => setDisbMethod(m)}>
                 {m === "Cash" ? <Banknote className="h-4 w-4" /> : <Receipt className="h-4 w-4" />}{m}
               </ChoiceButton>
             ))}
           </div>
         </DialogField>
-        )}
-        {/* Only an older cheque payment still needs its number. */}
-        {disbMethod === "Cheque" && (
-          <DialogField label="Cheque number" htmlFor="disb-ref" hint="Required for cheques.">
-            <Input id="disb-ref" placeholder="e.g. CHK-2026-001" value={disbRef} onChange={(e) => setDisbRef(e.target.value)} />
-          </DialogField>
         )}
         <InactiveScholarWarning names={disbPay && inactiveName(disbPay.user_id) ? [inactiveName(disbPay.user_id)!] : []} ok={inactiveOk} onOk={setInactiveOk} action="Mark it received anyway" />
         <DialogNote icon={<Lock className="h-3.5 w-3.5" />}>Once marked received, the payment is locked and the scholar is notified.</DialogNote>
@@ -4031,7 +4013,7 @@ function AdminDashboard() {
                               <div className="flex items-center justify-between gap-2 flex-wrap">
                                 <span>
                                   <span className="font-medium">{formatPHP(Number(pm.amount))}</span> · {payProgram(pm)}
-                                  <span className="text-xs text-muted-foreground"> · {pm.method || "—"} · Ref: <span className="font-mono">{pm.reference || "—"}</span></span>
+                                  <span className="text-xs text-muted-foreground"> · {pm.method || "—"}</span>
                                 </span>
                                 <span className="flex items-center gap-1.5">
                                   {pm.status === "Disbursed" && pm.receipt_path && (

@@ -282,7 +282,7 @@ export default function StaffPanel({ userId, onChanged, onShowActivity }: Props)
   );
 
   return (
-    <div className="space-y-4 animate-fade-in max-w-5xl">
+    <div className="space-y-4 animate-fade-in">
       <h2 className="text-xl font-display font-bold">Staff</h2>
 
       {!loading && !hasSuperAdmin && (
