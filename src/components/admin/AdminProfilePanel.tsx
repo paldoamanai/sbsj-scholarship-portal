@@ -145,11 +145,14 @@ export default function AdminProfilePanel({ profile, email, userId, role, office
   const fullName = `${profile?.first_name || ""} ${profile?.last_name || ""}`.trim() || "Admin";
 
   return (
-    <div className="space-y-4 animate-fade-in max-w-2xl">
+    <div className="space-y-4 animate-fade-in">
       <h2 className="text-xl font-display font-bold">Admin Profile</h2>
 
+      {/* Cards side by side on wide screens, so the page uses the full width; the header card spans both. */}
+      <div className="grid items-start gap-4 xl:grid-cols-2">
+
       {/* Header + account details */}
-      <Card>
+      <Card className="xl:col-span-2">
         <CardContent className="py-6 space-y-5">
           <div className="flex items-center gap-4">
             <div className="relative">
@@ -291,6 +294,7 @@ export default function AdminProfilePanel({ profile, email, userId, role, office
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

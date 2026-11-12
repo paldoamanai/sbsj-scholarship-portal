@@ -12,7 +12,6 @@ export type ReceiptSlip = {
   period?: string | null;
   amount: number;
   method: string | null;
-  reference?: string | null;
 };
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
@@ -33,7 +32,6 @@ function copy(s: ReceiptSlip, label: string, footer: string) {
       ${s.period ? row("Period", s.period) : ""}
       ${row("Amount", peso(s.amount))}
       ${row("Method", s.method || "—")}
-      ${s.reference ? row(s.method === "Cheque" ? "Cheque No." : "Reference", s.reference) : ""}
     </table>
     <p class="ack">I acknowledge that I received the amount stated above.</p>
     <div class="signs">
@@ -136,7 +134,6 @@ export async function downloadReceiptSlipPDF(s: StudentReceiptSlip) {
     ["Period", s.period],
     ["Amount", pdfPeso(s.amount)],
     ["Method", s.method || "—"],
-    [s.method === "Cheque" ? "Cheque No." : "Reference", s.reference],
   ];
   doc.setFontSize(11);
   for (const [k, v] of rows) {

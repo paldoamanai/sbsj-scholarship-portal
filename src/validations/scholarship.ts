@@ -10,9 +10,9 @@ export const scholarshipSchema = z
     name: z.string().trim().min(1, "Name is required").max(120, "Name is too long"),
     description: optionalText(2000),
     eligibility: optionalText(2000),
-    amount: z.number({ invalid_type_error: "Award amount must be a number" }).min(0, "Award amount cannot be negative").max(100_000_000),
-    total_budget: z.number({ invalid_type_error: "Budget must be a number" }).min(0, "Budget cannot be negative").max(10_000_000_000),
-    slots: z.number({ invalid_type_error: "Slots must be a number" }).int("Slots must be a whole number").min(0, "Slots cannot be negative").max(100_000),
+    amount: z.number({ error: "Award amount must be a number" }).min(0, "Award amount cannot be negative").max(100_000_000),
+    total_budget: z.number({ error: "Budget must be a number" }).min(0, "Budget cannot be negative").max(10_000_000_000),
+    slots: z.number({ error: "Slots must be a number" }).int("Slots must be a whole number").min(0, "Slots cannot be negative").max(100_000),
     open_date: z.string().nullable(),
     deadline: z.string().nullable(),
     min_grade: z.number().min(0, "Minimum grade must be 0–100").max(100, "Minimum grade must be 0–100").nullable(),
@@ -20,8 +20,8 @@ export const scholarshipSchema = z
     municipality: optionalText(80),
     barangays: z.array(z.enum(BARANGAYS)),
     is_active: z.boolean(),
-    release_schedule: z.enum(["one_time", "yearly", "semester", "monthly"], { errorMap: () => ({ message: "Choose how the award is released" }) }),
-    release_months: z.number({ invalid_type_error: "Enter the number of monthly releases" }).int("Months must be a whole number")
+    release_schedule: z.enum(["one_time", "yearly", "semester", "monthly"], { error: "Choose how the award is released" }),
+    release_months: z.number({ error: "Enter the number of monthly releases" }).int("Months must be a whole number")
       .min(1, "Monthly releases must be 1 to 12 months").max(12, "Monthly releases must be 1 to 12 months"),
   })
   .refine((d) => !d.open_date || !d.deadline || d.open_date <= d.deadline, {
